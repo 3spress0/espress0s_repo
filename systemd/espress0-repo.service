@@ -1,0 +1,35 @@
+[Unit]
+Description=espress0's repo - Personal Software Archive
+After=network.target
+
+[Service]
+Type=simple
+User=espress0
+Group=espress0
+WorkingDirectory=/opt/espress0s-repo/backend
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/espress0s-repo/.env
+ExecStartPre=/usr/bin/node src/db/migrate.js
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=espress0-repo
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/espress0s-repo/data /opt/espress0s-repo/backups /opt/espress0s-repo/backend/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits for small Azure VM
+MemoryMax=800M
+CPUQuota=100%
+
+[Install]
+WantedBy=multi-user.target

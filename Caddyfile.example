@@ -1,0 +1,43 @@
+# Caddyfile for espress0's repo
+# Auto HTTPS with Let's Encrypt
+# Place at /etc/caddy/Caddyfile or ./Caddyfile for docker-compose
+
+# Replace with your domain
+espress0.example.com {
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+    }
+
+    # Reverse proxy to app
+    reverse_proxy app:3000 {
+        header_up X-Real-IP {remote}
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # Rate limiting (Caddy 2.8+)
+    # rate_limit {
+    #     zone dynamic {
+    #         key {remote_host}
+    #         events 100
+    #         window 1m
+    #     }
+    # }
+
+    # Logs
+    log {
+        output file /var/log/caddy/espress0.log
+        format json
+    }
+}
+
+# Optional: redirect www to non-www
+www.espress0.example.com {
+    redir https://espress0.example.com{uri} permanent
+}

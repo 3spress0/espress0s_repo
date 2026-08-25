@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.output/
+
+# Env files
+.env
+.env.local
+.env.production
+.env.development.local
+*.key
+*.pem
+secrets/
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+uploads/
+
+# Database backups (contain user records and password hashes)
+backups/
+*.enc.gz
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Cache
+.cache/
+.parcel-cache/
+.turbo/
+coverage/
+
+# Large files - never commit ISOs
+*.iso
+*.img
+*.vmdk
+*.ova
+*.dmg
+*.bin
+*.exe
+*.msi
+
+# tgpt binary
+tgpt

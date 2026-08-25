@@ -1,0 +1,27 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Transparent background -->
+  <!-- Isometric stack -->
+  <!-- Bottom layer - Blue #3b82f6 -->
+  <g transform="translate(256, 320) rotate(0)">
+    <path d="M -140 -40 L 0 -110 L 140 -40 L 140 -10 L 0 60 L -140 -10 Z" fill="#3b82f6" stroke="#1e40af" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M -140 -40 L 0 -110 L 140 -40 L 0 30 L -140 -40" fill="#60a5fa" opacity="0.8"/>
+  </g>
+  <!-- Middle layer - Purple #8b5cf6 -->
+  <g transform="translate(256, 260)">
+    <path d="M -140 -40 L 0 -110 L 140 -40 L 140 -10 L 0 60 L -140 -10 Z" fill="#8b5cf6" stroke="#6d28d9" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M -140 -40 L 0 -110 L 140 -40 L 0 30 L -140 -40" fill="#a78bfa" opacity="0.9"/>
+  </g>
+  <!-- Top layer - White with e -->
+  <g transform="translate(256, 200)">
+    <path d="M -140 -40 L 0 -110 L 140 -40 L 140 -10 L 0 60 L -140 -10 Z" fill="white" stroke="black" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M -140 -40 L 0 -110 L 140 -40 L 0 30 L -140 -40" fill="#f8fafc"/>
+    <!-- e letter -->
+    <g transform="translate(0, -15) scale(1.2)">
+      <path d="M -30 0 C -40 0 -50 8 -50 20 C -50 32 -40 40 -25 40 C -15 40 -5 36 0 28 L -10 20 C -13 24 -18 26 -25 26 C -32 26 -38 21 -38 16 H 5 C 5 5 -8 0 -20 0 C -35 0 -50 10 -50 20 C -50 35 -35 45 -20 45 C -5 45 8 38 12 25 L 0 18 C -3 25 -10 30 -20 30 C -28 30 -36 24 -38 16 H 12 L 12 12 C 12 5 -2 0 -20 0 Z" 
+            fill="black" transform="translate(10, 5)"/>
+      <!-- diagonal slash through e -->
+      <path d="M -35 -15 L 35 35" stroke="black" stroke-width="6" stroke-linecap="round"/>
+      <path d="M -35 -15 L 35 35" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+    </g>
+  </g>
+</svg>

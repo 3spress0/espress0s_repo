@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: espress0-repo
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+      # Uncomment to persist uploads (dev only, large files should be external)
+      # - ./uploads:/app/uploads
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/repo.db
+    networks:
+      - espress0-net
+    # Resource limits for small Azure VM
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Optional: Caddy as reverse proxy with auto HTTPS
+  caddy:
+    image: caddy:2-alpine
+    container_name: espress0-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    networks:
+      - espress0-net
+    profiles:
+      - with-caddy
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  espress0-net:
+    driver: bridge

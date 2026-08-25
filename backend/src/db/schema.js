@@ -1,0 +1,238 @@
+export const SCHEMA_SQL = `
+-- Users table - with encrypted fields
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  email TEXT UNIQUE NOT NULL, -- encrypted at rest with AES-256-GCM
+  email_hash TEXT UNIQUE, -- deterministic HMAC for lookup
+  password_hash TEXT NOT NULL, -- pepper + bcrypt
+  role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin', 'editor', 'viewer')),
+  avatar_url TEXT, -- encrypted
+  bio TEXT, -- encrypted
+  theme TEXT DEFAULT 'dark' CHECK(theme IN ('dark', 'light', 'auto')),
+  encryption_version TEXT DEFAULT 'v1',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Categories
+CREATE TABLE IF NOT EXISTS categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  slug TEXT UNIQUE NOT NULL,
+  description TEXT,
+  icon TEXT,
+  color TEXT,
+  sort_order INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Items (main repository entries) - sensitive fields encrypted
+CREATE TABLE IF NOT EXISTS items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  slug TEXT UNIQUE NOT NULL,
+  description TEXT,
+  long_description TEXT,
+  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  version TEXT,
+  release_date DATE,
+  file_name TEXT,
+  file_size INTEGER, -- bytes
+  file_type TEXT, -- iso, exe, zip, pdf, etc
+  platform TEXT, -- windows, linux, macos, cross-platform
+  architecture TEXT, -- x86, x64, arm64, universal
+  sha256 TEXT,
+  md5 TEXT,
+  storage_provider TEXT NOT NULL DEFAULT 'local' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external')),
+  storage_path TEXT, -- encrypted: path or file ID in external storage
+  download_url TEXT, -- encrypted: direct or constructed URL
+  external_url TEXT, -- encrypted: original source URL if applicable
+  featured INTEGER DEFAULT 0,
+  published INTEGER DEFAULT 1,
+  license_status TEXT DEFAULT 'check-license' CHECK(license_status IN ('public-domain', 'redistributable', 'proprietary', 'check-license', 'internal-only', 'abandonware')),
+  license_notes TEXT, -- encrypted
+  tags TEXT, -- JSON array for simplicity, plus junction table
+  icon_url TEXT,
+  image_url TEXT, -- cover image selected by admin, placeholder if none
+  screenshots TEXT, -- JSON array of URLs
+  documentation_url TEXT,
+  changelog TEXT,
+  download_count INTEGER DEFAULT 0,
+  view_count INTEGER DEFAULT 0,
+  encryption_version TEXT DEFAULT 'v1',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tags
+CREATE TABLE IF NOT EXISTS tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  slug TEXT UNIQUE NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Item-Tag junction
+CREATE TABLE IF NOT EXISTS item_tags (
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (item_id, tag_id)
+);
+
+-- FAQ entries
+CREATE TABLE IF NOT EXISTS faq_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  category TEXT,
+  related_item_ids TEXT, -- JSON array
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Search index FTS5
+CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+  name,
+  slug,
+  description,
+  long_description,
+  version,
+  file_name,
+  file_type,
+  platform,
+  architecture,
+  tags,
+  content='items',
+  content_rowid='id',
+  tokenize='porter unicode61'
+);
+
+-- Triggers to keep FTS in sync
+CREATE TRIGGER IF NOT EXISTS items_fts_insert AFTER INSERT ON items BEGIN
+  INSERT INTO items_fts(rowid, name, slug, description, long_description, version, file_name, file_type, platform, architecture, tags)
+  VALUES (new.id, new.name, new.slug, new.description, new.long_description, new.version, new.file_name, new.file_type, new.platform, new.architecture, new.tags);
+END;
+
+CREATE TRIGGER IF NOT EXISTS items_fts_delete AFTER DELETE ON items BEGIN
+  INSERT INTO items_fts(items_fts, rowid, name, slug, description, long_description, version, file_name, file_type, platform, architecture, tags)
+  VALUES('delete', old.id, old.name, old.slug, old.description, old.long_description, old.version, old.file_name, old.file_type, old.platform, old.architecture, old.tags);
+END;
+
+CREATE TRIGGER IF NOT EXISTS items_fts_update AFTER UPDATE ON items BEGIN
+  INSERT INTO items_fts(items_fts, rowid, name, slug, description, long_description, version, file_name, file_type, platform, architecture, tags)
+  VALUES('delete', old.id, old.name, old.slug, old.description, old.long_description, old.version, old.file_name, old.file_type, old.platform, old.architecture, old.tags);
+  INSERT INTO items_fts(rowid, name, slug, description, long_description, version, file_name, file_type, platform, architecture, tags)
+  VALUES (new.id, new.name, new.slug, new.description, new.long_description, new.version, new.file_name, new.file_type, new.platform, new.architecture, new.tags);
+END;
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_items_slug ON items(slug);
+CREATE INDEX IF NOT EXISTS idx_items_category ON items(category_id);
+CREATE INDEX IF NOT EXISTS idx_items_featured ON items(featured);
+CREATE INDEX IF NOT EXISTS idx_items_published ON items(published);
+CREATE INDEX IF NOT EXISTS idx_items_platform ON items(platform);
+CREATE INDEX IF NOT EXISTS idx_items_arch ON items(architecture);
+CREATE INDEX IF NOT EXISTS idx_items_file_type ON items(file_type);
+CREATE INDEX IF NOT EXISTS idx_items_created ON items(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_users_email_hash ON users(email_hash);
+
+-- Unlimited download links per item
+CREATE TABLE IF NOT EXISTS item_download_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  label TEXT NOT NULL, -- e.g., "Google Drive Mirror 1", "OneDrive EU", "Direct"
+  storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external')),
+  storage_path TEXT, -- encrypted: file ID or path in external storage
+  download_url TEXT, -- encrypted: direct URL
+  file_size INTEGER, -- optional override per mirror
+  is_primary INTEGER DEFAULT 0, -- primary mirror
+  is_down INTEGER DEFAULT 0, -- marked as down by admin or checker
+  down_reason TEXT, -- reason why down
+  status TEXT DEFAULT 'up' CHECK(status IN ('up', 'down', 'unknown', 'checking')),
+  last_checked DATETIME, -- last health check
+  sort_order INTEGER DEFAULT 0,
+  download_count INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_download_links_item ON item_download_links(item_id);
+CREATE INDEX IF NOT EXISTS idx_download_links_primary ON item_download_links(item_id, is_primary);
+CREATE INDEX IF NOT EXISTS idx_download_links_down ON item_download_links(is_down);
+
+-- Site-wide configuration. Everything the UI shows that isn't item data lives
+-- here so admins can change copy/branding/links without a code deploy.
+CREATE TABLE IF NOT EXISTS site_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  type TEXT DEFAULT 'text' CHECK(type IN ('text', 'textarea', 'boolean', 'number', 'json', 'url', 'color')),
+  group_name TEXT DEFAULT 'general',
+  label TEXT,
+  description TEXT,
+  public INTEGER DEFAULT 1, -- 1 = exposed via GET /api/settings, 0 = admin only
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_settings_group ON site_settings(group_name);
+CREATE INDEX IF NOT EXISTS idx_settings_public ON site_settings(public);
+
+-- Files uploaded through the admin UI (item cover images, icons, logos).
+CREATE TABLE IF NOT EXISTS uploads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL UNIQUE,
+  mime_type TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  kind TEXT DEFAULT 'image' CHECK(kind IN ('image', 'document', 'other')),
+  uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_uploads_kind ON uploads(kind);
+CREATE INDEX IF NOT EXISTS idx_uploads_created ON uploads(created_at DESC);
+`;
+
+// Sensible starting values. INSERT OR IGNORE means re-running migrations never
+// clobbers an admin's edits.
+export const DEFAULT_SETTINGS = [
+  // general / branding
+  { key: 'site_name', value: "espress0's repo", type: 'text', group_name: 'general', label: 'Site name', description: 'Shown in the navbar, footer and browser tab.', public: 1 },
+  { key: 'site_tagline', value: 'Personal Archive • Est. 2026', type: 'text', group_name: 'general', label: 'Tagline', description: 'Small line under the site name in the footer.', public: 1 },
+  { key: 'hero_title', value: "espress0's repo", type: 'text', group_name: 'homepage', label: 'Hero title', description: 'Large heading on the homepage.', public: 1 },
+  { key: 'hero_subtitle', value: 'A curated personal archive of software, ISOs, tools and documentation. Everything verified, checksummed and stored off-VM.', type: 'textarea', group_name: 'homepage', label: 'Hero subtitle', description: 'Paragraph under the hero title.', public: 1 },
+  { key: 'hero_search_placeholder', value: 'Search files...', type: 'text', group_name: 'homepage', label: 'Search placeholder', public: 1 },
+  { key: 'hero_stat_encryption_label', value: 'AES-256', type: 'text', group_name: 'homepage', label: '"Encrypted" stat value', description: 'Third stat shown under the hero search box.', public: 1 },
+  { key: 'footer_intro', value: 'A curated personal repository for software, ISOs, tools and documentation. Built for a low-resource VM with external storage: metadata is encrypted here, the files themselves live off-VM.', type: 'textarea', group_name: 'footer', label: 'Footer intro', description: 'Paragraph in the left-hand footer column.', public: 1 },
+  { key: 'footer_copyright', value: '', type: 'text', group_name: 'footer', label: 'Copyright line', description: 'Leave blank to auto-generate "© <year> <site name>".', public: 1 },
+  { key: 'footer_note', value: 'Storage: GDrive, OneDrive, External', type: 'text', group_name: 'footer', label: 'Footer note', description: 'Line at the bottom of the footer.', public: 1 },
+  { key: 'footer_links', value: JSON.stringify([
+    { label: 'Operating Systems', href: '/browse?category=operating-systems', group: 'Browse' },
+    { label: 'ISOs', href: '/browse?category=isos', group: 'Browse' },
+    { label: 'Applications', href: '/browse?category=applications', group: 'Browse' },
+    { label: 'Development', href: '/browse?category=development', group: 'Browse' },
+    { label: 'All Categories', href: '/browse', group: 'Browse' },
+    { label: 'Ask AI (tgpt)', href: '/ask', group: 'System' },
+    { label: 'API Health', href: '/api/health', group: 'System' },
+    { label: 'tgpt Project', href: 'https://github.com/aandrew-me/tgpt', external: true, group: 'System' },
+  ], null, 0), type: 'json', group_name: 'footer', label: 'Footer links', description: 'JSON array of { label, href, group, external }.', public: 1 },
+  // behaviour toggles
+  { key: 'allow_registration', value: 'true', type: 'boolean', group_name: 'auth', label: 'Allow public registration', description: 'Overrides the ALLOW_REGISTRATION env var when set.', public: 1 },
+  { key: 'require_captcha', value: 'true', type: 'boolean', group_name: 'auth', label: 'Require CAPTCHA on login', public: 0 },
+  { key: 'show_dev_credentials_panel', value: 'false', type: 'boolean', group_name: 'auth', label: 'Show test-credentials panel on login', description: 'Development aid. Leave off in production.', public: 1 },
+  { key: 'ai_enabled', value: 'true', type: 'boolean', group_name: 'ai', label: 'Enable Ask AI', description: 'Turns the AI entry points on or off.', public: 1 },
+  { key: 'maintenance_mode', value: 'false', type: 'boolean', group_name: 'general', label: 'Maintenance mode', description: 'Shows a maintenance banner across the site.', public: 1 },
+  { key: 'maintenance_message', value: 'We are performing maintenance. Downloads may be temporarily unavailable.', type: 'textarea', group_name: 'general', label: 'Maintenance message', public: 1 },
+  { key: 'uploads_max_bytes', value: '5242880', type: 'number', group_name: 'uploads', label: 'Max upload size (bytes)', public: 0 },
+];
+
+export const DEFAULT_CATEGORIES = [
+  { name: 'Operating Systems', slug: 'operating-systems', description: 'OS distributions, installers, and recovery media', icon: '🖥️', color: '#8b5cf6' },
+  { name: 'ISOs', slug: 'isos', description: 'Bootable ISO images and disk images', icon: '💿', color: '#6366f1' },
+  { name: 'Applications', slug: 'applications', description: 'Productivity and creative applications', icon: '📦', color: '#3b82f6' },
+  { name: 'Utilities', slug: 'utilities', description: 'System tools, cleaners, and maintenance utilities', icon: '🔧', color: '#06b6d4' },
+  { name: 'Development', slug: 'development', description: 'IDEs, SDKs, runtimes, and dev tools', icon: '💻', color: '#10b981' },
+  { name: 'Games', slug: 'games', description: 'Games, emulators, and game tools', icon: '🎮', color: '#f59e0b' },
+  { name: 'Documentation', slug: 'documentation', description: 'Manuals, guides, datasheets, and references', icon: '📚', color: '#ec4899' },
+  { name: 'Other', slug: 'other', description: 'Miscellaneous files and archives', icon: '📁', color: '#6b7280' },
+];

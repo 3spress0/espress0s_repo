@@ -1,0 +1,70 @@
+name: Deploy to Azure VM
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+# A push already runs CI (build + test + docker image), so there is no need to
+# build the frontend here again - the VM builds it during the update.
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Job-level `if` cannot read the `secrets` context, so probe it from a
+      # step. Without this, a repository that has not configured the VM
+      # credentials fails on every push with "Error: require ssh host".
+      - name: Check deployment is configured
+        id: probe
+        env:
+          VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+          VM_USER: ${{ secrets.AZURE_VM_USER }}
+          VM_KEY:  ${{ secrets.AZURE_VM_SSH_KEY }}
+        run: |
+          if [ -z "$VM_HOST" ] || [ -z "$VM_USER" ] || [ -z "$VM_KEY" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipped: AZURE_VM_HOST / AZURE_VM_USER / AZURE_VM_SSH_KEY are not set."
+            echo "Set them under Settings -> Secrets and variables -> Actions to enable deployment."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy via SSH
+        if: steps.probe.outputs.configured == 'true'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AZURE_VM_HOST }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          port: ${{ secrets.AZURE_VM_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            REPO_DIR="${DEPLOY_DIR:-/opt/espress0s-repo}"
+
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              echo "::error::$REPO_DIR is not a git checkout - run scripts/deploy-ubuntu.sh once on the VM first."
+              exit 1
+            fi
+
+            cd "$REPO_DIR"
+
+            # Let the project's own update script do the work: it pulls from the
+            # remembered GitHub URL, reinstalls, migrates, rebuilds, restarts and
+            # health-checks. Duplicating those steps here is how the two drift.
+            bash scripts/deploy-ubuntu.sh --update
+
+      - name: Report when skipped
+        if: steps.probe.outputs.configured != 'true'
+        run: |
+          echo "Deployment skipped - no VM credentials configured. This is not an error."
+
+      - name: Notify deployment
+        if: always()
+        run: |
+          echo "Deploy job finished with status: ${{ job.status }}"
