@@ -76,10 +76,23 @@
 ## 🚀 Quick Start (Local Dev)
 
 ```bash
-# Clone
 git clone <your-repo> espress0s-repo
 cd espress0s-repo
 
+./scripts/setup.sh --start
+```
+
+One command: checks Node, writes a `.env` with freshly generated secrets, creates
+`data/` and `backups/`, installs both dependency trees, migrates + seeds the
+database, prints a generated admin password once, then starts the dev servers
+(frontend :5173, API :3000). Re-running never overwrites secrets or data.
+`./scripts/setup.sh --help` lists the flags (`--build`, `--reset-db`,
+`--admin-password`, `--with-tgpt`, ...).
+
+<details>
+<summary>Manual steps, if you prefer</summary>
+
+```bash
 # Env
 cp .env.example .env
 # Edit .env: set JWT_SECRET, ADMIN_PASSWORD, etc.
@@ -99,6 +112,8 @@ npm run dev  # :5173
 # Open http://localhost:5173
 # Admin: http://localhost:5173/login (admin / ChangeMe123!)
 ```
+
+</details>
 
 ## 🐳 Docker (Production)
 
@@ -317,7 +332,7 @@ espress0s-repo/
 │   │   └── lib/ (api, utils)
 ├── .github/workflows/ (ci.yml, deploy.yml)
 ├── systemd/
-├── scripts/ (backup.sh, init-db.sh)
+├── scripts/ (setup.sh, dev.sh, backup.sh, init-db.sh, deploy-ubuntu.sh)
 ├── Dockerfile, docker-compose.yml
 ├── Caddyfile.example, nginx.conf.example
 └── .env.example

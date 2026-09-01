@@ -70,6 +70,33 @@ rather keep nginx as the only thing on 80.
 
 ## Developing locally
 
+### Quick start (one command)
+
+```bash
+./scripts/setup.sh
+```
+
+Checks Node/npm, creates `.env` from `.env.example` with freshly generated
+`JWT_SECRET`, `ENCRYPTION_KEY` and `PASSWORD_PEPPER`, creates `data/`,
+`data/uploads/` and `backups/`, installs both dependency trees, runs migrations,
+seeds the database, and prints a generated admin password **once**. It is safe to
+re-run: existing secrets, database and uploads are never overwritten.
+
+```bash
+./scripts/setup.sh --start                    # ... then start the dev servers
+./scripts/setup.sh --build --start            # ... single origin on :3000
+./scripts/setup.sh --admin-password 'S3cret!' # choose the password yourself
+./scripts/setup.sh --with-tgpt                # also install tgpt (AI drafting)
+./scripts/setup.sh --reset-db                 # back up and recreate the database
+./scripts/setup.sh --help                     # every flag
+```
+
+No root, no `apt`, nothing installed system-wide — works on Linux, macOS and WSL.
+For an Ubuntu *server* (Node install, systemd, nginx) use `scripts/setup-ubuntu.sh`
+or `scripts/deploy-ubuntu.sh` instead.
+
+The manual equivalent is below, if you would rather do it step by step.
+
 ### 1. Configure
 
 
@@ -145,7 +172,7 @@ must remove them from history before pushing, not just from the working tree.
 ```
 backend/    Fastify API, SQLite + FTS5, storage providers, uploads
 frontend/   Vite + React SPA
-scripts/    dev.sh and helpers
+scripts/    setup.sh (one-command local setup), dev.sh and helpers
 systemd/    service units for VM deployment
 .github/    CI workflows
 ```
