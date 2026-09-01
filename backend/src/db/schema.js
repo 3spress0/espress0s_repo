@@ -224,6 +224,14 @@ export const DEFAULT_SETTINGS = [
   { key: 'maintenance_mode', value: 'false', type: 'boolean', group_name: 'general', label: 'Maintenance mode', description: 'Shows a maintenance banner across the site.', public: 1 },
   { key: 'maintenance_message', value: 'We are performing maintenance. Downloads may be temporarily unavailable.', type: 'textarea', group_name: 'general', label: 'Maintenance message', public: 1 },
   { key: 'uploads_max_bytes', value: '5242880', type: 'number', group_name: 'uploads', label: 'Max upload size (bytes)', public: 0 },
+  // theming — see frontend/src/themes for the scheme registry
+  { key: 'theme_default', value: 'midnight', type: 'text', group_name: 'theme', label: 'Default dark scheme', description: 'Scheme id used for visitors on a dark device (midnight, starrynight, galaxy, cotton-candy, forest, sunrise, amber).', public: 1 },
+  { key: 'theme_light_default', value: 'daybreak', type: 'text', group_name: 'theme', label: 'Default light scheme', description: 'Scheme id used for visitors on a light device (daybreak, sky).', public: 1 },
+  { key: 'theme_allow_user_choice', value: 'true', type: 'boolean', group_name: 'theme', label: 'Let visitors pick a theme', description: 'Shows the palette switcher in the navbar. Off = everyone sees the defaults above.', public: 1 },
+  { key: 'theme_starfield', value: 'true', type: 'boolean', group_name: 'theme', label: 'Animated starfield', description: 'Twinkling stars behind the hero, Ask and 404 pages.', public: 1 },
+  { key: 'theme_shooting_stars', value: 'true', type: 'boolean', group_name: 'theme', label: 'Shooting stars', public: 1 },
+  { key: 'theme_aurora', value: 'true', type: 'boolean', group_name: 'theme', label: 'Aurora glow', description: 'Soft coloured blobs behind the stars.', public: 1 },
+  { key: 'theme_star_density', value: '100', type: 'number', group_name: 'theme', label: 'Star density (%)', description: '100 = default. Lower it on low-powered devices; 0 hides the stars.', public: 1 },
 ];
 
 export const DEFAULT_CATEGORIES = [

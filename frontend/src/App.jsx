@@ -23,6 +23,7 @@ import Monitoring from './components/Monitoring';
 import AskAIPopup from './components/AskAIPopup';
 import { AuthProvider } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
+import { ThemeProvider } from './context/ThemeContext';
 
 function ItemRedirect() {
   const { slug } = useParams();
@@ -71,11 +72,14 @@ function AppContent() {
 function App() {
   return (
     <SettingsProvider>
-      <AuthProvider>
-        <Router>
-          <AppContent />
-        </Router>
-      </AuthProvider>
+      {/* Theme sits inside Settings: the admin's default scheme is a setting. */}
+      <ThemeProvider>
+        <AuthProvider>
+          <Router>
+            <AppContent />
+          </Router>
+        </AuthProvider>
+      </ThemeProvider>
     </SettingsProvider>
   );
 }

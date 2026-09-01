@@ -38,8 +38,8 @@ export default function CategoryGrid({ categories }) {
             
             <div className="relative">
               <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3"
-                   style={{ backgroundColor: `${cat.color || '#8b5cf6'}15`, border: `1px solid ${cat.color || '#8b5cf6'}30` }}>
-                <Icon className="w-5 h-5" style={{ color: cat.color || '#8b5cf6' }} />
+                   style={{ backgroundColor: cat.color ? `${cat.color}15` : 'rgb(var(--c-primary) / 0.08)', border: cat.color ? `1px solid ${cat.color}30` : '1px solid rgb(var(--c-primary) / 0.2)' }}>
+                <Icon className="w-5 h-5" style={{ color: cat.color || 'rgb(var(--c-primary))' }} />
               </div>
               
               <h3 className="font-semibold text-textPrimary group-hover:text-white transition-colors mb-1">

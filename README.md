@@ -32,6 +32,7 @@
 ## ✨ Features
 
 - **Dark futuristic UI** with purple → blue gradient, glassmorphism, rounded cards, micro-animations
+- **9 colour schemes** — Midnight, Starry Night, Galaxy, Cotton Candy, Forest, Sunrise, Amber, plus Sky and Daybreak for light mode. CSS-variable driven, switchable from the navbar, `auto` follows the OS, admins set the site default and the starfield/aurora effects. Palettes adapted from Spicetify's StarryNight — see [THEME.md](THEME.md)
 - **Fast search** with SQLite FTS5, typo-tolerance via Levenshtein reranking
 - **Category browsing** — OS, ISOs, Apps, Utilities, Dev, Games, Docs, Other
 - **Storage abstraction** — `StorageProvider` interface with Google Drive, OneDrive, External, GitHub, Local providers. VM never stores large files; downloads redirect to providers

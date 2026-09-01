@@ -39,7 +39,7 @@ export default function AdminCategories() {
           <div key={c.id} className="glass rounded-2xl border border-white/5 p-5 flex items-start gap-4">
             <div
               className="w-11 h-11 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
-              style={{ background: `${c.color || '#8b5cf6'}22`, border: `1px solid ${c.color || '#8b5cf6'}44` }}
+              style={{ background: c.color ? `${c.color}22` : 'rgb(var(--c-primary) / 0.13)', border: c.color ? `1px solid ${c.color}44` : '1px solid rgb(var(--c-primary) / 0.27)' }}
             >
               {c.icon || '📁'}
             </div>

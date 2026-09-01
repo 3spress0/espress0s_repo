@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Save, RotateCcw, Loader2, Check, AlertCircle } from 'lucide-react';
 import { adminApi } from '../../lib/api';
 import { useSettings } from '../../context/SettingsContext';
+import { DARK_THEMES, LIGHT_THEMES, getTheme } from '../../themes';
+import { ThemeSwatch } from '../../components/ThemePicker';
 
 const GROUP_LABELS = {
   general: 'General',
@@ -10,6 +12,14 @@ const GROUP_LABELS = {
   auth: 'Authentication',
   ai: 'AI',
   uploads: 'Uploads',
+  theme: 'Theme & effects',
+};
+
+// Scheme ids are picked from the registry rather than typed, so a typo can't
+// silently fall back to the default palette.
+const THEME_SELECTS = {
+  theme_default: DARK_THEMES,
+  theme_light_default: LIGHT_THEMES,
 };
 
 /**
@@ -75,6 +85,24 @@ export default function AdminSettings() {
   const renderControl = (m) => {
     const value = settings[m.key];
     const common = 'w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:border-primary/50';
+
+    // Theme defaults get a visual picker instead of a free-text scheme id.
+    if (THEME_SELECTS[m.key]) {
+      const options = THEME_SELECTS[m.key];
+      const selected = getTheme(value);
+      return (
+        <div className="flex items-center gap-3">
+          <ThemeSwatch theme={selected} size={36} />
+          <select
+            value={value ?? ''}
+            onChange={(e) => set(m.key, e.target.value)}
+            className={common}
+          >
+            {options.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+        </div>
+      );
+    }
 
     if (m.type === 'boolean') {
       return (

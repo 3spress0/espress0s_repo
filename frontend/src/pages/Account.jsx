@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee } from 'lucide-react';
+import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee, Palette } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import StarryBackground from '../components/StarryBackground';
+import ThemePicker from '../components/ThemePicker';
+import { useTheme } from '../context/ThemeContext';
 import Logo from '../components/Logo';
 
 export default function Account() {
+  const themeCtx = useTheme();
   const { user, logout, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
@@ -232,7 +235,29 @@ export default function Account() {
             </div>
           </div>
 
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 space-y-6">
+            {/* Appearance: the scheme is a per-browser preference, so it is not
+                part of the profile form and saves the moment it is clicked. */}
+            <div className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl">
+              <h2 className="text-xl font-bold text-textPrimary mb-1 flex items-center gap-2">
+                <Palette className="w-5 h-5 text-primary" />
+                Appearance
+              </h2>
+              <p className="text-xs text-textMuted mb-5">
+                {themeCtx.allowUserChoice
+                  ? 'Applies instantly and is remembered in this browser. "Match system" follows your device.'
+                  : 'The administrator has fixed the site theme, so this is a preview only.'}
+              </p>
+              {themeCtx.allowUserChoice
+                ? <ThemePicker variant="grid" />
+                : <p className="text-sm text-textSecondary">Current theme: {themeCtx.theme.label}</p>}
+              {themeCtx.effects.reducedMotion && (
+                <p className="text-[11px] text-textMuted mt-4">
+                  Your device asks for reduced motion, so the starfield and aurora animations are paused.
+                </p>
+              )}
+            </div>
+
             <div className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl">
               <h2 className="text-xl font-bold text-textPrimary mb-6 flex items-center gap-2">
                 <User className="w-5 h-5 text-primary" />
