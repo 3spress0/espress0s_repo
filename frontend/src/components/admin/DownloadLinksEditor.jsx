@@ -1,4 +1,5 @@
-import { Plus, Trash2, Star, GripVertical, AlertTriangle } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, Trash2, Star, GripVertical, AlertTriangle, ClipboardPaste } from 'lucide-react';
 
 const PROVIDERS = [
   { value: 'external', label: 'External URL' },
@@ -31,14 +32,56 @@ function blankLink(sortOrder = 0) {
 }
 
 /**
+ * Work out the provider, a human label and (for Drive/OneDrive) the file id
+ * from a pasted URL, so adding a mirror is one paste instead of four fields.
+ */
+export function describeUrl(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  if (!url) return null;
+
+  let host = '';
+  let pathname = '';
+  try {
+    const parsed = new URL(url);
+    if (!/^https?:$/.test(parsed.protocol)) return null;
+    host = parsed.hostname.toLowerCase();
+    pathname = parsed.pathname;
+  } catch {
+    return null;
+  }
+
+  const fileNameGuess = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
+
+  if (host.includes('drive.google.com') || host.includes('docs.google.com')) {
+    const id = url.match(/\/d\/([A-Za-z0-9_-]{10,})/)?.[1]
+      || url.match(/[?&]id=([A-Za-z0-9_-]{10,})/)?.[1]
+      || '';
+    return { provider: 'gdrive', label: 'Google Drive', storage_path: id, file_name: '' };
+  }
+  if (host.includes('onedrive.live.com') || host.includes('1drv.ms') || host.includes('sharepoint.com')) {
+    return { provider: 'onedrive', label: 'OneDrive', storage_path: '', file_name: '' };
+  }
+  if (host.includes('github.com') || host.includes('githubusercontent.com')) {
+    const repo = pathname.split('/').filter(Boolean).slice(0, 2).join('/');
+    return { provider: 'github', label: repo ? `GitHub — ${repo}` : 'GitHub release', storage_path: '', file_name: fileNameGuess };
+  }
+
+  const bareHost = host.replace(/^www\./, '');
+  return { provider: 'external', label: bareHost, storage_path: '', file_name: fileNameGuess };
+}
+
+/**
  * Editor for an item's download mirrors.
  *
  * Every field the backend stores on item_download_links is editable here,
  * including per-mirror status and a "down" reason, so a broken mirror can be
- * flagged without deleting it.
+ * flagged without deleting it. The quick-add box at the top turns a pasted URL
+ * into a filled-in mirror (provider + label detected from the host).
  */
 export default function DownloadLinksEditor({ links, onChange }) {
   const list = links || [];
+  const [pasted, setPasted] = useState('');
+  const [pasteError, setPasteError] = useState('');
 
   const update = (index, field, value) => {
     const next = list.map((l, i) => {
@@ -68,8 +111,56 @@ export default function DownloadLinksEditor({ links, onChange }) {
     onChange(next.map((l, i) => ({ ...l, sort_order: i })));
   };
 
+  /** Paste a URL -> a ready-made mirror row. */
+  const addFromUrl = () => {
+    const info = describeUrl(pasted);
+    if (!info) {
+      setPasteError('That is not a valid http(s) URL');
+      return;
+    }
+    setPasteError('');
+    const index = list.length;
+    onChange([...list, {
+      ...blankLink(index),
+      label: info.label,
+      storage_provider: info.provider,
+      storage_path: info.storage_path,
+      download_url: pasted.trim(),
+      is_primary: index === 0,
+    }]);
+    setPasted('');
+  };
+
   return (
     <div>
+      <div className="rounded-xl border border-border bg-background p-3 mb-4">
+        <label className="text-[11px] text-textMuted block mb-1.5 flex items-center gap-1.5">
+          <ClipboardPaste className="w-3.5 h-3.5" /> Quick add — paste a download URL
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <input
+            value={pasted}
+            onChange={(e) => { setPasted(e.target.value); setPasteError(''); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addFromUrl(); } }}
+            placeholder="https://drive.google.com/file/d/... or any direct link"
+            className="flex-1 min-w-[220px] px-3 py-2 bg-surface border border-border rounded-lg text-sm font-mono focus:outline-none focus:border-primary/50"
+          />
+          <button
+            type="button"
+            onClick={addFromUrl}
+            disabled={!pasted.trim()}
+            className="px-4 py-2 bg-gradient-primary text-white rounded-lg text-xs font-medium disabled:opacity-40"
+          >
+            Add mirror
+          </button>
+        </div>
+        <p className="text-[11px] text-textMuted mt-1.5">
+          {pasteError
+            ? <span className="text-red-400">{pasteError}</span>
+            : 'Provider and label are detected from the link; Google Drive file IDs are extracted automatically.'}
+        </p>
+      </div>
+
       <div className="flex items-center justify-between mb-2">
         <label className="text-xs font-medium text-textMuted uppercase tracking-widest">
           Download links ({list.length})

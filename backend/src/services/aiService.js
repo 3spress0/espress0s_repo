@@ -284,6 +284,154 @@ STRICT RULES:
     return answer;
   }
 
+  /**
+   * Draft the copy for a file page from the metadata an admin has typed so far.
+   *
+   * This is a *writing* helper, not the visitor-facing Q&A path: it produces a
+   * one-line summary plus a markdown body the admin can edit before saving.
+   * tgpt is used when available; otherwise a deterministic markdown skeleton is
+   * generated from the same metadata so the button always does something useful
+   * on a VM without tgpt installed.
+   *
+   * @param {object} meta  { name, version, category, platform, architecture,
+   *                         file_type, file_size, tags[], links[], notes }
+   * @returns {{description: string, long_description: string, usedTgpt: boolean}}
+   */
+  async describeItem(meta = {}) {
+    const clean = {
+      name: String(meta.name || '').trim(),
+      version: String(meta.version || '').trim(),
+      category: String(meta.category || '').trim(),
+      platform: String(meta.platform || '').trim(),
+      architecture: String(meta.architecture || '').trim(),
+      file_type: String(meta.file_type || '').trim(),
+      file_size: Number(meta.file_size) || null,
+      tags: Array.isArray(meta.tags) ? meta.tags.filter(Boolean).map(String).slice(0, 15) : [],
+      links: Array.isArray(meta.links) ? meta.links.filter(Boolean).map(String).slice(0, 10) : [],
+      notes: String(meta.notes || '').trim().slice(0, 1000),
+    };
+
+    if (!clean.name) throw new Error('name is required to draft a description');
+
+    if (await this.checkTgptAvailable()) {
+      try {
+        const draft = await this.draftWithTgpt(clean);
+        if (draft) return { ...draft, usedTgpt: true };
+      } catch (e) {
+        console.warn('tgpt draft failed, falling back to template:', e.message);
+      }
+    }
+
+    return { ...this.templateDraft(clean), usedTgpt: false };
+  }
+
+  async draftWithTgpt(meta) {
+    const binary = fs.existsSync(config.ai.binaryPath) ? config.ai.binaryPath : 'tgpt';
+
+    const facts = [
+      `Name: ${meta.name}`,
+      meta.version && `Version: ${meta.version}`,
+      meta.category && `Category: ${meta.category}`,
+      meta.platform && `Platform: ${meta.platform}`,
+      meta.architecture && `Architecture: ${meta.architecture}`,
+      meta.file_type && `File type: ${meta.file_type}`,
+      meta.file_size && `File size: ${(meta.file_size / 1024 / 1024).toFixed(1)} MB`,
+      meta.tags.length && `Tags: ${meta.tags.join(', ')}`,
+      meta.links.length && `Download sources: ${meta.links.join(', ')}`,
+      meta.notes && `Admin notes: ${meta.notes}`,
+    ].filter(Boolean).join('\n');
+
+    const prompt = `You are writing the catalogue page for a file in a personal software archive.
+
+FACTS (the only things you know for certain):
+${facts}
+
+Write the page copy. Rules:
+- Never invent version numbers, checksums, file sizes or download links.
+- If you are unsure about a detail, leave a placeholder in square brackets, e.g. [confirm minimum RAM].
+- Neutral, factual, technical tone. No marketing hype.
+
+Reply with exactly this structure and nothing else:
+SUMMARY: <one sentence, max 160 characters>
+BODY:
+<markdown body, 120-250 words, using "## " headings such as Overview, What's included, Requirements, Notes, plus bullet lists>`;
+
+    const tmpFile = path.join('/tmp', `tgpt-describe-${Date.now()}.txt`);
+    fs.writeFileSync(tmpFile, prompt);
+
+    try {
+      const providerFlag = config.ai.provider ? `--provider ${config.ai.provider}` : '';
+      const { stdout } = await execAsync(`cat ${tmpFile} | ${binary} ${providerFlag} --quiet 2>&1`, {
+        timeout: 45000,
+        maxBuffer: 1024 * 1024,
+      });
+
+      const out = (stdout || '').trim();
+      if (!out) return null;
+
+      const summaryMatch = out.match(/SUMMARY:\s*(.+)/i);
+      const bodyMatch = out.match(/BODY:\s*([\s\S]+)/i);
+
+      const description = (summaryMatch?.[1] || '').trim().slice(0, 480);
+      const long_description = (bodyMatch?.[1] || (summaryMatch ? '' : out)).trim().slice(0, 5000);
+
+      if (!description && !long_description) return null;
+
+      return {
+        description: description || this.templateDraft(meta).description,
+        long_description: long_description || this.templateDraft(meta).long_description,
+      };
+    } finally {
+      try { fs.unlinkSync(tmpFile); } catch {}
+    }
+  }
+
+  /**
+   * Deterministic fallback draft. Produces a filled-in markdown skeleton from
+   * the metadata, with [bracketed] prompts where the admin has to decide.
+   */
+  templateDraft(meta) {
+    const label = [meta.name, meta.version].filter(Boolean).join(' ');
+    const kind = meta.file_type ? meta.file_type.toUpperCase() : 'file';
+    const target = [meta.platform, meta.architecture].filter(Boolean).join(' / ');
+
+    const description = [
+      label,
+      meta.category ? `— ${meta.category.toLowerCase()}` : '',
+      target ? `for ${target}` : '',
+    ].filter(Boolean).join(' ').slice(0, 480);
+
+    const lines = [
+      '## Overview',
+      '',
+      `${label || meta.name} is [describe what this ${kind} is and who it is for].`,
+      '',
+      '## What you get',
+      '',
+      `- ${kind} download${meta.file_size ? ` (${(meta.file_size / 1024 / 1024).toFixed(1)} MB)` : ''}`,
+      meta.links.length
+        ? `- ${meta.links.length} mirror${meta.links.length === 1 ? '' : 's'}: ${meta.links.join(', ')}`
+        : '- [add at least one download mirror]',
+      '- [list notable contents, editions or bundled tools]',
+      '',
+      '## Requirements',
+      '',
+      target ? `- Runs on: ${target}` : '- Runs on: [platform / architecture]',
+      '- [minimum RAM, disk space or dependencies]',
+      '',
+      '## Notes',
+      '',
+      '- Verify the SHA-256 checksum after downloading.',
+      '- [licensing, source or anything a visitor should know]',
+    ];
+
+    if (meta.tags.length) {
+      lines.push('', `Tags: ${meta.tags.map(t => `\`${t}\``).join(', ')}`);
+    }
+
+    return { description, long_description: lines.join('\n').slice(0, 5000) };
+  }
+
   async getSuggestions() {
     return [
       "Which Ubuntu ISO should I download for an Intel PC?",

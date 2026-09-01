@@ -5,6 +5,7 @@ import { itemsApi } from '../lib/api';
 import { formatBytes, formatDate, startDownload } from '../lib/utils';
 import { ItemPlaceholder } from '../components/Logo';
 import ItemEditor from '../components/admin/ItemEditor';
+import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
 
 export default function ItemDetail() {
@@ -357,7 +358,14 @@ export default function ItemDetail() {
           {item.long_description && (
             <div className="glass rounded-2xl border border-white/5 p-6">
               <h2 className="font-semibold text-textPrimary mb-3">About</h2>
-              <p className="text-sm text-textSecondary leading-relaxed whitespace-pre-wrap">{item.long_description}</p>
+              {/* Admin-authored markdown, rendered as React elements (no raw HTML). */}
+              <Markdown>{item.long_description}</Markdown>
+            </div>
+          )}
+          {item.changelog && (
+            <div className="glass rounded-2xl border border-white/5 p-6">
+              <h2 className="font-semibold text-textPrimary mb-3">Changelog</h2>
+              <Markdown>{item.changelog}</Markdown>
             </div>
           )}
           <div className="glass rounded-2xl border border-white/5 p-6">

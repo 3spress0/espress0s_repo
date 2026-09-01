@@ -10,7 +10,7 @@ import { useAuth } from '../context/AuthContext';
  */
 const NAV = [
   { to: '/admin', end: true, label: 'Overview', icon: Database },
-  { to: '/admin/items', label: 'Files', icon: HardDrive },
+  { to: '/admin/items', label: 'File pages', icon: HardDrive },
   { to: '/admin/categories', label: 'Categories', icon: FolderTree },
   { to: '/admin/users', label: 'Users', icon: Users },
   { to: '/admin/storage', label: 'Storage', icon: ExternalLink },

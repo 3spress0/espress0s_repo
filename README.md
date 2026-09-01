@@ -37,6 +37,7 @@
 - **Storage abstraction** — `StorageProvider` interface with Google Drive, OneDrive, External, GitHub, Local providers. VM never stores large files; downloads redirect to providers
 - **AI FAQ** — "Ask espress0's repo" powered by [aandrew-me/tgpt](https://github.com/aandrew-me/tgpt) CLI. Searches metadata first, never hallucinates files, gracefully degrades to rule-based
 - **Admin panel** — add/edit files, set checksums, assign storage provider, feature/unpublish, reindex search
+- **Fast page authoring** — templates for new file pages, markdown body with preview and an AI draft button, paste-a-URL mirrors, live URL (slug) checking, duplicate-as-draft, bulk publish/unpublish/delete (see [Authoring file pages](#-authoring-file-pages))
 - **Security** — JWT auth, bcrypt, helmet, rate-limiting, CSRF-safe, no secrets in frontend
 - **Low-resource optimized** — designed for small Azure VM (1 vCPU, 1GB RAM), no local AI models, no ISO hosting on VM
 - **Production ready** — Docker, docker-compose, systemd, Nginx/Caddy examples, HTTPS, backup script, GitHub Actions CI/CD
@@ -182,6 +183,46 @@ chmod +x scripts/backup.sh
 # Backup only DB + config, NOT ISOs (those live externally)
 # For off-site, configure rclone in backup.sh
 ```
+
+## ✍️ Authoring file pages
+
+Every file in the repo has its own public page at `/file/<slug>`. Admins manage those
+pages under **Admin → File pages** (`/admin/items`).
+
+**Creating a page**
+
+1. Click **New page** and pick a template (Linux ISO, Windows app, portable utility,
+   dev tool, game, document, or blank). The template fills in type, platform,
+   architecture, tags, license posture and a markdown outline — nothing you have
+   already typed is overwritten.
+2. Fill in the **Basics**. The page URL is generated from the name; you can edit it
+   and it is checked against existing pages while you type (`GET /api/admin/slug-check`).
+3. Write the **Description** in markdown, with a toolbar and a live preview.
+   **Draft with AI** (`POST /api/admin/ai/describe`, admin-only) turns the metadata
+   you have entered into a first draft via tgpt; without tgpt installed it produces a
+   filled-in outline with `[bracketed]` prompts instead. Always review it — the model
+   is told not to invent versions, sizes or links, but it does not know your files.
+4. Add **Images** (upload, paste a URL, or pick from the media library) and
+   **Downloads** — paste a link into the quick-add box and the provider, label and
+   Google Drive file ID are detected for you.
+5. The **page checklist** at the bottom shows what is still missing; each entry jumps to
+   the relevant section. Save with **Save as draft**, **Create page** or
+   **Save & publish** — or `Ctrl`/`⌘ + S`.
+
+**Editing and removing**
+
+- Inline **publish/unpublish** toggle straight from the list, plus a per-row
+  **duplicate as draft** (copies every field and mirror, `POST /api/admin/items/:id/duplicate`)
+  for a new release or a sibling edition.
+- Tick several rows for **bulk publish / unpublish / feature / unfeature / delete**
+  (`POST /api/admin/items/bulk`, one transaction).
+- Deleting asks for confirmation and spells out what disappears (the URL and its
+  mirrors). Unpublishing is the reversible alternative.
+
+Page bodies and changelogs are rendered by a small in-house markdown renderer
+(`frontend/src/lib/markdown.jsx`) that builds React elements directly — no HTML string
+and no `dangerouslySetInnerHTML`, so admin-authored content cannot inject markup, and
+`javascript:` links are dropped.
 
 ## 🔐 Storage Providers
 

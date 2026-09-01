@@ -81,6 +81,12 @@ export const adminApi = {
   settings: () => api.get('/admin/settings').then(r => r.data),
   updateSettings: (settings) => api.put('/admin/settings', { settings }).then(r => r.data),
   resetSetting: (key) => api.post(`/admin/settings/reset/${key}`).then(r => r.data),
+  /** Page authoring helpers. */
+  checkSlug: (slug, excludeId) =>
+    api.get('/admin/slug-check', { params: { slug, ...(excludeId ? { excludeId } : {}) } }).then(r => r.data),
+  duplicateItem: (id) => api.post(`/admin/items/${id}/duplicate`).then(r => r.data),
+  bulkItems: (action, ids) => api.post('/admin/items/bulk', { action, ids }).then(r => r.data),
+  describeItem: (meta) => api.post('/admin/ai/describe', meta).then(r => r.data),
 };
 
 export const settingsApi = {

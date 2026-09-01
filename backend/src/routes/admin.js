@@ -4,6 +4,7 @@ import { storageManager } from '../services/storage/index.js';
 import { encryptionService } from '../services/encryptionService.js';
 import { monitoringService } from '../services/monitoringService.js';
 import { getItemLinksForMany, serializeItem } from '../services/itemSerializer.js';
+import { makeSlug } from '../utils/slug.js';
 
 export async function adminRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
@@ -106,6 +107,173 @@ export async function adminRoutes(fastify) {
         totalPages: Math.ceil(total / parseInt(limit)),
       }
     };
+  });
+
+  // === FILE PAGE AUTHORING HELPERS ===
+  //
+  // These exist so the admin UI can create, copy and retire file pages without
+  // hand-editing every field or firing one request per row.
+
+  /**
+   * GET /admin/slug-check?slug=foo&excludeId=3
+   * Live availability check for the editor's URL field, plus a normalised
+   * suggestion so the admin sees the real URL before saving.
+   */
+  fastify.get('/admin/slug-check', async (request, reply) => {
+    const { slug = '', excludeId } = request.query;
+    const normalised = makeSlug(String(slug));
+    if (!normalised || normalised.length < 2) {
+      return { slug: normalised, valid: false, available: false, reason: 'Slug must be at least 2 characters' };
+    }
+
+    const db = getDb();
+    const clash = excludeId
+      ? db.prepare('SELECT id, name FROM items WHERE slug = ? AND id != ?').get(normalised, excludeId)
+      : db.prepare('SELECT id, name FROM items WHERE slug = ?').get(normalised);
+
+    return {
+      slug: normalised,
+      valid: true,
+      available: !clash,
+      takenBy: clash ? { id: clash.id, name: clash.name } : null,
+      url: `/file/${normalised}`,
+    };
+  });
+
+  /**
+   * POST /admin/items/:id/duplicate
+   * Copies a page (including every mirror) as an unpublished draft, so a new
+   * release or a sibling edition starts from a filled-in page instead of a
+   * blank form. The copy is never published and never featured.
+   */
+  fastify.post('/admin/items/:id/duplicate', async (request, reply) => {
+    const db = getDb();
+    const source = db.prepare('SELECT * FROM items WHERE id = ?').get(request.params.id);
+    if (!source) return reply.code(404).send({ error: 'Item not found' });
+
+    const baseName = `${source.name} (copy)`;
+    let name = baseName;
+    let slug = makeSlug(baseName);
+    let n = 2;
+    while (db.prepare('SELECT id FROM items WHERE slug = ?').get(slug)) {
+      name = `${source.name} (copy ${n})`;
+      slug = makeSlug(name);
+      n += 1;
+      if (n > 50) return reply.code(409).send({ error: 'Too many copies of this item' });
+    }
+
+    const now = new Date().toISOString();
+    const columns = Object.keys(source).filter(
+      c => !['id', 'slug', 'name', 'created_at', 'updated_at', 'download_count', 'view_count'].includes(c)
+    );
+    const values = {};
+    for (const c of columns) values[c] = source[c];
+
+    const insertSql = `
+      INSERT INTO items (name, slug, created_at, updated_at, download_count, view_count, ${columns.join(', ')})
+      VALUES (@name, @slug, @created_at, @updated_at, 0, 0, ${columns.map(c => `@${c}`).join(', ')})
+    `;
+
+    const copyId = db.transaction(() => {
+      const res = db.prepare(insertSql).run({ ...values, name, slug, created_at: now, updated_at: now });
+      const newId = res.lastInsertRowid;
+      // Drafts start unpublished/unfeatured whatever the source was.
+      db.prepare('UPDATE items SET published = 0, featured = 0 WHERE id = ?').run(newId);
+
+      const links = db.prepare('SELECT * FROM item_download_links WHERE item_id = ?').all(source.id);
+      const insertLink = db.prepare(`
+        INSERT INTO item_download_links
+          (item_id, label, storage_provider, storage_path, download_url, file_size, is_primary, is_down, down_reason, status, sort_order)
+        VALUES (@item_id, @label, @storage_provider, @storage_path, @download_url, @file_size, @is_primary, @is_down, @down_reason, @status, @sort_order)
+      `);
+      links.forEach((l, i) => {
+        insertLink.run({
+          item_id: newId,
+          label: l.label,
+          storage_provider: l.storage_provider,
+          storage_path: l.storage_path,
+          download_url: l.download_url,
+          file_size: l.file_size,
+          is_primary: l.is_primary,
+          is_down: l.is_down,
+          down_reason: l.down_reason,
+          status: l.status,
+          sort_order: l.sort_order ?? i,
+        });
+      });
+
+      return newId;
+    })();
+
+    const raw = db.prepare('SELECT * FROM items WHERE id = ?').get(copyId);
+    return reply.code(201).send({ item: serializeItem(raw), message: `Duplicated as draft "${name}"` });
+  });
+
+  /**
+   * POST /admin/items/bulk  { action, ids: [] }
+   * Publish / unpublish / feature / unfeature / delete several pages at once.
+   * One transaction, so a bad id can't leave the list half-changed.
+   */
+  fastify.post('/admin/items/bulk', async (request, reply) => {
+    const { action, ids } = request.body || {};
+    const allowed = ['publish', 'unpublish', 'feature', 'unfeature', 'delete'];
+    if (!allowed.includes(action)) {
+      return reply.code(400).send({ error: `action must be one of: ${allowed.join(', ')}` });
+    }
+
+    const cleanIds = Array.isArray(ids)
+      ? [...new Set(ids.map(Number).filter(n => Number.isInteger(n) && n > 0))]
+      : [];
+    if (!cleanIds.length) return reply.code(400).send({ error: 'ids must be a non-empty array of item ids' });
+    if (cleanIds.length > 200) return reply.code(400).send({ error: 'Too many items in one request (max 200)' });
+
+    const db = getDb();
+    const placeholders = cleanIds.map(() => '?').join(',');
+
+    const statements = {
+      publish: `UPDATE items SET published = 1, updated_at = ? WHERE id IN (${placeholders})`,
+      unpublish: `UPDATE items SET published = 0, updated_at = ? WHERE id IN (${placeholders})`,
+      feature: `UPDATE items SET featured = 1, updated_at = ? WHERE id IN (${placeholders})`,
+      unfeature: `UPDATE items SET featured = 0, updated_at = ? WHERE id IN (${placeholders})`,
+    };
+
+    let affected = 0;
+    if (action === 'delete') {
+      affected = db.transaction(() =>
+        db.prepare(`DELETE FROM items WHERE id IN (${placeholders})`).run(...cleanIds).changes
+      )();
+    } else {
+      const now = new Date().toISOString();
+      affected = db.transaction(() =>
+        db.prepare(statements[action]).run(now, ...cleanIds).changes
+      )();
+    }
+
+    return { success: true, action, affected, ids: cleanIds };
+  });
+
+  /**
+   * POST /admin/ai/describe
+   * Drafts the page copy (summary + markdown body) from whatever metadata the
+   * admin has filled in. Admin-only: it shells out to tgpt, so it must not be
+   * reachable by visitors.
+   */
+  fastify.post('/admin/ai/describe', {
+    config: { rateLimit: { max: 20, timeWindow: '5 minutes' } },
+  }, async (request, reply) => {
+    const body = request.body || {};
+    if (!body.name || String(body.name).trim().length < 2) {
+      return reply.code(400).send({ error: 'Enter a name first — the draft is generated from it' });
+    }
+
+    try {
+      const { aiService } = await import('../services/aiService.js');
+      const draft = await aiService.describeItem(body);
+      return draft;
+    } catch (e) {
+      request.log.error(e);
+      return reply.code(500).send({ error: 'Could not generate a draft', message: e.message });
+    }
   });
 
   fastify.get('/admin/backup-info', async (request, reply) => {
