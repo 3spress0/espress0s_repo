@@ -6,13 +6,35 @@ import { encryptionService } from '../services/encryptionService.js';
 import { captchaService } from '../services/captchaService.js';
 import { z } from 'zod';
 
+/**
+ * Session cookie options. `secure` follows the environment (see
+ * config.security.cookieSecure) instead of being pinned to false, which used
+ * to send the session token in clear text on every production request.
+ */
+function sessionCookieOptions(extra = {}) {
+  return {
+    path: '/',
+    httpOnly: true,
+    secure: config.security.cookieSecure,
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60,
+    ...extra,
+  };
+}
+
 const profileSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_-]+$/, 'Invalid username').optional(),
   email: z.string().email().max(100).optional(),
   currentPassword: z.string().min(4).max(200).optional().nullable(),
   newPassword: z.string().min(8).max(128).regex(/[a-z]/, 'Need lowercase').regex(/[A-Z]/, 'Need uppercase').regex(/[0-9]/, 'Need number').optional().nullable(),
   confirmNewPassword: z.string().optional().nullable(),
-  avatar_url: z.string().url().or(z.literal('')).optional().nullable(),
+  // z.string().url() happily accepts javascript: and data: URLs; restrict the
+  // schemes since this value is rendered back into the page.
+  avatar_url: z.string().url()
+    .refine(v => /^https?:\/\//i.test(v), 'Avatar URL must start with http:// or https://')
+    .or(z.string().regex(/^\/api\/uploads\/[a-zA-Z0-9._-]+$/, 'Invalid upload path'))
+    .or(z.literal(''))
+    .optional().nullable(),
   bio: z.string().max(500).optional().nullable(),
   theme: z.enum(['dark', 'light', 'auto']).optional(),
 }).refine(data => {
@@ -60,6 +82,7 @@ export async function authRoutes(fastify) {
     if (!user.password_hash.startsWith('pepper_v1:')) {
       const newHash = await encryptionService.hashPasswordWithPepper(password);
       db.prepare('UPDATE users SET password_hash = ?, encryption_version = ? WHERE id = ?').run(newHash, 'v1', user.id);
+      user = { ...user, password_hash: newHash };
     }
     let decryptedEmail = user.email;
     try { decryptedEmail = encryptionService.decrypt(user.email); } catch {}
@@ -68,20 +91,8 @@ export async function authRoutes(fastify) {
     const token = generateToken({ ...user, email: decryptedEmail });
 
     // Set cookies - actual cookies for downloads
-    reply.setCookie('espress0_token', token, {
-      path: '/',
-      httpOnly: true,
-      secure: false, // set true in prod with HTTPS
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60,
-    });
-    reply.setCookie('espress0_auth', '1', {
-      path: '/',
-      httpOnly: false,
-      secure: false,
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60,
-    });
+    reply.setCookie('espress0_token', token, sessionCookieOptions());
+    reply.setCookie('espress0_auth', '1', sessionCookieOptions({ httpOnly: false }));
 
     request.log.info({ userId: user.id, username: user.username }, 'User logged in with cookies');
     return { token, user: { id: user.id, username: user.username, email: decryptedEmail, role: user.role, avatar_url: decAvatar, bio: decBio, theme: user.theme || 'dark' } };
@@ -92,6 +103,12 @@ export async function authRoutes(fastify) {
   }, async (request, reply) => {
     const parsed = registerSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+
+    // Checked before any lookup: with registration closed the endpoint must
+    // not double as a username/email oracle.
+    if (!config.security.allowRegistration) {
+      return reply.code(403).send({ error: 'Registration is disabled. Contact admin.' });
+    }
 
     const { username, email, password, captchaId, captchaAnswer, captchaToken } = request.body;
     const captchaType = process.env.CAPTCHA_TYPE || 'math';
@@ -109,7 +126,6 @@ export async function authRoutes(fastify) {
     for (const u of allUsers) {
       try { const dec = encryptionService.decrypt(u.email); if (dec.toLowerCase() === email.toLowerCase()) return reply.code(409).send({ error: 'Email already exists' }); } catch { if (u.email.toLowerCase() === email.toLowerCase()) return reply.code(409).send({ error: 'Email already exists' }); }
     }
-    if (!config.security.allowRegistration) return reply.code(403).send({ error: 'Registration is disabled. Contact admin.' });
     const encryptedEmail = encryptionService.encrypt(email);
     const hash = await encryptionService.hashPasswordWithPepper(password);
     const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
@@ -118,22 +134,10 @@ export async function authRoutes(fastify) {
       const result = db.prepare(`INSERT INTO users (username, email, email_hash, password_hash, role, encryption_version) VALUES (?, ?, ?, ?, ?, ?)`).run(username, encryptedEmail, emailHash, hash, role, 'v1');
       const newUser = db.prepare('SELECT id, username, email, role FROM users WHERE id = ?').get(result.lastInsertRowid);
       let decEmail = newUser.email; try { decEmail = encryptionService.decrypt(newUser.email); } catch {}
-      const token = generateToken({ ...newUser, email: decEmail });
+      const token = generateToken({ ...newUser, email: decEmail }, { passwordHash: hash });
 
-      reply.setCookie('espress0_token', token, {
-        path: '/',
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60,
-      });
-      reply.setCookie('espress0_auth', '1', {
-        path: '/',
-        httpOnly: false,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60,
-      });
+      reply.setCookie('espress0_token', token, sessionCookieOptions());
+      reply.setCookie('espress0_auth', '1', sessionCookieOptions({ httpOnly: false }));
 
       request.log.info({ userId: newUser.id, username: newUser.username, role }, 'New user registered with cookies');
       return reply.code(201).send({
@@ -291,10 +295,10 @@ export async function authRoutes(fastify) {
         passwordHashing: 'pepper (HMAC-SHA256) + bcrypt cost 12 + versioned',
         emailEncryption: 'AES-256-GCM with random IV + HMAC hash for lookup',
         itemEncryption: 'storage_path, download_url, external_url, license_notes AES-256-GCM',
-        jwt: 'HS256 with expiry, cookies httpOnly SameSite Lax + Bearer header + query token',
+        jwt: 'HS256 (algorithm pinned) with expiry, invalidated on password change; httpOnly SameSite=Lax cookie or Bearer header (query ?token= only on download/preview)',
         rateLimiting: 'Enabled',
         sqlInjection: 'Parameterized queries',
-        xss: 'React auto-escapes',
+        xss: 'React auto-escapes, strict Content-Security-Policy, uploads served sandboxed with nosniff',
         captcha: `Type: ${process.env.CAPTCHA_TYPE || 'math'}`,
         downloads: 'Login required, unlimited mirrors, can mark as down',
       },

@@ -12,12 +12,7 @@
  * *italic*, `code`, [links](url) and bare URLs.
  */
 
-const SAFE_LINK = /^(https?:\/\/|\/|mailto:|#)/i;
-
-function safeHref(href) {
-  const trimmed = (href || '').trim();
-  return SAFE_LINK.test(trimmed) ? trimmed : null;
-}
+import { safeHref } from './utils';
 
 /** Inline formatting -> array of React nodes. */
 function renderInline(text, keyPrefix = 'i') {
@@ -54,7 +49,7 @@ function renderInline(text, keyPrefix = 'i') {
       );
     } else {
       nodes.push(
-        <a key={key} href={token} target="_blank" rel="noreferrer noopener" className="text-primary hover:underline break-words">{token}</a>
+        <a key={key} href={safeHref(token) || undefined} target="_blank" rel="noreferrer noopener" className="text-primary hover:underline break-words">{token}</a>
       );
     }
 

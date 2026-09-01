@@ -4,6 +4,22 @@ export function cn(...inputs) {
   return clsx(inputs);
 }
 
+// Schemes that are safe to put in an href/src. Everything else (javascript:,
+// data:, vbscript:, blob: from elsewhere) is rejected.
+const SAFE_LINK = /^(https?:\/\/|\/(?!\/)|mailto:|#)/i;
+
+/**
+ * @param {string|null|undefined} href
+ * @returns {string|null} the trimmed href when it is safe to link to, else null
+ */
+export function safeHref(href) {
+  const trimmed = String(href ?? '').trim();
+  if (!trimmed) return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f]/.test(trimmed)) return null; // "java\nscript:" tricks
+  return SAFE_LINK.test(trimmed) ? trimmed : null;
+}
+
 export function formatBytes(bytes) {
   if (!bytes || bytes === 0) return '0 B';
   const k = 1024;
@@ -36,6 +52,13 @@ export function formatDate(dateStr) {
  */
 export function startDownload(url, fileName) {
   if (!url) return;
+  // The URL comes back from the API, i.e. out of the database. Navigating to a
+  // javascript:/data: URL here would execute in our own origin, so anything
+  // that is not http(s) or an app-relative path is dropped.
+  if (!safeHref(url)) {
+    console.warn('Refusing to open unsafe download URL');
+    return;
+  }
   const a = document.createElement('a');
   a.href = url;
   a.rel = 'noopener noreferrer';

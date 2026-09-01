@@ -2,13 +2,18 @@ import { aiQuerySchema } from '../utils/validation.js';
 import { aiService } from '../services/aiService.js';
 import { getDb } from '../db/index.js';
 
+// Each ask can spawn a tgpt subprocess, so this endpoint is far more
+// expensive than a normal read. Keep it well under the global limit.
+const askRateLimit = { config: { rateLimit: { max: 15, timeWindow: '5 minutes' } } };
+const MAX_QUESTION_LENGTH = 500;
+
 export async function aiRoutes(fastify) {
   // GET /api/ai/ask?q=...
-  fastify.get('/ai/ask', async (request, reply) => {
+  fastify.get('/ai/ask', askRateLimit, async (request, reply) => {
     const { q, question } = request.query;
-    const query = q || question;
+    const query = String(q || question || '').slice(0, MAX_QUESTION_LENGTH);
 
-    if (!query || query.length < 2) {
+    if (query.length < 2) {
       return reply.code(400).send({ error: 'Query too short, min 2 chars' });
     }
 
@@ -17,18 +22,18 @@ export async function aiRoutes(fastify) {
       return result;
     } catch (e) {
       request.log.error(e);
-      return reply.code(500).send({ error: 'AI service error', message: e.message });
+      return reply.code(500).send({ error: 'AI service error' });
     }
   });
 
   // POST /api/ai/ask
-  fastify.post('/ai/ask', async (request, reply) => {
+  fastify.post('/ai/ask', askRateLimit, async (request, reply) => {
     const parsed = aiQuerySchema.safeParse(request.body || request.query);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Invalid input', details: parsed.error.errors });
     }
 
-    const query = parsed.data.q || parsed.data.question;
+    const query = String(parsed.data.q || parsed.data.question || '').slice(0, MAX_QUESTION_LENGTH);
     if (!query) return reply.code(400).send({ error: 'Missing question' });
 
     try {
@@ -36,7 +41,7 @@ export async function aiRoutes(fastify) {
       return result;
     } catch (e) {
       request.log.error(e);
-      return reply.code(500).send({ error: 'AI service error', message: e.message });
+      return reply.code(500).send({ error: 'AI service error' });
     }
   });
 

@@ -3,7 +3,11 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import cookie from '@fastify/cookie';
-import { config } from './config.js';
+import { config, assertProductionSecrets } from './config.js';
+import crypto from 'crypto';
+import fsSync from 'fs';
+import pathSync from 'path';
+import { fileURLToPath } from 'url';
 import { getDb } from './db/index.js';
 
 // Routes
@@ -22,6 +26,38 @@ import { uploadsRoutes } from './routes/uploads.js';
 import multipart from '@fastify/multipart';
 import { monitoringService } from './services/monitoringService.js';
 
+// Boot-time configuration audit. In production this throws; in development it
+// prints the same list so the gap is visible before deploy day.
+{
+  const problems = assertProductionSecrets();
+  if (problems.length && config.isDev) {
+    console.warn('\n[security] Development defaults in use:\n  - ' + problems.join('\n  - ') + '\n');
+  }
+}
+
+/**
+ * Hashes of the inline <script> blocks in the built index.html (the theme
+ * pre-paint that avoids a light flash). Hashing them keeps script-src free of
+ * 'unsafe-inline' while still allowing exactly those bytes.
+ */
+function inlineScriptHashes() {
+  try {
+    const dir = pathSync.dirname(fileURLToPath(import.meta.url));
+    const indexHtml = pathSync.resolve(dir, '../../frontend/dist/index.html');
+    if (!fsSync.existsSync(indexHtml)) return [];
+    const html = fsSync.readFileSync(indexHtml, 'utf8');
+    const hashes = [];
+    for (const match of html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/gi)) {
+      const body = match[1];
+      if (!body.trim()) continue;
+      hashes.push(`'sha256-${crypto.createHash('sha256').update(body, 'utf8').digest('base64')}'`);
+    }
+    return hashes;
+  } catch {
+    return [];
+  }
+}
+
 const fastify = Fastify({
   logger: {
     level: config.logLevel,
@@ -34,9 +70,43 @@ await fastify.register(cookie, {
   secret: config.security.jwtSecret, // for signed cookies
 });
 
+// Content-Security-Policy. Cover images and mirrors legitimately point at
+// arbitrary https hosts, so img-src/media-src stay open, but scripts are
+// restricted to our own bundle (plus the hashed inline theme bootstrap), which
+// is what actually contains an XSS.
 await fastify.register(helmet, {
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    // Explicit list rather than helmet's defaults, so the policy does not
+    // change under us on a dependency bump.
+    useDefaults: false,
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      formAction: ["'self'"],
+      scriptSrc: ["'self'", ...inlineScriptHashes()],
+      scriptSrcAttr: ["'none'"],
+      // Tailwind ships a stylesheet, but React inline styles and the
+      // starfield's injected keyframes need attribute/inline styles.
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      mediaSrc: ["'self'", 'blob:', 'https:'],
+      fontSrc: ["'self'", 'data:'],
+      connectSrc: config.isDev ? ["'self'", 'http:', 'https:', 'ws:', 'wss:'] : ["'self'", 'https:'],
+      workerSrc: ["'self'", 'blob:'],
+      manifestSrc: ["'self'"],
+      // Only meaningful behind TLS; leaving it on in dev would break a
+      // locally served production build over plain http.
+      ...(config.isProd ? { upgradeInsecureRequests: [] } : {}),
+    },
+  },
   crossOriginEmbedderPolicy: false,
+  // Uploaded images are consumed by the SPA on the same origin; in dev the
+  // Vite origin differs, so keep this permissive there only.
+  crossOriginResourcePolicy: { policy: config.isDev ? 'cross-origin' : 'same-site' },
+  hsts: config.isProd ? { maxAge: 31536000, includeSubDomains: true } : false,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 });
 
 await fastify.register(cors, {

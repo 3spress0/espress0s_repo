@@ -5,7 +5,15 @@ import { getDb } from '../db/index.js';
  * Uses FTS5 for full-text + custom ranking + Levenshtein for typo tolerance
  */
 
+// Levenshtein is O(n*m); refuse to run it on pathological input so a long
+// query string cannot pin a CPU core.
+const MAX_TERM_LENGTH = 64;
+export const MAX_QUERY_LENGTH = 128;
+
 function levenshtein(a, b) {
+  if (a.length > MAX_TERM_LENGTH || b.length > MAX_TERM_LENGTH) {
+    return Math.abs(a.length - b.length) + MAX_TERM_LENGTH;
+  }
   const matrix = [];
   for (let i = 0; i <= b.length; i++) matrix[i] = [i];
   for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
@@ -26,12 +34,32 @@ function levenshtein(a, b) {
 }
 
 function tokenize(query) {
-  return query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+  return String(query || '')
+    .slice(0, MAX_QUERY_LENGTH)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(t => t.length > 1)
+    .slice(0, 12);
+}
+
+/**
+ * Build an FTS5 MATCH expression.
+ *
+ * The tokens are wrapped in double quotes, so a token containing a quote used
+ * to break out of the phrase and let the caller inject FTS operators (NEAR,
+ * column filters, unbalanced syntax that throws). Everything except letters,
+ * digits, dot, underscore and dash is stripped first - FTS5 has no bound
+ * parameters inside a MATCH string, so escaping is the only option.
+ */
+function sanitizeFtsToken(token) {
+  return token.replace(/[^\p{L}\p{N}._-]+/gu, ' ').trim();
 }
 
 function buildFtsQuery(query) {
   // Convert "ubuntu 24.04" to "ubuntu* 24.04*"
-  const tokens = tokenize(query);
+  const tokens = tokenize(query)
+    .map(sanitizeFtsToken)
+    .filter(t => t.length > 1);
   if (tokens.length === 0) return '';
   // Use prefix matching for typo tolerance: token*
   // Also handle OR for better recall

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Database, Shield } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
+import { safeHref } from '../lib/utils';
 
 /**
  * Footer. Branding, intro copy and every link come from site settings, so an
@@ -53,7 +54,7 @@ export default function Footer() {
                 {links.filter(l => (l.group || 'Links') === group).map((l, i) => (
                   <li key={`${l.href}-${i}`}>
                     {isExternal(l) ? (
-                      <a href={l.href} target="_blank" rel="noopener noreferrer" className="text-textSecondary hover:text-primary transition-colors">
+                      <a href={safeHref(l.href) || '#'} target="_blank" rel="noopener noreferrer" className="text-textSecondary hover:text-primary transition-colors">
                         {l.label}
                       </a>
                     ) : (

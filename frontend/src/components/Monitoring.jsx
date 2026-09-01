@@ -317,8 +317,8 @@ espress0_users_total ${db?.counts?.users || 0}
 `}
           </div>
           <div className="mt-3 flex gap-2">
-            <a href="/api/monitoring/prometheus" target="_blank" className="px-3 py-1.5 rounded-lg bg-surface border border-border text-xs hover:border-primary/30">Open /api/monitoring/prometheus</a>
-            <a href="/api/monitoring/health" target="_blank" className="px-3 py-1.5 rounded-lg bg-surface border border-border text-xs">Health</a>
+            <a href="/api/monitoring/prometheus" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg bg-surface border border-border text-xs hover:border-primary/30">Open /api/monitoring/prometheus</a>
+            <a href="/api/monitoring/health" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg bg-surface border border-border text-xs">Health</a>
           </div>
         </div>
       </div>

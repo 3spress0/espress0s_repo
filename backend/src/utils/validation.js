@@ -41,8 +41,10 @@ export const itemSchema = z.object({
   md5: z.string().max(64).optional().nullable(),
   storage_provider: z.enum(['local', 'gdrive', 'onedrive', 'github', 'external']).default('external'),
   storage_path: z.string().max(1000).optional().nullable(),
-  download_url: z.string().url().or(z.literal('')).optional().nullable(),
-  external_url: z.string().url().or(z.literal('')).optional().nullable(),
+  // httpUrl (not z.string().url()) so javascript:/data: URLs cannot be stored
+  // and later handed to the browser as an href or a redirect target.
+  download_url: httpUrl.or(appRelativePath).or(z.literal('')).optional().nullable(),
+  external_url: httpUrl.or(z.literal('')).optional().nullable(),
   featured: z.boolean().or(z.number()).optional(),
   published: z.boolean().or(z.number()).optional(),
   license_status: z.enum(['public-domain', 'redistributable', 'proprietary', 'check-license', 'internal-only', 'abandonware']).default('check-license'),
@@ -51,7 +53,7 @@ export const itemSchema = z.object({
   icon_url: imageUrlSchema,
   image_url: imageUrlSchema,
   screenshots: z.string().or(z.array(imageUrlSchema)).optional().nullable(),
-  documentation_url: z.string().url().or(z.literal('')).optional().nullable(),
+  documentation_url: httpUrl.or(z.literal('')).optional().nullable(),
   changelog: z.string().max(5000).optional().nullable(),
 });
 

@@ -1,12 +1,67 @@
-import { exec } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
-import path from 'path';
 import { config } from '../config.js';
 import { getDb } from '../db/index.js';
 import { searchService } from './searchService.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+// Provider names are pasted into an argv slot; keep them boring.
+const PROVIDER_PATTERN = /^[a-zA-Z0-9_.-]{1,32}$/;
+
+function providerArgs() {
+  const provider = config.ai.provider;
+  if (!provider) return [];
+  if (!PROVIDER_PATTERN.test(provider)) {
+    console.warn(`[ai] Ignoring invalid TGPT_PROVIDER value: ${provider}`);
+    return [];
+  }
+  return ['--provider', provider];
+}
+
+/**
+ * Run tgpt with the prompt on stdin.
+ *
+ * Replaces the previous `cat /tmp/tgpt-prompt-<timestamp>.txt | tgpt ...`
+ * shell pipeline, which (a) invoked a shell with interpolated values, and
+ * (b) wrote predictable filenames into a world-writable directory, so any
+ * local user could pre-create a symlink there and have us clobber a file or
+ * feed the model their own prompt.
+ */
+function runTgpt(binary, prompt, { timeoutMs = 30000, maxBytes = 1024 * 1024 } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, [...providerArgs(), '--quiet'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false,
+    });
+
+    let out = '';
+    let err = '';
+    let settled = false;
+    const finish = (fn, value) => { if (!settled) { settled = true; fn(value); } };
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish(reject, Object.assign(new Error('tgpt timed out'), { code: 'ETIMEDOUT' }));
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk) => {
+      out += chunk;
+      if (out.length > maxBytes) { child.kill('SIGKILL'); out = out.slice(0, maxBytes); }
+    });
+    child.stderr.on('data', (chunk) => { if (err.length < 8192) err += chunk; });
+    child.on('error', (e) => { clearTimeout(timer); finish(reject, e); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      if (!out.trim() && err.trim()) return finish(reject, new Error(err.trim().slice(0, 500)));
+      finish(resolve, out);
+    });
+
+    child.stdin.on('error', () => {}); // tgpt may exit before we finish writing
+    child.stdin.end(prompt);
+  });
+}
 
 /**
  * AI Service using tgpt as backend
@@ -33,11 +88,11 @@ export class AIService {
       const binary = config.ai.binaryPath;
       if (!fs.existsSync(binary)) {
         // Try which tgpt
-        await execAsync('which tgpt');
+        await execFileAsync('which', ['tgpt']);
         this.tgptAvailable = true;
         return true;
       }
-      await execAsync(`${binary} --version`);
+      await execFileAsync(binary, ['--version']);
       this.tgptAvailable = true;
       return true;
     } catch {
@@ -173,30 +228,15 @@ STRICT RULES:
     
     const fullPrompt = `${context}\n\nProvide a concise, helpful answer (max 300 words). Include links to relevant items as /file/{slug} if applicable.`;
 
-    // Write prompt to temp file to avoid shell escaping issues
-    const tmpFile = path.join('/tmp', `tgpt-prompt-${Date.now()}.txt`);
-    fs.writeFileSync(tmpFile, fullPrompt);
+    const stdout = await runTgpt(binary, fullPrompt, { timeoutMs: 30000 });
 
-    try {
-      // Use tgpt with provider
-      const providerFlag = config.ai.provider ? `--provider ${config.ai.provider}` : '';
-      const cmd = `cat ${tmpFile} | ${binary} ${providerFlag} --quiet 2>&1`;
-      
-      const { stdout } = await execAsync(cmd, {
-        timeout: 30000,
-        maxBuffer: 1024 * 1024,
-      });
+    // Clean output - tgpt may include extra formatting
+    let answer = stdout.trim();
 
-      // Clean output - tgpt may include extra formatting
-      let answer = stdout.trim();
-      
-      // Basic sanitization: remove any potential hallucinated download URLs that aren't in our DB
-      answer = this.sanitizeAnswer(answer);
+    // Basic sanitization: remove any potential hallucinated download URLs that aren't in our DB
+    answer = this.sanitizeAnswer(answer);
 
-      return answer || this.ruleBasedAnswer(question, [], []);
-    } finally {
-      try { fs.unlinkSync(tmpFile); } catch {}
-    }
+    return answer || this.ruleBasedAnswer(question, [], []);
   }
 
   ruleBasedAnswer(question, items, faqs) {
@@ -356,15 +396,8 @@ SUMMARY: <one sentence, max 160 characters>
 BODY:
 <markdown body, 120-250 words, using "## " headings such as Overview, What's included, Requirements, Notes, plus bullet lists>`;
 
-    const tmpFile = path.join('/tmp', `tgpt-describe-${Date.now()}.txt`);
-    fs.writeFileSync(tmpFile, prompt);
-
     try {
-      const providerFlag = config.ai.provider ? `--provider ${config.ai.provider}` : '';
-      const { stdout } = await execAsync(`cat ${tmpFile} | ${binary} ${providerFlag} --quiet 2>&1`, {
-        timeout: 45000,
-        maxBuffer: 1024 * 1024,
-      });
+      const stdout = await runTgpt(binary, prompt, { timeoutMs: 45000 });
 
       const out = (stdout || '').trim();
       if (!out) return null;
@@ -381,8 +414,9 @@ BODY:
         description: description || this.templateDraft(meta).description,
         long_description: long_description || this.templateDraft(meta).long_description,
       };
-    } finally {
-      try { fs.unlinkSync(tmpFile); } catch {}
+    } catch (e) {
+      console.warn('[ai] describe failed:', e.message);
+      return null;
     }
   }
 
