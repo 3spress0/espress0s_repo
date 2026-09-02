@@ -141,3 +141,11 @@ function FileIcon({ type, size = 24 }) {
   }
   return <svg {...props} viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /></svg>;
 }
+
+export function FileTypeBadge({ type, size = 18, className = '' }) {
+  return (
+    <span className={`inline-flex items-center justify-center ${className}`}>
+      <FileIcon type={type} size={size} />
+    </span>
+  );
+}

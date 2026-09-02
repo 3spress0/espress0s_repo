@@ -1,84 +1,63 @@
-import { Search, ArrowRight, Database, Shield, Zap } from 'lucide-react';
+import { Search, ArrowRight } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import StarryBackground from './StarryBackground';
-import Logo from './Logo';
 import { useSettings } from '../context/SettingsContext';
 
-export default function Hero({ stats, onAskOpen }) {
+export default function Hero({ stats }) {
   const [query, setQuery] = useState('');
   const navigate = useNavigate();
   const { get } = useSettings();
 
-  // Split the title so the last word keeps the gradient treatment.
   const titleWords = String(get('hero_title', '')).trim().split(/\s+/);
   const titleLead = titleWords.slice(0, -1).join(' ');
   const titleAccent = titleWords[titleWords.length - 1] || '';
 
   const handleSearch = (e) => {
     e.preventDefault();
-    if (query.trim()) {
-      navigate(`/browse?q=${encodeURIComponent(query.trim())}`);
-    }
+    if (query.trim()) navigate(`/browse?q=${encodeURIComponent(query.trim())}`);
   };
 
   return (
     <div className="relative overflow-hidden">
       <StarryBackground />
-      
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24">
-        <div className="text-center max-w-4xl mx-auto">
-          <div className="flex justify-center mb-6 animate-slide-up">
-            <Logo size={64} />
-          </div>
-
-          <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight mb-6 animate-slide-up">
-            {titleLead && (
-              <>
-                <span className="text-textPrimary">{titleLead}</span>
-                <br />
-              </>
-            )}
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20">
+        <div className="text-center max-w-3xl mx-auto">
+          <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-4 animate-slide-up">
+            {titleLead && <><span className="text-textPrimary">{titleLead}</span>{' '}</>}
             <span className="gradient-text">{titleAccent}</span>
           </h1>
 
-          <p className="text-lg sm:text-xl text-textSecondary max-w-2xl mx-auto mb-10 leading-relaxed animate-slide-up" style={{ animationDelay: '0.1s' }}>
+          <p className="text-base sm:text-lg text-textSecondary max-w-xl mx-auto mb-8 leading-relaxed animate-slide-up" style={{ animationDelay: '0.08s' }}>
             {get('hero_subtitle', '')}
           </p>
 
-          <form onSubmit={handleSearch} className="max-w-2xl mx-auto mb-8 animate-slide-up" style={{ animationDelay: '0.2s' }}>
-            <div className="relative group">
-              <div className="absolute -inset-1 bg-gradient-primary rounded-2xl blur-xl opacity-20 group-hover:opacity-30 group-focus-within:opacity-40 transition-all" />
-              <div className="relative flex items-center bg-surface/80 backdrop-blur-xl border border-border rounded-2xl shadow-2xl shadow-black/50 overflow-hidden group-focus-within:border-primary/50 transition-all">
-                <Search className="ml-5 w-5 h-5 text-textMuted group-focus-within:text-primary transition-colors flex-shrink-0" />
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={get('hero_search_placeholder', 'Search files...')}
-                  className="flex-1 px-4 py-5 bg-transparent text-textPrimary placeholder:text-textMuted focus:outline-none text-base"
-                />
-                <button type="submit" className="mr-2 px-6 py-2.5 bg-gradient-primary hover:bg-gradient-primary-hover text-white rounded-xl font-medium text-sm shadow-lg flex items-center gap-2">
-                  Search
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
+          <form onSubmit={handleSearch} className="max-w-xl mx-auto animate-slide-up" style={{ animationDelay: '0.16s' }}>
+            <div className="relative flex items-center bg-surface/80 backdrop-blur-xl border border-border rounded-xl overflow-hidden focus-within:border-primary/50 transition-colors">
+              <Search className="ml-4 w-4 h-4 text-textMuted flex-shrink-0" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={get('hero_search_placeholder', 'Search files...')}
+                className="flex-1 px-3 py-3.5 bg-transparent text-textPrimary placeholder:text-textMuted focus:outline-none text-sm"
+              />
+              <button type="submit" className="mr-1.5 px-5 py-2 bg-gradient-primary hover:bg-gradient-primary-hover text-white rounded-lg font-medium text-sm flex items-center gap-1.5">
+                Search <ArrowRight className="w-3.5 h-3.5" />
+              </button>
             </div>
           </form>
 
-          <div className="grid grid-cols-3 gap-4 max-w-xl mx-auto animate-slide-up" style={{ animationDelay: '0.3s' }}>
-            {[
-              { icon: Database, label: 'Total Files', value: stats?.totals?.items || '—' },
-              { icon: Zap, label: 'Total Size', value: stats?.totals?.totalSizeFormatted || '—' },
-              { icon: Shield, label: 'Encrypted', value: get('hero_stat_encryption_label', 'AES-256') },
-            ].map((stat, i) => (
-              <div key={i} className="glass rounded-2xl p-4 text-center backdrop-blur-md">
-                <stat.icon className="w-5 h-5 mx-auto mb-2 text-primary" />
-                <div className="text-lg font-bold text-textPrimary">{stat.value}</div>
-                <div className="text-xs text-textMuted">{stat.label}</div>
-              </div>
-            ))}
-          </div>
+          {/* One slim stat line instead of three floating tiles */}
+          {stats && (
+            <p className="mt-6 text-xs text-textMuted tracking-wide animate-slide-up" style={{ animationDelay: '0.22s' }}>
+              <span className="text-textPrimary font-semibold">{Number(stats.totals.items || 0).toLocaleString()}</span> files
+              <span className="mx-2 text-border">|</span>
+              <span className="text-textPrimary font-semibold">{stats.totals.totalSizeFormatted || '0 B'}</span> indexed
+              <span className="mx-2 text-border">|</span>
+              AES-256 at rest
+            </p>
+          )}
         </div>
       </div>
     </div>

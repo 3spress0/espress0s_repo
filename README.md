@@ -54,12 +54,16 @@ script in `scripts/`, so direct script usage keeps working.
   one-click description drafter; both fall back to templates without tgpt.
 - Themes: 9 dark/light palettes switchable from the navbar, admin-set site
   default.
-- Seeded catalog (`backend/src/db/seed-catalog.js`): 2000+ curated entries for
-  Windows and Linux -- distro ISOs (Ubuntu, Fedora, Debian, Mint, Arch, Alpine,
-  Kali, rescue/live images, retro OS corner), Windows media, drivers and
-  firmware, flagship desktop apps with per-version history, CLI tools, fonts,
-  portable apps, open-source games and documentation. Everything lands in
-  folders with deterministic slugs; re-running the seeder is a no-op.
+- Seeded catalog (`backend/src/db/seed-catalog.js`, `seed-modern.js`,
+  `seed-archive.js`): **100k+ entries** across Windows and Linux -- distro
+  ISOs (Ubuntu, Fedora, Debian, Mint, Arch, Alpine, Kali, rescue/live images,
+  retro OS corner), Windows media, drivers and firmware, flagship desktop apps
+  with per-version history, CLI tools, fonts, portable apps, open-source games
+  and documentation. The modern wave adds AI/LLM tooling (ollama, llama.cpp,
+  LM Studio, ComfyUI, Claude Code, aider), current editors/IDEs, cloud-native
+  and IoC tooling, plus release archives for npm/PyPI/crates/Maven/NuGet and
+  daily nightly-build snapshots. Everything lands in folders with
+  deterministic slugs; re-running the seeder is a no-op.
 - Legacy/abandonware corner: Windows 1.0 through 2000 and Office 95-2000 with
   written histories and the generic installation keys documented by the
   preservation community (these releases predate activation and are no longer
