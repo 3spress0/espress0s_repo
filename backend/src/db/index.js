@@ -50,6 +50,17 @@ export function getDb() {
     if (!hasImageUrl) {
       dbInstance.exec("ALTER TABLE items ADD COLUMN image_url TEXT");
     }
+    // Catalogue additions. Both are nullable/defaulted so existing rows stay
+    // valid, and the CHECK default satisfies itself, which SQLite requires.
+    const hasBannerUrl = itemCols.some(c => c.name === 'banner_url');
+    if (!hasBannerUrl) {
+      dbInstance.exec("ALTER TABLE items ADD COLUMN banner_url TEXT");
+    }
+    const hasStatus = itemCols.some(c => c.name === 'status');
+    if (!hasStatus) {
+      dbInstance.exec(`ALTER TABLE items ADD COLUMN status TEXT DEFAULT 'current'
+        CHECK(status IN ('current', 'legacy', 'deprecated', 'archived', 'unreleased'))`);
+    }
     const hasFolderId = itemCols.some(c => c.name === 'folder_id');
     if (!hasFolderId) {
       dbInstance.exec("ALTER TABLE items ADD COLUMN folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL");

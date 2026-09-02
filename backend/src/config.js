@@ -67,6 +67,17 @@ export const config = {
     url: process.env.DATABASE_URL || null,
   },
 
+  // Where pre-import database snapshots go. Catalogue imports write one before
+  // applying so a bad archive can be rolled back without restoring from cron.
+  // Resolved relative to the project root, exactly like db.path.
+  backupDir: (() => {
+    const p = process.env.BACKUP_DIR || './backups';
+    if (!path.isAbsolute(p)) {
+      return path.resolve(__dirname, '../../', p);
+    }
+    return p;
+  })(),
+
   security: {
     jwtSecret: process.env.JWT_SECRET || DEV_JWT_SECRET,
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',

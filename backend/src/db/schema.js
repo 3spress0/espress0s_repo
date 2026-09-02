@@ -71,10 +71,14 @@ CREATE TABLE IF NOT EXISTS items (
   license_notes TEXT, -- encrypted
   tags TEXT, -- JSON array for simplicity, plus junction table
   icon_url TEXT,
+  banner_url TEXT, -- external http(s) URL only; images are never stored locally
   image_url TEXT, -- cover image selected by admin, placeholder if none
   screenshots TEXT, -- JSON array of URLs
   documentation_url TEXT,
   changelog TEXT,
+  -- Catalogue lifecycle. Orthogonal to the published flag: an item can be
+  -- published and still be the deprecated release of a product line.
+  status TEXT DEFAULT 'current' CHECK(status IN ('current', 'legacy', 'deprecated', 'archived', 'unreleased')),
   download_count INTEGER DEFAULT 0,
   view_count INTEGER DEFAULT 0,
   encryption_version TEXT DEFAULT 'v1',
@@ -227,6 +231,52 @@ CREATE TABLE IF NOT EXISTS uploads (
 
 CREATE INDEX IF NOT EXISTS idx_uploads_kind ON uploads(kind);
 CREATE INDEX IF NOT EXISTS idx_uploads_created ON uploads(created_at DESC);
+
+-- Explicit links between items, used by catalogue imports to say "these are
+-- releases of the same thing" or "this one supersedes that one". The public
+-- item page also derives a same-category related list, which stays as-is;
+-- this table is the curated, admin-controlled version.
+CREATE TABLE IF NOT EXISTS item_relations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  related_item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  relation TEXT NOT NULL DEFAULT 'related' CHECK(relation IN ('related', 'supersedes', 'superseded-by', 'variant')),
+  note TEXT,
+  sort_order INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(item_id, related_item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_relations_item ON item_relations(item_id);
+CREATE INDEX IF NOT EXISTS idx_item_relations_related ON item_relations(related_item_id);
+
+-- One row per catalogue import, dry runs included, so an admin can see what
+-- was loaded, when, by whom, and what was rejected. The full error list is
+-- kept as JSON so it can be downloaded rather than truncated to a toast.
+CREATE TABLE IF NOT EXISTS catalog_imports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename TEXT NOT NULL,
+  sha256 TEXT NOT NULL, -- of the uploaded archive, so re-uploads are traceable
+  size_bytes INTEGER NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'upsert' CHECK(mode IN ('upsert', 'add-only', 'update-only')),
+  status TEXT NOT NULL DEFAULT 'ok' CHECK(status IN ('ok', 'failed', 'rejected')),
+  dry_run INTEGER NOT NULL DEFAULT 0,
+  items_created INTEGER DEFAULT 0,
+  items_updated INTEGER DEFAULT 0,
+  items_unchanged INTEGER DEFAULT 0,
+  items_skipped INTEGER DEFAULT 0,
+  relations_created INTEGER DEFAULT 0,
+  error_count INTEGER DEFAULT 0,
+  errors_json TEXT, -- JSON array; downloadable via the history endpoint
+  backup_path TEXT, -- database backup taken before applying, when one was made
+  catalog_format TEXT,
+  catalog_version INTEGER,
+  imported_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  finished_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_catalog_imports_started ON catalog_imports(started_at DESC);
 `;
 
 // Sensible starting values. INSERT OR IGNORE means re-running migrations never

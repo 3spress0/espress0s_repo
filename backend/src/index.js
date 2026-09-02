@@ -26,6 +26,7 @@ import { settingsRoutes } from './routes/settings.js';
 import { uploadsRoutes } from './routes/uploads.js';
 import { linkHealthRoutes } from './routes/linkHealth.js';
 import { backupRoutes } from './routes/backup.js';
+import { catalogRoutes } from './routes/catalog.js';
 import multipart from '@fastify/multipart';
 import { monitoringService } from './services/monitoringService.js';
 import { linkHealthService } from './services/linkHealthService.js';
@@ -213,6 +214,7 @@ await fastify.register(async (api) => {
   await api.register(uploadsRoutes);
   await api.register(linkHealthRoutes);
   await api.register(backupRoutes);
+  await api.register(catalogRoutes);
 }, { prefix: '/api' });
 
 // Serve the built frontend when it exists, in any environment. Deep links

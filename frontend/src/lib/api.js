@@ -196,6 +196,35 @@ export const backupApi = {
   import: (data, apply = false) => api.post(`/admin/import${apply ? '?apply=1' : ''}`, data).then(r => r.data),
 };
 
+/**
+ * Bulk catalogue import/export.
+ *
+ * Import is deliberately two calls: first without `apply` for the preview, then
+ * with it. The archive travels as multipart form data, not JSON.
+ */
+export const catalogApi = {
+  /** Preview (`apply=false`) or write (`apply=true`) a catalogue archive. */
+  import: (file, { apply = false, mode = 'upsert' } = {}) => {
+    const form = new FormData();
+    form.append('file', file, file?.name || 'catalog.zip');
+    const params = new URLSearchParams({ mode });
+    if (apply) params.set('apply', '1');
+    return api.post(`/admin/catalog/import?${params}`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: AI_TIMEOUT,
+    }).then(r => r.data);
+  },
+  /** Current catalogue as a re-importable catalog.zip. */
+  export: () => api.get('/admin/catalog/export', { responseType: 'blob', timeout: AI_TIMEOUT }).then(r => r.data),
+  /** Starter archive with two fully-populated example entries. */
+  template: () => api.get('/admin/catalog/template', { responseType: 'blob' }).then(r => r.data),
+  history: (limit = 50) => api.get('/admin/catalog/imports', { params: { limit } }).then(r => r.data),
+  get: (id) => api.get(`/admin/catalog/imports/${id}`).then(r => r.data),
+  errors: (id, format = 'json') => api.get(`/admin/catalog/imports/${id}/errors`, {
+    params: { format }, responseType: 'blob',
+  }).then(r => r.data),
+};
+
 export const settingsApi = {
   get: () => api.get('/settings').then(r => r.data),
 };
