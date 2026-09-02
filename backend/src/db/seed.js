@@ -2,6 +2,7 @@ import { getDb } from './index.js';
 import { DEFAULT_CATEGORIES } from './schema.js';
 import { config } from '../config.js';
 import { encryptionService } from '../services/encryptionService.js';
+import { seedCatalog } from './seed-catalog.js';
 
 const db = getDb();
 
@@ -314,5 +315,9 @@ if (itemCount === 0) {
   }
   console.log(`Seeded ${faqSamples.length} FAQ entries`);
 }
+
+// Full software catalog (2000+ items across Windows and Linux, sorted into folders)
+const added = seedCatalog(db);
+console.log(`Catalog: +${added} new items (${db.prepare('SELECT COUNT(*) c FROM items').get().c} total)`);
 
 console.log('Seeding completed with encryption.');

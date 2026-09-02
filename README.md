@@ -54,6 +54,12 @@ script in `scripts/`, so direct script usage keeps working.
   one-click description drafter; both fall back to templates without tgpt.
 - Themes: 9 dark/light palettes switchable from the navbar, admin-set site
   default.
+- Seeded catalog (`backend/src/db/seed-catalog.js`): 2000+ curated entries for
+  Windows and Linux -- distro ISOs (Ubuntu, Fedora, Debian, Mint, Arch, Alpine,
+  Kali, rescue/live images, retro OS corner), Windows media, drivers and
+  firmware, flagship desktop apps with per-version history, CLI tools, fonts,
+  portable apps, open-source games and documentation. Everything lands in
+  folders with deterministic slugs; re-running the seeder is a no-op.
 
 ## Security
 

@@ -100,12 +100,13 @@ export default function StarryBackground() {
       }
 
       if (!reducedMotion && shootingEnabled) {
-        if (Math.random() < 0.005 && shooters.length < 2) {
+        // More falling stars: frequent spawns, up to 6 streaks at once
+        if (Math.random() < 0.03 && shooters.length < 6) {
           shooters.push({
             x: Math.random() * w,
             y: Math.random() * h * 0.5,
-            vx: (Math.random() - 0.5) * 4 + 2,
-            vy: Math.random() * 2 + 1,
+            vx: (Math.random() - 0.5) * 6 + 2,
+            vy: Math.random() * 3 + 1,
             life: 0,
             maxLife: 60 + Math.random() * 40,
           });
@@ -118,13 +119,13 @@ export default function StarryBackground() {
           s.life += 1;
           const opacity = Math.sin((s.life / s.maxLife) * Math.PI);
 
-          const trail = ctx.createLinearGradient(s.x, s.y, s.x - s.vx * 8, s.y - s.vy * 8);
+          const trail = ctx.createLinearGradient(s.x, s.y, s.x - s.vx * 12, s.y - s.vy * 12);
           trail.addColorStop(0, `rgba(${SHOOT.replaceAll(' ', ',')}, ${opacity})`);
           trail.addColorStop(1, `rgba(${SHOOT_GLOW.replaceAll(' ', ',')}, 0)`);
 
           ctx.beginPath();
           ctx.moveTo(s.x, s.y);
-          ctx.lineTo(s.x - s.vx * 8, s.y - s.vy * 8);
+          ctx.lineTo(s.x - s.vx * 12, s.y - s.vy * 12);
           ctx.strokeStyle = trail;
           ctx.lineWidth = 1.2;
           ctx.stroke();

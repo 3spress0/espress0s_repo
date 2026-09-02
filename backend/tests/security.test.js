@@ -164,9 +164,12 @@ describe('Security - espress0 repo', () => {
 
     it('should handle SQLi payload in search', async () => {
       const { searchService } = await import('../src/services/searchService.js');
+      const { getDb } = await import('../src/db/index.js');
+      const db = getDb();
+      const totalItems = db.prepare('SELECT COUNT(*) c FROM items WHERE published = 1').get().c;
       const result = searchService.search({ q: "' OR 1=1 --", published: 1, limit: 5 });
       // Should not return all items (would be vuln if it did)
-      assert.ok(result.total <= 8); // we have 8 items max
+      assert.ok(result.total < totalItems, 'SQLi payload must not bypass the WHERE clause');
     });
   });
 
