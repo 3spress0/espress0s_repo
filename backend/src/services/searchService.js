@@ -183,6 +183,18 @@ export class SearchService {
     const conditions = [];
     const params = {};
 
+    // A repeated query param (?category=a&category=b) arrives as an array, and
+    // better-sqlite3 refuses to bind one - every filter below used to blow up
+    // with a 500. Keep the first value and ignore the rest.
+    const one = (v) => (Array.isArray(v) ? v[0] : v);
+    category = one(category);
+    folder = one(folder);
+    tag = one(tag);
+    license_status = one(license_status);
+    file_type = one(file_type);
+    platform = one(platform);
+    architecture = one(architecture);
+
     if (published !== null && published !== undefined) {
       conditions.push('items.published = @published');
       params.published = published ? 1 : 0;
@@ -194,6 +206,10 @@ export class SearchService {
       if (cat) {
         conditions.push('items.category_id = @category_id');
         params.category_id = cat.id;
+      } else {
+        // Same rule as an unknown folder below: match nothing rather than
+        // quietly dropping the filter and returning the whole library.
+        conditions.push('1 = 0');
       }
     }
 

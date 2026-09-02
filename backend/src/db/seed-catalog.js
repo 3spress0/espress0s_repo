@@ -1265,7 +1265,8 @@ export function seedCatalog(db) {
             file_size: smp.file_size, file_type: smp.file_type, platform: smp.platform,
             architecture: smp.architecture, storage_provider: smp.storage_provider,
             storage_path: smp.storage_path, download_url: smp.download_url, external_url: smp.external_url,
-            featured: 0, published: 1, license_status: smp.license_status, tags: smp.tags,
+            featured: 0, published: 1, license_status: smp.license_status,
+            license_notes: smp.license_notes, tags: smp.tags,
             created_at: created, updated_at: created,
           });
           insLink.run({ item_id: db.prepare('SELECT id FROM items WHERE slug = ?').get(`${slug}-${v}`).id, url: smp.download_url, size: smp.file_size, now: created });

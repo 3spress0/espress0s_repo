@@ -35,9 +35,9 @@ jobs:
         env:
           DATABASE_PATH: ./data/test.db
       
-      - name: Run tests (if any)
+      - name: Run tests
         working-directory: ./backend
-        run: npm test || echo "No tests yet"
+        run: npm test
         env:
           DATABASE_PATH: ./data/test.db
 

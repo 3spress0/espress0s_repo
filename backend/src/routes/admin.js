@@ -15,6 +15,19 @@ import path from 'path';
 const AUTO_UPDATE_STATE = path.resolve(
   path.dirname(new URL(import.meta.url).pathname), '..', '..', '..', 'data', '.auto-update-status');
 
+/**
+ * Query-string helpers. Values arrive as strings, or as arrays when a
+ * parameter is repeated (?page=1&page=2) - both used to reach SQL as-is and
+ * answer 500 (SQLITE_MISMATCH / "x.toLowerCase is not a function").
+ */
+const firstParam = (value) => (Array.isArray(value) ? value[0] : value);
+
+const toInt = (value, fallback, min, max) => {
+  const n = parseInt(firstParam(value), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(n, min), max);
+};
+
 export async function adminRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
   fastify.addHook('preHandler', requireAdmin);
@@ -92,20 +105,28 @@ export async function adminRoutes(fastify) {
   fastify.get('/admin/items', async (request, reply) => {
     const { page = 1, limit = 50, q = '', published } = request.query;
     const db = getDb();
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Query-string junk must never reach SQL. A non-numeric ?page=abc bound NaN
+    // and answered 500 (SQLITE_MISMATCH), a repeated ?q=a&q=b arrived as an
+    // array and threw on toLowerCase(), and ?limit=100000 pulled the whole
+    // table into memory - the public /items route already clamped all of this.
+    const pageNum = toInt(page, 1, 1, 10000);
+    const pageSize = toInt(limit, 50, 1, 200);
+    const searchTerm = String(firstParam(q) ?? '').slice(0, 200);
+    const offset = (pageNum - 1) * pageSize;
 
     let where = '';
     const params = {};
     const conditions = [];
 
-    if (q) {
+    if (searchTerm) {
       conditions.push('(LOWER(name) LIKE @q OR LOWER(slug) LIKE @q)');
-      params.q = `%${q.toLowerCase()}%`;
+      params.q = `%${searchTerm.toLowerCase()}%`;
     }
 
     if (published !== undefined) {
       conditions.push('published = @published');
-      params.published = published === 'true' || published === '1' ? 1 : 0;
+      params.published = firstParam(published) === 'true' || firstParam(published) === '1' ? 1 : 0;
     }
 
     if (conditions.length) where = 'WHERE ' + conditions.join(' AND ');
@@ -113,7 +134,7 @@ export async function adminRoutes(fastify) {
     const total = db.prepare(`SELECT COUNT(*) as c FROM items ${where}`).get(params).c;
     const itemsRaw = db.prepare(`SELECT * FROM items ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`).all({
       ...params,
-      limit: parseInt(limit),
+      limit: pageSize,
       offset,
     });
 
@@ -126,10 +147,10 @@ export async function adminRoutes(fastify) {
     return {
       items,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: pageNum,
+        limit: pageSize,
         total,
-        totalPages: Math.ceil(total / parseInt(limit)),
+        totalPages: Math.ceil(total / pageSize),
       }
     };
   });
@@ -379,20 +400,24 @@ export async function adminRoutes(fastify) {
   fastify.get('/admin/users', async (request, reply) => {
     const { page = 1, limit = 50, q = '', role } = request.query;
     const db = getDb();
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    // Same coercion as /admin/items: junk in the query string must not reach SQL.
+    const pageNum = toInt(page, 1, 1, 10000);
+    const pageSize = toInt(limit, 50, 1, 200);
+    const searchTerm = String(firstParam(q) ?? '').slice(0, 200);
+    const offset = (pageNum - 1) * pageSize;
 
     let where = '';
     const params = {};
     const conditions = [];
 
-    if (q) {
+    if (searchTerm) {
       conditions.push('(LOWER(username) LIKE @q OR LOWER(email) LIKE @q)');
-      params.q = `%${q.toLowerCase()}%`;
+      params.q = `%${searchTerm.toLowerCase()}%`;
     }
 
     if (role) {
       conditions.push('role = @role');
-      params.role = role;
+      params.role = String(firstParam(role)).slice(0, 30);
     }
 
     if (conditions.length) where = 'WHERE ' + conditions.join(' AND ');
@@ -400,7 +425,7 @@ export async function adminRoutes(fastify) {
     const total = db.prepare(`SELECT COUNT(*) as c FROM users ${where}`).get(params).c;
     const usersRaw = db.prepare(`SELECT id, username, email, email_hash, role, encryption_version, created_at, updated_at FROM users ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`).all({
       ...params,
-      limit: parseInt(limit),
+      limit: pageSize,
       offset,
     });
 
@@ -422,10 +447,10 @@ export async function adminRoutes(fastify) {
     return {
       users,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: pageNum,
+        limit: pageSize,
         total,
-        totalPages: Math.ceil(total / parseInt(limit)),
+        totalPages: Math.ceil(total / pageSize),
       }
     };
   });
