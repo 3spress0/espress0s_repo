@@ -11,7 +11,9 @@
 # Safety:
 #   * Only fast-forward pulls are applied. Local commits/divergence are never
 #     reset away - the cycle is skipped and logged instead.
-#   * A dirty working tree blocks updates until cleaned.
+#   * A dirty working tree blocks updates until cleaned (the setup.sh ->
+#     config.sh self-rename is exempt - it is an intended post-install state).
+#   * scripts/config.sh is gitignored on purpose.
 #   * .env, uploads/ and data/ are gitignored and never touched.
 #   * Pause everything with: touch data/.auto-update-disabled
 #   * A flock prevents two updaters from running at once.
@@ -88,10 +90,10 @@ restarted_notice() {
     # by respawning the window.
     if tmux list-windows -t "$TMUX_SESSION" -F '#W' | grep -qx app; then
       tmux respawn-window -k -t "$TMUX_SESSION:app" \
-        "cd '$ROOT' && cd backend && NODE_ENV=production PORT=\${PORT:-3000} HOST=0.0.0.0 node src/index.js; echo '[app exited]'; read"
+        "cd '$ROOT' && cd backend && NODE_ENV=production node src/index.js; echo '[app exited]'; read"
     elif tmux list-windows -t "$TMUX_SESSION" -F '#W' | grep -qx backend; then
       tmux respawn-window -k -t "$TMUX_SESSION:backend" \
-        "cd '$ROOT' && cd backend && NODE_ENV=production PORT=\${PORT:-3000} HOST=0.0.0.0 node src/index.js; echo '[backend exited]'; read"
+        "cd '$ROOT' && cd backend && NODE_ENV=production node src/index.js; echo '[backend exited]'; read"
     else
       log "no 'app'/'backend' window in session '$TMUX_SESSION' - skipping restart"
     fi
@@ -123,7 +125,7 @@ check_and_update() {
 
   log "update available: $(git rev-parse --short HEAD) -> $(git rev-parse --short FETCH_HEAD)"
 
-  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  if [ -n "$(git status --porcelain --untracked-files=no -- . ':(exclude)scripts/setup.sh')" ]; then
     log "working tree has uncommitted changes - skipping this cycle"
     write_state skipped "Dirty working tree - update postponed until it is committed/stashed."
     return 0

@@ -143,12 +143,19 @@ needs_secret() {
 # Interactive wizard. Runs when explicitly asked (--wizard) or when setup is
 # invoked with no arguments in a real terminal. Headless shells, flag-driven
 # invocations and --no-wizard skip straight to the scripted defaults.
+# sits there, even if it was run before. Positional flags are a scripting
 RUN_WIZARD=0
-if [ "${NO_WIZARD:-0}" -ne 1 ]; then
-  if [ "${WIZARD:-0}" -eq 1 ] || { [ $# -eq 0 ] && [ -t 0 ] && [ -t 1 ] && [ ! -f .env ]; }; then
+if [ "${NO_WIZARD:-0}" -eq 1 ] || [ "${WIZARD:-0}" -eq 1 ]; then
+  [ "${WIZARD:-0}" -eq 1 ] && RUN_WIZARD=1
+else
+  HAS_FLAGS=0
+  for a in "$@"; do case "$a" in --*) HAS_FLAGS=1 ;; esac; done
+  if [ "$HAS_FLAGS" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
     RUN_WIZARD=1
   fi
 fi
+# Re-running on an already-configured checkout is "config", not "setup".
+[ -f .env ] && CONFIG_MODE=1 || CONFIG_MODE=0
 
 ask() { # ask <prompt> <default> -> echoes the answer
   local prompt="$1" default="$2" reply
@@ -178,7 +185,11 @@ ask_yn() { # ask_yn <prompt> <default y|n>
 }
 
 if [ "$RUN_WIZARD" -eq 1 ]; then
-  printf '\n%s==> espress0 setup wizard%s  (press Enter to accept [defaults])\n' "$C_BLUE$C_BOLD" "$C_RESET"
+  if [ "$CONFIG_MODE" -eq 1 ]; then
+    printf '\n%s==> espress0 config wizard%s  (this machine is already set up; Enter keeps current values)\n' "$C_BLUE$C_BOLD" "$C_RESET"
+  else
+    printf '\n%s==> espress0 setup wizard%s  (press Enter to accept [defaults])\n' "$C_BLUE$C_BOLD" "$C_RESET"
+  fi
 
   # Admin login -----------------------------------------------------------
   WZ_USER_DEFAULT="$(env_value ADMIN_USERNAME || true)"
@@ -186,6 +197,10 @@ if [ "$RUN_WIZARD" -eq 1 ]; then
   [ -n "$WZ_USER" ] && ADMIN_USERNAME_WIZARD="$WZ_USER"
 
   # Password: empty twice = generate.
+  if [ "$CONFIG_MODE" -eq 1 ] && [ -f data/repo.db ]; then
+    warn "An admin account already exists in the database — a new password here"
+    warn "only applies to a FUTURE reset (change the live one at /profile)."
+  fi
   while :; do
     printf '  %s?%s Admin password %s: ' "$C_BLUE$C_BOLD" "$C_RESET" "(empty = generate a random one)" >&2
     read -rs WZ_PW1 || WZ_PW1=""; printf '\n' >&2
@@ -204,10 +219,34 @@ if [ "$RUN_WIZARD" -eq 1 ]; then
   done
 
   # Port ------------------------------------------------------------------
-  WZ_PORT_DEFAULT="$(env_value PORT || true)"
-  WZ_PORT="$(ask 'Port for the app' "${WZ_PORT_DEFAULT:-3000}")"
-  case "$WZ_PORT" in (*[!0-9]*|'') warn "Not a number, keeping ${WZ_PORT} out; using 3000."; WZ_PORT=3000 ;; esac
+  while :; do
+    WZ_PORT_DEFAULT="$(env_value PORT || true)"
+    WZ_PORT="$(ask 'Port to expose the app on' "${WZ_PORT_DEFAULT:-3000}")"
+    case "$WZ_PORT" in
+      ''|*[!0-9]*) warn "A port is a number."; continue ;;
+    esac
+    if [ "$WZ_PORT" -lt 1 ] || [ "$WZ_PORT" -gt 65535 ]; then
+      warn "Pick a port between 1 and 65535."; continue
+    fi
+    [ "$WZ_PORT" -lt 1024 ] && warn "Ports below 1024 need root (or the deploy script's CAP_NET_BIND_SERVICE)."
+    break
+  done
   PORT_WIZARD="$WZ_PORT"
+  if [ "$WZ_PORT" != "80" ] && [ "$WZ_PORT" != "443" ]; then
+    printf '       the site will be reachable at http://<this-machine>:%s\n' "$WZ_PORT" >&2
+  fi
+
+  # Exposure -------------------------------------------------------------
+  WZ_HOST_DEFAULT="$(env_value HOST || true)"
+  if [ "${WZ_HOST_DEFAULT:-0.0.0.0}" = "0.0.0.0" ]; then EXPOSE_DEFAULT=y; else EXPOSE_DEFAULT=n; fi
+  if ask_yn "Reachable from other machines (bind 0.0.0.0, answer 'no' for localhost-only)" "$EXPOSE_DEFAULT"; then
+    HOST_WIZARD=0.0.0.0
+    ok "Binding 0.0.0.0 — the site will be reachable on port $WZ_PORT from the network."
+    ask_yn "Open the port in ufw now (sudo ufw allow $WZ_PORT/tcp)" "n" && UFW_WIZARD=1
+  else
+    HOST_WIZARD=127.0.0.1
+    ok "Localhost-only (use ssh -L $WZ_PORT:localhost:$WZ_PORT <host> from your laptop to peek)."
+  fi
 
   # AI --------------------------------------------------------------------
   if command -v tgpt >/dev/null 2>&1; then
@@ -328,6 +367,17 @@ if [ -n "${PORT_WIZARD:-}" ] && [ "$PORT_WIZARD" != "$(env_value PORT)" ]; then
   set_env_value PORT "$PORT_WIZARD"
   ok "App port set to $PORT_WIZARD"
 fi
+if [ -n "${HOST_WIZARD:-}" ] && [ "$HOST_WIZARD" != "$(env_value HOST)" ]; then
+  set_env_value HOST "$HOST_WIZARD"
+  ok "Listening address set to $HOST_WIZARD"
+fi
+if [ "${UFW_WIZARD:-0}" -eq 1 ]; then
+  if command -v sudo >/dev/null 2>&1 && command -v ufw >/dev/null 2>&1; then
+    sudo -n ufw allow "${PORT_WIZARD:-3000}/tcp" >/dev/null 2>&1       && ok "ufw allows :${PORT_WIZARD:-3000}/tcp"       || { sudo ufw allow "${PORT_WIZARD:-3000}/tcp" && ok "ufw allows :${PORT_WIZARD:-3000}/tcp"; }
+  else
+    warn "ufw not available — remember to open :${PORT_WIZARD:-3000} yourself (plus the cloud firewall/NSG on a VM)."
+  fi
+fi
 
 # ==============================================================================
 step "Creating local directories"
@@ -421,10 +471,17 @@ if [ "$BUILD" -eq 1 ]; then
   ok "Built frontend/dist — the backend serves it on http://localhost:${PORT_VALUE}"
 fi
 
+# After the first successful run, setup.sh becomes config.sh: re-running it is
+# a reconfiguration, not an installation. The updater ignores this pair.
+if [ "$(basename "$0")" = "setup.sh" ] && [ -f "$SCRIPT_DIR/setup.sh" ] && [ ! -f "$SCRIPT_DIR/config.sh" ]; then
+  if mv "$SCRIPT_DIR/setup.sh" "$SCRIPT_DIR/config.sh" 2>/dev/null; then
+    ok "First run complete — scripts/setup.sh is now scripts/config.sh"
+    ok "  (re-run with: ./espress0 config)"
+  fi
+fi
+
 printf '\n%s' "$C_GREEN$C_BOLD"
-cat <<'BANNER'
-  Setup complete.
-BANNER
+if [ "$CONFIG_MODE" -eq 1 ]; then echo "  Configuration complete."; else echo "  Setup complete."; fi
 printf '%s\n' "$C_RESET"
 
 cat <<EOF

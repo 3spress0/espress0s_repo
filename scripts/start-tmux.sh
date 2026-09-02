@@ -48,8 +48,13 @@ case "${ACTION:-start}" in
     if tmux has-session -t "$SESSION" 2>/dev/null; then
       echo "tmux session '$SESSION' is running:"
       tmux list-windows -t "$SESSION" -F "  #I: #W (pane alive: #{?pane_dead,no,yes})"
-      ss -ltn 2>/dev/null | grep -q ":3000 " && echo "  backend:  http://localhost:3000 (listening)" \
-                                                  || echo "  backend:  nothing on :3000 yet"
+      ST_PORT="$(awk -F= '/^PORT=/{print $2}' .env 2>/dev/null)"; ST_PORT="${ST_PORT:-3000}"
+      ST_HOST="$(awk -F= '/^HOST=/{print $2}' .env 2>/dev/null)"; ST_HOST="${ST_HOST:-0.0.0.0}"
+      if ss -ltn 2>/dev/null | grep -q ":$ST_PORT "; then
+        echo "  backend:  http://localhost:$ST_PORT (listening, bound to $ST_HOST)"
+      else
+        echo "  backend:  nothing on :$ST_PORT yet"
+      fi
       ss -ltn 2>/dev/null | grep -q ":5173 " && echo "  frontend: http://localhost:5173 (listening)" || true
     else
       echo "No tmux session '$SESSION'. Start it with: ./scripts/start-tmux.sh"
@@ -92,7 +97,9 @@ install_if_needed() {
 install_if_needed backend
 install_if_needed frontend
 
-LAUNCH_BACKEND='cd backend && NODE_ENV=production PORT=${PORT:-3000} HOST=0.0.0.0 node src/index.js'
+# PORT/HOST come from .env (set by the wizard); config.js falls back to
+# 3000 / 0.0.0.0. Shell-env PORT/HOST, when exported, still win over .env.
+LAUNCH_BACKEND='cd backend && NODE_ENV=production node src/index.js'
 
 if [ "$MODE" = "build" ]; then
   if [ "$FORCE_BUILD" = 1 ] || [ ! -f frontend/dist/index.html ]; then

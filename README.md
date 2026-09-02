@@ -100,8 +100,12 @@ One command: checks Node, writes a `.env` with freshly generated secrets, create
 `data/` and `backups/`, installs both dependency trees, migrates + seeds the
 database and prints a generated admin password once. Add `--start` to also
 launch the dev servers. Re-running never overwrites secrets or data.
-`./espress0 setup --help` lists the flags (`--build`, `--reset-db`,
-`--admin-password`, `--with-tgpt`, ...).
+Any flag (or `--no-wizard`) skips the wizard for scripting. Once it has run,
+`scripts/setup.sh` renames itself to `scripts/config.sh` — "setup" becomes
+"config": `./espress0 config` re-runs the wizard to change the port,
+network exposure (0.0.0.0 = reachable from other machines, 127.0.0.1 = local
+only), password seed or AI settings. `./espress0 setup --help` lists the
+scripted flags (`--build`, `--reset-db`, `--admin-password`, `--with-tgpt`, ...).
 
 <details>
 <summary>Manual steps, if you prefer</summary>

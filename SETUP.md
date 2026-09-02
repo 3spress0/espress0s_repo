@@ -96,8 +96,21 @@ rather keep nginx as the only thing on 80.
 ### Quick start (one command)
 
 ```bash
-./espress0 setup
+./espress0 setup        # wizard: admin login, port, exposure, tgpt, run mode
 ```
+
+The wizard asks which **port** to expose and whether to bind `0.0.0.0`
+(reachable from other machines — answer 'no' for localhost-only; SSH tunnels
+work: `ssh -L 3000:localhost:3000 you@server`). Both land in `.env` as
+`PORT`/`HOST`, which every runner honours (`dev`, `serve`, deploy, systemd).
+Optionally it runs `sudo ufw allow <port>/tcp` for the OS firewall — on a
+cloud VM you still need the provider's NSG/security-group rule yourself.
+
+After the first successful run `scripts/setup.sh` renames itself to
+`scripts/config.sh`: `./espress0 setup` and `./espress0 config` both reach it,
+and skipping the wizard with any `--flag` keeps old scripted behaviour.
+Pass `--reset-db` next time if a new admin password should actually apply
+(the existing account's password is never rotated from here).
 
 ### Keep it running in the background (tmux)
 

@@ -6,10 +6,13 @@
 #
 # Commands:
 #   setup              First-time local setup: .env, secrets, deps, database.
-#                      With no flags on a fresh checkout it asks interactively
-#                      (admin login, port, tgpt, how to run) — --no-wizard or
-#                      any flag stays scripted. Flags: --admin-password X,
-#                      --with-tgpt, --reset-db, --build, --start, ...
+#                      Wizard auto-fires whenever NO --flag is given (fresh
+#                      checkout or reconfigure). Flags like --admin-password X,
+#                      --with-tgpt, --reset-db, --build, --start, --no-wizard
+#                      keep it scripted.
+#   config             Re-run the wizard on an already-set-up machine (after
+#                      the first run, scripts/setup.sh renames itself to
+#                      scripts/config.sh; both commands reach it).
 #   dev [--build]      Dev servers: frontend :5173 + API :3000
 #                      (--build: production build, single origin on :3000)
 #   serve              Run in the background inside tmux (survives logout).
@@ -44,6 +47,12 @@ run() { echo "+ $*"; exec "$@"; }
 
 case "$CMD" in
   setup)
+    if [ -f scripts/setup.sh ]; then exec scripts/setup.sh "$@"; fi
+    echo "setup.sh has already run (it is config.sh now) — running config:" >&2
+    exec scripts/config.sh "$@" ;;
+  config)
+    if [ -f scripts/config.sh ]; then exec scripts/config.sh "$@"; fi
+    echo "Nothing configured yet — running setup:" >&2
     exec scripts/setup.sh "$@" ;;
   ubuntu)
     echo "!! 'ubuntu' was removed: ./espress0 setup covers local machines and"
@@ -79,9 +88,10 @@ case "$CMD" in
     DIRTY=$(git status --porcelain --untracked-files=no 2>/dev/null | wc -l)
     [ "$DIRTY" -gt 0 ] && echo "  ⚠ $DIRTY tracked file(s) with local edits"
     echo "── ports ─────────────────────────────────────────"
-    ss -ltn 2>/dev/null | awk 'NR>1 {print $4}' | grep -oE ':(3000|5173|80|443)$' | sort -u \
+    ST_PORT="$(awk -F= '/^PORT=/{print $2}' .env 2>/dev/null)"; ST_PORT="${ST_PORT:-3000}"
+    ss -ltn 2>/dev/null | awk 'NR>1 {print $4}' | grep -oE ":(80|443|5173|$ST_PORT)$" | sort -u \
       | while read -r p; do echo "  listening on $p"; done || true
-    ss -ltn 2>/dev/null | grep -qE ":3000 " || echo "  nothing on :3000 (backend not running?)"
+    ss -ltn 2>/dev/null | grep -qE ":$ST_PORT " || echo "  nothing on :$ST_PORT (backend not running?)"
     echo "── tmux session ──────────────────────────────────"
     if command -v tmux >/dev/null 2>&1 && tmux has-session -t espress0 2>/dev/null; then
       tmux list-windows -t espress0 -F "  #I: #W"
