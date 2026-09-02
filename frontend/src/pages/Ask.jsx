@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Coffee, Send, Database, AlertCircle, ExternalLink, Lightbulb, Search, Loader2, Sparkles } from 'lucide-react';
-import { aiApi } from '../lib/api';
+import { aiApi, describeApiError } from '../lib/api';
 import StarryBackground from '../components/StarryBackground';
 
 export default function Ask() {
@@ -47,7 +47,7 @@ export default function Ask() {
     } catch (e) {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `Sorry, I encountered an error: ${e.response?.data?.error || e.message}. Please try again or browse the repository directly.`,
+        content: describeApiError(e),
         error: true,
         timestamp: new Date(),
       }]);

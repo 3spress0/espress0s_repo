@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Coffee, Send, Database, AlertCircle, ExternalLink, Lightbulb, Search, Loader2, X, Sparkles } from 'lucide-react';
-import { aiApi } from '../lib/api';
+import { aiApi, describeApiError } from '../lib/api';
 
 export default function AskAIPopup({ isOpen, onClose }) {
   const [query, setQuery] = useState('');
@@ -46,7 +46,7 @@ export default function AskAIPopup({ isOpen, onClose }) {
     } catch (e) {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `Sorry, error: ${e.response?.data?.error || e.message}. Try browsing directly.`,
+        content: describeApiError(e),
         error: true,
         timestamp: new Date(),
       }]);

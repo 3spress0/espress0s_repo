@@ -27,6 +27,46 @@ const api = axios.create({
   withCredentials: true, // session is an httpOnly cookie
 });
 
+/**
+ * Budget for the AI endpoints, which run a `tgpt` subprocess on the server.
+ *
+ * This has to be comfortably larger than the server's own tgpt budget
+ * (TGPT_TIMEOUT_MS, 20s by default for a question and 30s for an admin
+ * draft). Both were 30000 ms - the axios default - so a slow provider was
+ * killed on the server at the exact moment the browser gave up: the
+ * rule-based fallback answer was built for nobody and the visitor saw
+ * "Sorry, error: timeout of 30000ms exceeded". backend/tests/ai.test.js
+ * reads this constant and asserts the ordering, so the two cannot silently
+ * drift back into a tie.
+ */
+export const AI_TIMEOUT = 60000;
+
+/**
+ * Turns an axios error into something a visitor can act on.
+ *
+ * The raw axios message ("timeout of 30000ms exceeded") describes our
+ * transport, not what the user should do next, and it leaked straight into
+ * the chat bubble.
+ */
+export function describeApiError(error) {
+  const serverMessage = error?.response?.data?.error;
+  const status = error?.response?.status;
+
+  if (error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')) {
+    return 'Barista took too long to answer and the request was cancelled. The AI provider may be slow or offline — try again, or browse the catalogue directly.';
+  }
+  if (!error?.response) {
+    return 'Could not reach the server. Check your connection and try again.';
+  }
+  if (status === 429) {
+    return 'That is a lot of questions at once. Give it a minute, then try again.';
+  }
+  if (status >= 500) {
+    return serverMessage || 'Something went wrong on the server while answering. Try again.';
+  }
+  return serverMessage || `The request could not be completed (${status}).`;
+}
+
 api.interceptors.request.use((config) => {
   if (!SAFE_METHODS.has((config.method || 'get').toLowerCase())) {
     const csrf = readCookie('espress0_csrf');
@@ -92,8 +132,8 @@ export const statsApi = {
 };
 
 export const aiApi = {
-  ask: (q) => api.get('/ai/ask', { params: { q } }).then(r => r.data),
-  askPost: (question) => api.post('/ai/ask', { question }).then(r => r.data),
+  ask: (q) => api.get('/ai/ask', { params: { q }, timeout: AI_TIMEOUT }).then(r => r.data),
+  askPost: (question) => api.post('/ai/ask', { question }, { timeout: AI_TIMEOUT }).then(r => r.data),
   suggestions: () => api.get('/ai/suggestions').then(r => r.data),
   status: () => api.get('/ai/status').then(r => r.data),
   faq: () => api.get('/faq').then(r => r.data),
@@ -132,7 +172,7 @@ export const adminApi = {
     api.get('/admin/slug-check', { params: { slug, ...(excludeId ? { excludeId } : {}) } }).then(r => r.data),
   duplicateItem: (id) => api.post(`/admin/items/${id}/duplicate`).then(r => r.data),
   bulkItems: (action, ids, extra = {}) => api.post('/admin/items/bulk', { action, ids, ...extra }).then(r => r.data),
-  describeItem: (meta) => api.post('/admin/ai/describe', meta).then(r => r.data),
+  describeItem: (meta) => api.post('/admin/ai/describe', meta, { timeout: AI_TIMEOUT }).then(r => r.data),
   /** Version history. */
   versions: (id) => api.get(`/admin/items/${id}/versions`).then(r => r.data),
   version: (id, num) => api.get(`/admin/items/${id}/versions/${num}`).then(r => r.data),
