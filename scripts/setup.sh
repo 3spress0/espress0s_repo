@@ -26,7 +26,7 @@
 #   ./scripts/setup.sh --force-secrets       # regenerate secrets (destroys data!)
 #
 # For an Ubuntu server (Node install, systemd, nginx) use
-# scripts/setup-ubuntu.sh or scripts/deploy-ubuntu.sh instead.
+# `sudo ./espress0 deploy ...` (scripts/deploy-ubuntu.sh) instead.
 #
 set -euo pipefail
 

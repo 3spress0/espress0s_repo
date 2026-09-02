@@ -85,14 +85,22 @@
 git clone <your-repo> espress0s-repo
 cd espress0s-repo
 
-./scripts/setup.sh --start
+# Unified CLI — all commands live behind it:
+#   setup | dev | serve | update | deploy | backup | db | ai | scan | test | status
+./espress0 setup
 ```
+
+`./espress0` is the single entry point for everything: `setup`, `dev`,
+`serve` (runs in tmux in the background), `update` (auto-updater), `deploy`
+(Ubuntu server), `backup`, `scan`, `test`, `status`, ... — `./espress0 help`
+lists them. Each command dispatches to a script in `scripts/`, which you can
+also call directly.
 
 One command: checks Node, writes a `.env` with freshly generated secrets, creates
 `data/` and `backups/`, installs both dependency trees, migrates + seeds the
-database, prints a generated admin password once, then starts the dev servers
-(frontend :5173, API :3000). Re-running never overwrites secrets or data.
-`./scripts/setup.sh --help` lists the flags (`--build`, `--reset-db`,
+database and prints a generated admin password once. Add `--start` to also
+launch the dev servers. Re-running never overwrites secrets or data.
+`./espress0 setup --help` lists the flags (`--build`, `--reset-db`,
 `--admin-password`, `--with-tgpt`, ...).
 
 <details>
@@ -124,11 +132,11 @@ npm run dev  # :5173
 ### Run in the background (tmux) + auto-update
 
 ```bash
-./scripts/start-tmux.sh            # app on :3000 + auto-updater, survives logout
-./scripts/start-tmux.sh dev        # backend :3000 + Vite dev server :5173
-./scripts/start-tmux.sh status     # is it up?
+./espress0 serve                   # app on :3000 + auto-updater, survives logout
+./espress0 serve dev               # backend :3000 + Vite dev server :5173
+./espress0 serve status            # is it up?
 tmux attach -t espress0            # live logs (Ctrl-B D to detach)
-./scripts/start-tmux.sh stop
+./espress0 serve stop
 ```
 
 The auto-updater window watches `origin/<current-branch>` (every 5 min):
@@ -137,7 +145,7 @@ rebuild → app restart. It never resets local commits away and skips update
 cycles while the working tree is dirty. Pause with
 `touch data/.auto-update-disabled`; status shows up under
 **Admin → Settings → Auto-update**. Standalone/cron/systemd use:
-`./scripts/auto-update.sh --once` (see `systemd/espress0-repo-updater.service`).
+`./espress0 update --once` (see `systemd/espress0-repo-updater.service`).
 
 ## 🐳 Docker (Production)
 

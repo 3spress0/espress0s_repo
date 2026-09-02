@@ -12,13 +12,13 @@ served on port 80**, so no port is needed in the URL:
 
 ```bash
 # HTTP only, app on port 3000
-sudo ./scripts/deploy-ubuntu.sh --repo https://github.com/you/espress0s-repo.git
+sudo ./espress0 deploy --repo https://github.com/you/espress0s-repo.git
 
 # Behind nginx on a domain
-sudo ./scripts/deploy-ubuntu.sh --repo <url> --domain repo.example.com
+sudo ./espress0 deploy --repo <url> --domain repo.example.com
 
 # With a Let's Encrypt certificate (DNS must already point at the server)
-sudo ./scripts/deploy-ubuntu.sh --repo <url> --domain repo.example.com --https
+sudo ./espress0 deploy --repo <url> --domain repo.example.com --https
 ```
 
 `--repo` is remembered in `/etc/espress0-repo/deploy.conf`, so updates need no
@@ -29,7 +29,7 @@ the end — save it.
 ### Updating to the latest commit
 
 ```bash
-sudo ./scripts/deploy-ubuntu.sh --update
+sudo ./espress0 deploy --update
 ```
 
 This fetches from the remembered GitHub URL, syncs the checkout, reinstalls
@@ -43,8 +43,8 @@ Local edits to tracked files are discarded, because a server should match the
 repository exactly; they are listed first so you can see what was dropped.
 
 ```bash
-sudo ./scripts/deploy-ubuntu.sh --update --branch staging   # one-off, not sticky
-sudo ./scripts/deploy-ubuntu.sh --update --repo <other-url> # switch source
+sudo ./espress0 deploy --update --branch staging   # one-off, not sticky
+sudo ./espress0 deploy --update --repo <other-url> # switch source
 ```
 
 #### Hands-free: the auto-updater
@@ -54,7 +54,7 @@ next to the app and it pulls, rebuilds and restarts on every new commit:
 
 ```bash
 # once (e.g. from cron): checks and updates a single time
-sudo -u espress0 /opt/espress0s-repo/scripts/auto-update.sh --once --service espress0-repo
+sudo -u espress0 /opt/espress0s-repo/espress0 update --once --service espress0-repo
 
 # or permanent, as a service (unit ships in systemd/):
 sudo cp systemd/espress0-repo-updater.service /etc/systemd/system/
@@ -70,20 +70,21 @@ pauses everything. The current status is visible in the admin UI under
 **Admin → Settings → Auto-update** and in `data/.auto-update-status`.
 
 Other flags: `--port <n>` (default 80), `--user <name>`, `--with-tgpt` (AI
-backend), `--skip-firewall`. Run `./scripts/deploy-ubuntu.sh --help` for the
+backend), `--skip-firewall`. Run `sudo ./espress0 deploy --help` for the
 list. Set `APP_CONFIG_DIR` to keep several deployments on one host.
 
 ### Starting and health-checking
 
 ```bash
-sudo ./scripts/deploy-ubuntu.sh --start     # production deploy
-./scripts/setup-ubuntu.sh --start           # local setup
+sudo ./espress0 deploy --start              # production deploy (systemd)
+./espress0 serve restart                    # local/tmux setup
 ```
 
-Both restart the app and then poll `/api/health` for up to 15 seconds. On
-failure they print the service state, the last 20 journal lines and whether
-anything is listening on the port, and exit non-zero — so you can use them in a
-CI step or a healthcheck.
+`deploy --start` restarts the systemd service and polls `/api/health` for up
+to 15 seconds; on failure it prints the service state, the last 20 journal
+lines and whether anything is listening on the port, and exits non-zero — so
+you can use it in a CI step or a healthcheck. The tmux runner's `restart`
+re-spawns and its `status` shows the listener.
 
 Because port 80 is privileged and the service runs as an unprivileged user, the
 generated systemd unit grants exactly one capability,
@@ -95,7 +96,7 @@ rather keep nginx as the only thing on 80.
 ### Quick start (one command)
 
 ```bash
-./scripts/setup.sh
+./espress0 setup
 ```
 
 ### Keep it running in the background (tmux)
@@ -105,18 +106,18 @@ runner instead — the app (and the auto-updater) keeps running after you close
 the laptop/SSH session:
 
 ```bash
-./scripts/start-tmux.sh            # built UI on :3000 + auto-updater window
-./scripts/start-tmux.sh dev        # Vite dev mode instead (:5173 + :3000)
-./scripts/start-tmux.sh status     # show health of the session
+./espress0 serve                   # built UI on :3000 + auto-updater window
+./espress0 serve dev               # Vite dev mode instead (:5173 + :3000)
+./espress0 serve status            # show health of the session
 tmux attach -t espress0            # watch live logs (Ctrl-B D detaches)
-./scripts/start-tmux.sh stop
+./espress0 serve stop
 ```
 
 The updater window runs `scripts/auto-update.sh`: every 5 minutes it fetches
 the tracked branch, and if there is a new commit it pulls (fast-forward only),
 reinstalls what changed, rebuilds the frontend and restarts the app. To bike
 the updater into cron or systemd instead, see
-`systemd/espress0-repo-updater.service` and `./scripts/auto-update.sh --help`.
+`systemd/espress0-repo-updater.service` and `./espress0 update --help`.
 Live status is written to `data/.auto-update-status` and shows up in the admin
 UI (Settings → Auto-update). `touch data/.auto-update-disabled` pauses it.
 
@@ -127,17 +128,17 @@ seeds the database, and prints a generated admin password **once**. It is safe t
 re-run: existing secrets, database and uploads are never overwritten.
 
 ```bash
-./scripts/setup.sh --start                    # ... then start the dev servers
-./scripts/setup.sh --build --start            # ... single origin on :3000
-./scripts/setup.sh --admin-password 'S3cret!' # choose the password yourself
-./scripts/setup.sh --with-tgpt                # also install tgpt (AI drafting)
-./scripts/setup.sh --reset-db                 # back up and recreate the database
-./scripts/setup.sh --help                     # every flag
+./espress0 setup --start                    # ... then start the dev servers
+./espress0 setup --build --start            # ... single origin on :3000
+./espress0 setup --admin-password 'S3cret!' # choose the password yourself
+./espress0 setup --with-tgpt                # also install tgpt (AI drafting)
+./espress0 setup --reset-db                 # back up and recreate the database
+./espress0 setup --help                     # every flag
 ```
 
 No root, no `apt`, nothing installed system-wide — works on Linux, macOS and WSL.
-For an Ubuntu *server* (Node install, systemd, nginx) use `scripts/setup-ubuntu.sh`
-or `scripts/deploy-ubuntu.sh` instead.
+For an Ubuntu *server* (Node install, systemd, nginx) use `./espress0 deploy`
+(scripts/deploy-ubuntu.sh) instead.
 
 The manual equivalent is below, if you would rather do it step by step.
 
