@@ -78,8 +78,11 @@ export const config = {
   ai: {
     enabled: process.env.TGPT_ENABLED !== 'false',
     binaryPath: process.env.TGPT_BINARY_PATH || '/usr/local/bin/tgpt',
-    provider: process.env.TGPT_PROVIDER || 'openai',
-    model: process.env.TGPT_MODEL || 'gpt-3.5-turbo',
+    // Empty = let tgpt use its own default provider (phind at the time of
+    // writing), which is free and needs no key. 'openai' etc. need TGPT_API_KEY.
+    provider: process.env.TGPT_PROVIDER || '',
+    apiKey: process.env.TGPT_API_KEY || process.env.AI_API_KEY || '',
+    model: process.env.TGPT_MODEL || '',
   },
 
   rateLimit: {

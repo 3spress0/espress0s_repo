@@ -5,9 +5,11 @@
 #   ./espress0 <command> [args...]
 #
 # Commands:
-#   setup              First-time local setup: .env, secrets, deps, database
-#                      (flags pass through, e.g. ./espress0 setup --admin-password 'X'
-#                       --with-tgpt --reset-db --build)
+#   setup              First-time local setup: .env, secrets, deps, database.
+#                      With no flags on a fresh checkout it asks interactively
+#                      (admin login, port, tgpt, how to run) — --no-wizard or
+#                      any flag stays scripted. Flags: --admin-password X,
+#                      --with-tgpt, --reset-db, --build, --start, ...
 #   dev [--build]      Dev servers: frontend :5173 + API :3000
 #                      (--build: production build, single origin on :3000)
 #   serve              Run in the background inside tmux (survives logout).

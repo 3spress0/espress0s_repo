@@ -75,6 +75,8 @@ while [ $# -gt 0 ]; do
     --force-secrets)    FORCE_SECRETS=1 ;;
     --admin-password)   ADMIN_PASSWORD_OVERRIDE="${2:-}"; shift ;;
     --admin-password=*) ADMIN_PASSWORD_OVERRIDE="${1#*=}" ;;
+    --wizard)           WIZARD=1 ;;
+    --no-wizard)        NO_WIZARD=1 ;;
     -h|--help)
       # Print the leading comment block, stopping at the first non-comment line.
       awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
@@ -136,6 +138,100 @@ needs_secret() {
   esac
   return 1
 }
+
+# ==============================================================================
+# Interactive wizard. Runs when explicitly asked (--wizard) or when setup is
+# invoked with no arguments in a real terminal. Headless shells, flag-driven
+# invocations and --no-wizard skip straight to the scripted defaults.
+RUN_WIZARD=0
+if [ "${NO_WIZARD:-0}" -ne 1 ]; then
+  if [ "${WIZARD:-0}" -eq 1 ] || { [ $# -eq 0 ] && [ -t 0 ] && [ -t 1 ] && [ ! -f .env ]; }; then
+    RUN_WIZARD=1
+  fi
+fi
+
+ask() { # ask <prompt> <default> -> echoes the answer
+  local prompt="$1" default="$2" reply
+  if [ -n "$default" ]; then
+    printf '  %s?%s %s [%s]: ' "$C_BLUE$C_BOLD" "$C_RESET" "$prompt" "$default" >&2
+  else
+    printf '  %s?%s %s: ' "$C_BLUE$C_BOLD" "$C_RESET" "$prompt" >&2
+  fi
+  read -r reply || reply=""
+  printf '%s' "${reply:-$default}"
+}
+
+ask_yn() { # ask_yn <prompt> <default y|n>
+  local prompt="$1" default="$2" reply
+  while :; do
+    if [ "$default" = y ]; then
+      printf '  %s?%s %s [Y/n]: ' "$C_BLUE$C_BOLD" "$C_RESET" "$prompt" >&2
+    else
+      printf '  %s?%s %s [y/N]: ' "$C_BLUE$C_BOLD" "$C_RESET" "$prompt" >&2
+    fi
+    read -r reply || reply=""
+    case "${reply:-$default}" in
+      y|Y|yes) return 0 ;;
+      n|N|no)  return 1 ;;
+    esac
+  done
+}
+
+if [ "$RUN_WIZARD" -eq 1 ]; then
+  printf '\n%s==> espress0 setup wizard%s  (press Enter to accept [defaults])\n' "$C_BLUE$C_BOLD" "$C_RESET"
+
+  # Admin login -----------------------------------------------------------
+  WZ_USER_DEFAULT="$(env_value ADMIN_USERNAME || true)"
+  WZ_USER="$(ask 'Admin username' "${WZ_USER_DEFAULT:-admin}")"
+  [ -n "$WZ_USER" ] && ADMIN_USERNAME_WIZARD="$WZ_USER"
+
+  # Password: empty twice = generate.
+  while :; do
+    printf '  %s?%s Admin password %s: ' "$C_BLUE$C_BOLD" "$C_RESET" "(empty = generate a random one)" >&2
+    read -rs WZ_PW1 || WZ_PW1=""; printf '\n' >&2
+    if [ -z "$WZ_PW1" ]; then
+      ok "A random admin password will be generated (shown once at the end)."
+      break
+    fi
+    if [ "${#WZ_PW1}" -lt 8 ]; then
+      warn "Use at least 8 characters."; continue
+    fi
+    printf '  %s?%s Repeat it: ' "$C_BLUE$C_BOLD" "$C_RESET" >&2
+    read -rs WZ_PW2 || WZ_PW2=""; printf '\n' >&2
+    if [ "$WZ_PW1" != "$WZ_PW2" ]; then warn "Passwords don't match, try again."; continue; fi
+    ADMIN_PASSWORD_OVERRIDE="$WZ_PW1"
+    break
+  done
+
+  # Port ------------------------------------------------------------------
+  WZ_PORT_DEFAULT="$(env_value PORT || true)"
+  WZ_PORT="$(ask 'Port for the app' "${WZ_PORT_DEFAULT:-3000}")"
+  case "$WZ_PORT" in (*[!0-9]*|'') warn "Not a number, keeping ${WZ_PORT} out; using 3000."; WZ_PORT=3000 ;; esac
+  PORT_WIZARD="$WZ_PORT"
+
+  # AI --------------------------------------------------------------------
+  if command -v tgpt >/dev/null 2>&1; then
+    ok "tgpt already installed."
+  elif ask_yn "Install tgpt now (free AI used by Ask-AI and admin drafting)" "n"; then
+    WITH_TGPT=1
+  fi
+
+  # How to run afterwards ---------------------------------------------------
+  echo >&2
+  echo "    How do you want to run it after setup?" >&2
+  echo "    1) just install — I'll start it myself" >&2
+  echo "    2) dev servers (frontend :5173 + API :$WZ_PORT, hot reload)" >&2
+  echo "    3) production build, single origin on :$WZ_PORT" >&2
+  echo "    4) background via tmux (survives logout, incl. auto-updater)" >&2
+  WZ_RUN="$(ask 'Choice' '1')"
+  case "$WZ_RUN" in
+    2) START=1 ;;
+    3) BUILD=1; START=1 ;;
+    4) BUILD=1; RUN_TMUX_WIZARD=1 ;;
+    *) ;;
+  esac
+  echo >&2
+fi
 
 # ==============================================================================
 step "Checking prerequisites"
@@ -223,6 +319,15 @@ fi
 # later does not rewrite an existing account.
 ADMIN_USERNAME_VALUE="$(env_value ADMIN_USERNAME)"
 [ -n "$ADMIN_USERNAME_VALUE" ] || ADMIN_USERNAME_VALUE="admin"
+if [ -n "${ADMIN_USERNAME_WIZARD:-}" ] && [ "$ADMIN_USERNAME_WIZARD" != "$ADMIN_USERNAME_VALUE" ]; then
+  set_env_value ADMIN_USERNAME "$ADMIN_USERNAME_WIZARD"
+  ADMIN_USERNAME_VALUE="$ADMIN_USERNAME_WIZARD"
+  ok "Admin username set to $ADMIN_USERNAME_VALUE"
+fi
+if [ -n "${PORT_WIZARD:-}" ] && [ "$PORT_WIZARD" != "$(env_value PORT)" ]; then
+  set_env_value PORT "$PORT_WIZARD"
+  ok "App port set to $PORT_WIZARD"
+fi
 
 # ==============================================================================
 step "Creating local directories"
@@ -345,6 +450,11 @@ cat <<EOF
 
   Re-run this script any time; it never overwrites secrets, the database or uploads.
 EOF
+
+if [ "${RUN_TMUX_WIZARD:-0}" -eq 1 ]; then
+  step "Starting in tmux (app + auto-updater keep running after you log out)"
+  exec "$SCRIPT_DIR/start-tmux.sh"
+fi
 
 if [ "$START" -eq 1 ]; then
   step "Starting the dev environment"

@@ -1,6 +1,7 @@
 import { aiQuerySchema } from '../utils/validation.js';
 import { aiService } from '../services/aiService.js';
 import { getDb } from '../db/index.js';
+import { config } from '../config.js';
 
 // Each ask can spawn a tgpt subprocess, so this endpoint is far more
 // expensive than a normal read. Keep it well under the global limit.
@@ -54,7 +55,11 @@ export async function aiRoutes(fastify) {
     const available = await aiService.checkTgptAvailable();
     return {
       tgptAvailable: available,
-      provider: 'tgpt + metadata search',
+      // Admin-only honesty about why AI features might fall back: lets the
+      // admin act ("tgpt not installed", bad provider, missing key) instead
+      // of silently getting template drafts.
+      tgptError: available ? null : aiService.lastError,
+      provider: config.ai.provider || 'tgpt default (free, no key)',
       fallback: 'rule-based metadata search',
       enabled: true,
     };

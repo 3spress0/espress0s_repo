@@ -9,6 +9,12 @@ const execFileAsync = promisify(execFile);
 
 // Provider names are pasted into an argv slot; keep them boring.
 const PROVIDER_PATTERN = /^[a-zA-Z0-9_.-]{1,32}$/;
+// Models may contain slashes (meta-llama/…) and colons (ollama llama3:8b).
+const MODEL_PATTERN = /^[a-zA-Z0-9_.:/-]{1,64}$/;
+
+// Providers that cannot answer anything without a key; tgpt just errors out.
+const KEY_PROVIDERS = new Set(['openai', 'deepseek', 'groq', 'gemini', 'mistral', 'anthropic']);
+let warnedAboutKeylessProvider = false;
 
 function providerArgs() {
   const provider = config.ai.provider;
@@ -17,7 +23,36 @@ function providerArgs() {
     console.warn(`[ai] Ignoring invalid TGPT_PROVIDER value: ${provider}`);
     return [];
   }
+  if (KEY_PROVIDERS.has(provider) && !config.ai.apiKey) {
+    // A .env from before the defaults changed says TGPT_PROVIDER=openai
+    // without a key, which makes every AI call fail. Fall back to tgpt's
+    // built-in free provider and say so once.
+    if (!warnedAboutKeylessProvider) {
+      warnedAboutKeylessProvider = true;
+      console.warn(`[ai] TGPT_PROVIDER=${provider} needs TGPT_API_KEY in .env; using tgpt's free default provider instead.`);
+    }
+    return [];
+  }
   return ['--provider', provider];
+}
+
+function modelArgs() {
+  const model = config.ai.model;
+  if (!model) return [];
+  // Model names are provider-specific ('gpt-3.5-turbo' means nothing to
+  // phind). Only forward one when a provider was explicitly chosen.
+  if (!config.ai.provider) {
+    if (!warnedAboutKeylessProvider) {
+      warnedAboutKeylessProvider = true;
+      console.warn('[ai] TGPT_MODEL is set but TGPT_PROVIDER is empty; ignoring the model (provider default will be used).');
+    }
+    return [];
+  }
+  if (!MODEL_PATTERN.test(model)) {
+    console.warn(`[ai] Ignoring invalid TGPT_MODEL value: ${model}`);
+    return [];
+  }
+  return ['--model', model];
 }
 
 /**
@@ -28,12 +63,19 @@ function providerArgs() {
  * (b) wrote predictable filenames into a world-writable directory, so any
  * local user could pre-create a symlink there and have us clobber a file or
  * feed the model their own prompt.
+ *
+ * The API key (when the chosen provider needs one) goes in via the
+ * AI_API_KEY environment variable, never on the command line where other
+ * local users could read it from ps(1).
  */
 function runTgpt(binary, prompt, { timeoutMs = 30000, maxBytes = 1024 * 1024 } = {}) {
+  const env = { ...process.env };
+  if (config.ai.apiKey) env.AI_API_KEY = config.ai.apiKey;
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, [...providerArgs(), '--quiet'], {
+    const child = spawn(binary, [...providerArgs(), ...modelArgs(), '--quiet'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
+      env,
     });
 
     let out = '';
@@ -74,31 +116,59 @@ function runTgpt(binary, prompt, { timeoutMs = 30000, maxBytes = 1024 * 1024 } =
 export class AIService {
   constructor() {
     this.tgptAvailable = null; // null = unknown, check lazily
+    this.tgptBinary = null;    // resolved once alongside availability
+    this.lastError = null;     // why the last tgpt call failed (shown to admins)
   }
 
+  /**
+   * Decide once which tgpt binary we use, preferring TGPT_BINARY_PATH but
+   * falling back to a tgpt on PATH, and answer whether it actually runs.
+   * Previously a tgpt found via PATH marked us available while the fixed
+   * default path (/usr/local/bin/tgpt) was what got spawned — install via a
+   * package manager (~/go/bin, ~/.local/bin) and every AI call died with
+   * ENOENT even though `tgpt` worked fine in a shell.
+   */
   async checkTgptAvailable() {
     if (this.tgptAvailable !== null) return this.tgptAvailable;
-    
+
     if (!config.ai.enabled) {
       this.tgptAvailable = false;
       return false;
     }
 
-    try {
-      const binary = config.ai.binaryPath;
-      if (!fs.existsSync(binary)) {
-        // Try which tgpt
-        await execFileAsync('which', ['tgpt']);
-        this.tgptAvailable = true;
-        return true;
-      }
-      await execFileAsync(binary, ['--version']);
-      this.tgptAvailable = true;
-      return true;
-    } catch {
+    const configured = config.ai.binaryPath;
+    let binary = null;
+    if (configured && fs.existsSync(configured)) {
+      binary = configured;
+    } else if (configured && configured !== 'tgpt') {
+      // Configured path missing — try PATH before giving up.
+      try { binary = (await execFileAsync('which', ['tgpt'])).stdout.trim() || 'tgpt'; }
+      catch { binary = null; }
+    } else {
+      try { binary = (await execFileAsync('which', ['tgpt'])).stdout.trim() || 'tgpt'; }
+      catch { binary = null; }
+    }
+
+    if (!binary) {
       this.tgptAvailable = false;
+      this.lastError = 'tgpt binary not found (./espress0 ai installs it)';
       return false;
     }
+    try {
+      await execFileAsync(binary, ['--version']);
+      this.tgptBinary = binary;
+      this.tgptAvailable = true;
+      return true;
+    } catch (e) {
+      this.tgptAvailable = false;
+      this.lastError = `tgpt found at ${binary} but failed to run: ${e.message}`.slice(0, 200);
+      return false;
+    }
+  }
+
+  async tgptSpawnTarget() {
+    if (await this.checkTgptAvailable()) return this.tgptBinary;
+    return fs.existsSync(config.ai.binaryPath) ? config.ai.binaryPath : 'tgpt';
   }
 
   /**
@@ -220,7 +290,7 @@ STRICT RULES:
   }
 
   async askWithTgpt(question, context) {
-    const binary = fs.existsSync(config.ai.binaryPath) ? config.ai.binaryPath : 'tgpt';
+    const binary = await this.tgptSpawnTarget();
     
     // Build prompt - we use context + question
     // tgpt usage: echo "prompt" | tgpt --provider openai
@@ -359,14 +429,16 @@ STRICT RULES:
         if (draft) return { ...draft, usedTgpt: true };
       } catch (e) {
         console.warn('tgpt draft failed, falling back to template:', e.message);
+        this.lastError = String(e.message || e).slice(0, 200);
+        return { ...this.templateDraft(clean), usedTgpt: false, tgptError: this.lastError };
       }
     }
 
-    return { ...this.templateDraft(clean), usedTgpt: false };
+    return { ...this.templateDraft(clean), usedTgpt: false, tgptError: this.lastError };
   }
 
   async draftWithTgpt(meta) {
-    const binary = fs.existsSync(config.ai.binaryPath) ? config.ai.binaryPath : 'tgpt';
+    const binary = await this.tgptSpawnTarget();
 
     const facts = [
       `Name: ${meta.name}`,
