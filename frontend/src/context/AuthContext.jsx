@@ -1,6 +1,14 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { authApi } from '../lib/api';
 
+/**
+ * Cookie-only auth context.
+ *
+ * The session lives in an httpOnly cookie set by the server; nothing useful is
+ * kept in localStorage any more. On boot we always ask /auth/me who we are -
+ * the browser attaches the session cookie itself - and fetch/refresh the CSRF
+ * cookie so mutating calls work on restored sessions too.
+ */
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
@@ -8,17 +16,10 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('espress0_token');
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-
+    authApi.csrf().catch(() => {});
     authApi.me()
       .then(data => setUser(data.user))
-      .catch(() => {
-        localStorage.removeItem('espress0_token');
-      })
+      .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
 
@@ -30,7 +31,6 @@ export function AuthProvider({ children }) {
       captchaAnswer: captcha.answer,
       captchaToken: captcha.token,
     });
-    localStorage.setItem('espress0_token', data.token);
     setUser(data.user);
     return data;
   };
@@ -45,13 +45,18 @@ export function AuthProvider({ children }) {
       captchaAnswer: captcha.answer,
       captchaToken: captcha.token,
     });
-    localStorage.setItem('espress0_token', data.token);
     setUser(data.user);
     return data;
   };
 
-  const logout = () => {
-    localStorage.removeItem('espress0_token');
+  const logout = async () => {
+    try { await authApi.logout(); } catch { /* already gone - clear locally anyway */ }
+    setUser(null);
+  };
+
+  /** Kill every session for this account, everywhere, then log out locally. */
+  const logoutAll = async () => {
+    await authApi.logoutAll();
     setUser(null);
   };
 
@@ -62,6 +67,7 @@ export function AuthProvider({ children }) {
       login, 
       register,
       logout, 
+      logoutAll,
       isAdmin: user?.role === 'admin',
       isAuthenticated: !!user 
     }}>

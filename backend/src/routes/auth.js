@@ -4,6 +4,7 @@ import { generateToken, authenticate } from '../middleware/auth.js';
 import { config } from '../config.js';
 import { encryptionService } from '../services/encryptionService.js';
 import { captchaService } from '../services/captchaService.js';
+import crypto from 'crypto';
 import { z } from 'zod';
 
 /**
@@ -20,6 +21,17 @@ function sessionCookieOptions(extra = {}) {
     maxAge: 7 * 24 * 60 * 60,
     ...extra,
   };
+}
+
+/**
+ * Mint (and set) the CSRF double-submit cookie. Deliberately NOT httpOnly:
+ * the SPA must read it to echo it back as X-CSRF-Token. It holds no session
+ * power by itself - it only proves the page could read our cookies.
+ */
+function issueCsrfCookie(reply) {
+  const token = crypto.randomBytes(24).toString('base64url');
+  reply.setCookie('espress0_csrf', token, sessionCookieOptions({ httpOnly: false }));
+  return token;
 }
 
 const profileSchema = z.object({
@@ -93,9 +105,10 @@ export async function authRoutes(fastify) {
     // Set cookies - actual cookies for downloads
     reply.setCookie('espress0_token', token, sessionCookieOptions());
     reply.setCookie('espress0_auth', '1', sessionCookieOptions({ httpOnly: false }));
+    const csrfToken = issueCsrfCookie(reply);
 
     request.log.info({ userId: user.id, username: user.username }, 'User logged in with cookies');
-    return { token, user: { id: user.id, username: user.username, email: decryptedEmail, role: user.role, avatar_url: decAvatar, bio: decBio, theme: user.theme || 'dark' } };
+    return { token, csrfToken, user: { id: user.id, username: user.username, email: decryptedEmail, role: user.role, avatar_url: decAvatar, bio: decBio, theme: user.theme || 'dark' } };
   });
 
   fastify.post('/auth/register', {
@@ -138,10 +151,12 @@ export async function authRoutes(fastify) {
 
       reply.setCookie('espress0_token', token, sessionCookieOptions());
       reply.setCookie('espress0_auth', '1', sessionCookieOptions({ httpOnly: false }));
+      const csrfToken = issueCsrfCookie(reply);
 
       request.log.info({ userId: newUser.id, username: newUser.username, role }, 'New user registered with cookies');
       return reply.code(201).send({
         token,
+        csrfToken,
         user: { id: newUser.id, username: newUser.username, email: decEmail, role: newUser.role },
         message: role === 'admin' ? 'First user created as admin' : 'Registration successful',
       });
@@ -283,10 +298,38 @@ export async function authRoutes(fastify) {
     };
   });
 
+  /**
+   * GET /auth/csrf - make sure the caller has a CSRF cookie. Called by the SPA
+   * on boot: a restored session (httpOnly token survived, readable CSRF cookie
+   * did not) would otherwise be unable to mutate anything until next login.
+   */
+  fastify.get('/auth/csrf', async (request, reply) => {
+    const existing = request.cookies?.espress0_csrf;
+    if (existing && existing.length >= 16) return { csrfToken: existing };
+    return { csrfToken: issueCsrfCookie(reply) };
+  });
+
   fastify.post('/auth/logout', { preHandler: [authenticate] }, async (request, reply) => {
     reply.clearCookie('espress0_token', { path: '/' });
     reply.clearCookie('espress0_auth', { path: '/' });
+    reply.clearCookie('espress0_csrf', { path: '/' });
     return { success: true, message: 'Logged out' };
+  });
+
+  /**
+   * POST /auth/logout-all - "log out all devices". Bumping auth_version
+   * invalidates every token minted so far, including the caller's own, so the
+   * response also clears this device's cookies.
+   */
+  fastify.post('/auth/logout-all', { preHandler: [authenticate] }, async (request, reply) => {
+    const db = getDb();
+    db.prepare('UPDATE users SET auth_version = COALESCE(auth_version, 0) + 1, updated_at = ? WHERE id = ?')
+      .run(new Date().toISOString(), request.user.id);
+    reply.clearCookie('espress0_token', { path: '/' });
+    reply.clearCookie('espress0_auth', { path: '/' });
+    reply.clearCookie('espress0_csrf', { path: '/' });
+    request.log.info({ userId: request.user.id }, 'User logged out of all sessions');
+    return { success: true, message: 'All sessions were signed out. Log in again to continue.' };
   });
 
   fastify.get('/auth/security-info', async (request, reply) => {
@@ -295,7 +338,8 @@ export async function authRoutes(fastify) {
         passwordHashing: 'pepper (HMAC-SHA256) + bcrypt cost 12 + versioned',
         emailEncryption: 'AES-256-GCM with random IV + HMAC hash for lookup',
         itemEncryption: 'storage_path, download_url, external_url, license_notes AES-256-GCM',
-        jwt: 'HS256 (algorithm pinned) with expiry, invalidated on password change; httpOnly SameSite=Lax cookie or Bearer header (query ?token= only on download/preview)',
+        jwt: 'HS256 (algorithm pinned) with expiry, invalidated on password change and on "log out all devices"; httpOnly SameSite=Lax cookie or Bearer header (query ?token= only on download/preview)',
+        csrf: 'Double-submit cookie (espress0_csrf + X-CSRF-Token) on every cookie-authenticated mutation',
         rateLimiting: 'Enabled',
         sqlInjection: 'Parameterized queries',
         xss: 'React auto-escapes, strict Content-Security-Policy, uploads served sandboxed with nosniff',

@@ -38,6 +38,8 @@ export function getDb() {
     if (!hasBio) dbInstance.exec("ALTER TABLE users ADD COLUMN bio TEXT");
     const hasTheme = userCols.some(c => c.name === 'theme');
     if (!hasTheme) dbInstance.exec("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'");
+    const hasAuthVersion = userCols.some(c => c.name === 'auth_version');
+    if (!hasAuthVersion) dbInstance.exec("ALTER TABLE users ADD COLUMN auth_version INTEGER DEFAULT 0");
 
     const itemCols = dbInstance.prepare("PRAGMA table_info(items)").all();
     const hasItemEncVersion = itemCols.some(c => c.name === 'encryption_version');
@@ -47,6 +49,11 @@ export function getDb() {
     const hasImageUrl = itemCols.some(c => c.name === 'image_url');
     if (!hasImageUrl) {
       dbInstance.exec("ALTER TABLE items ADD COLUMN image_url TEXT");
+    }
+    const hasFolderId = itemCols.some(c => c.name === 'folder_id');
+    if (!hasFolderId) {
+      dbInstance.exec("ALTER TABLE items ADD COLUMN folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL");
+      dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_items_folder ON items(folder_id)");
     }
 
     // Ensure item_download_links table exists (for existing DBs)
@@ -85,6 +92,12 @@ export function getDb() {
       if (!hasStatus) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN status TEXT DEFAULT 'up'");
       const hasLastChecked = linkCols.some(c => c.name === 'last_checked');
       if (!hasLastChecked) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN last_checked DATETIME");
+      const hasHttpStatus = linkCols.some(c => c.name === 'http_status');
+      if (!hasHttpStatus) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN http_status INTEGER");
+      const hasCheckError = linkCols.some(c => c.name === 'check_error');
+      if (!hasCheckError) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN check_error TEXT");
+      const hasCheckDuration = linkCols.some(c => c.name === 'check_duration_ms');
+      if (!hasCheckDuration) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN check_duration_ms INTEGER");
     } catch (e) {
       console.warn('Download links table migration warning:', e.message);
     }

@@ -12,6 +12,7 @@ const GROUP_LABELS = {
   auth: 'Authentication',
   ai: 'AI',
   uploads: 'Uploads',
+  linkcheck: 'Link health checker',
   theme: 'Theme & effects',
 };
 

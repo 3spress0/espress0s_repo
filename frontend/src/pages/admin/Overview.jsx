@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Database } from 'lucide-react';
-import { adminApi } from '../../lib/api';
+import { Database, Link2, AlertTriangle } from 'lucide-react';
+import { adminApi, linkHealthApi } from '../../lib/api';
 
 export default function AdminOverview() {
   const [overview, setOverview] = useState(null);
+  const [health, setHealth] = useState(null);
   const [message, setMessage] = useState('');
 
   const load = () => adminApi.overview().then(setOverview).catch(() => setOverview(null));
   useEffect(() => { load(); }, []);
+  useEffect(() => { linkHealthApi.summary().then(setHealth).catch(() => {}); }, []);
 
   const handleReindex = async () => {
     try {
@@ -41,6 +43,26 @@ export default function AdminOverview() {
           </div>
         ))}
       </div>
+
+      {health && (health.counts.down > 0 || health.counts.manuallyDown > 0 || health.counts.unknown > 0) && (
+        <Link
+          to="/admin/storage"
+          className="flex items-center gap-3 p-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 hover:border-amber-500/40 transition-colors"
+        >
+          <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+          <div className="text-sm">
+            <span className="text-amber-300 font-medium">Mirror health: </span>
+            <span className="text-textSecondary">
+              {health.counts.down > 0 && <span className="text-red-400">{health.counts.down} dead (404/410)</span>}
+              {health.counts.down > 0 && health.counts.manuallyDown > 0 ? ' • ' : ''}
+              {health.counts.manuallyDown > 0 && <span>{health.counts.manuallyDown} manually down</span>}
+              {health.counts.unknown > 0 && <span className="text-amber-400"> • {health.counts.unknown} unverified</span>}
+              {' '}out of {health.counts.total} mirrors
+            </span>
+          </div>
+          <Link2 className="w-4 h-4 text-textMuted ml-auto flex-shrink-0" />
+        </Link>
+      )}
 
       <div className="grid md:grid-cols-2 gap-6">
         <div className="glass rounded-2xl border border-white/5 p-6">

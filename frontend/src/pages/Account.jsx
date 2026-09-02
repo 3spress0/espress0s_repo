@@ -10,7 +10,7 @@ import Logo from '../components/Logo';
 
 export default function Account() {
   const themeCtx = useTheme();
-  const { user, logout, loading: authLoading } = useAuth();
+  const { user, logout, logoutAll, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -134,6 +134,16 @@ export default function Account() {
     }
   };
 
+  const handleLogoutAll = async () => {
+    if (!confirm('Log out of ALL devices and browsers, including this one? Use this if you suspect your account is compromised.')) return;
+    try {
+      await logoutAll();
+      navigate('/login');
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not log out everywhere');
+    }
+  };
+
   if (authLoading || loading) {
     return (
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
@@ -230,7 +240,14 @@ export default function Account() {
                   <LogOut className="w-4 h-4" />
                   Log Out
                 </button>
-                <p className="text-[11px] text-textMuted">Logout asks for confirmation</p>
+                <button
+                  onClick={handleLogoutAll}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-surface border border-border text-textSecondary hover:border-red-500/40 hover:text-red-400 rounded-xl text-sm transition-colors"
+                >
+                  <Shield className="w-4 h-4" />
+                  Log out all devices
+                </button>
+                <p className="text-[11px] text-textMuted">“All devices” invalidates every session on this account, including this browser.</p>
               </div>
             </div>
           </div>

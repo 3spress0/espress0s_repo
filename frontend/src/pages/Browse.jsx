@@ -1,18 +1,28 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { Search, Filter, X, SlidersHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Filter, X, SlidersHorizontal, ChevronLeft, ChevronRight, Folder } from 'lucide-react';
 import ItemCard from '../components/ItemCard';
-import { searchApi, categoriesApi, itemsApi } from '../lib/api';
+import { searchApi, categoriesApi, foldersApi, itemsApi } from '../lib/api';
 
 const fileTypes = ['iso', 'exe', 'zip', 'pdf', 'dmg', 'msi', 'tar', 'gz', 'img'];
 const platforms = ['windows', 'linux', 'macos', 'cross-platform'];
 const architectures = ['x86', 'x64', 'arm64', 'universal'];
+const licenses = [
+  { value: 'public-domain', label: 'Public domain' },
+  { value: 'redistributable', label: 'Redistributable' },
+  { value: 'proprietary', label: 'Proprietary' },
+  { value: 'check-license', label: 'Check license' },
+  { value: 'internal-only', label: 'Internal only' },
+  { value: 'abandonware', label: 'Abandonware' },
+];
 const sortOptions = [
   { value: 'relevance', label: 'Relevance' },
   { value: 'date', label: 'Date Added' },
+  { value: 'updated', label: 'Recently Updated' },
   { value: 'name', label: 'Name' },
   { value: 'size', label: 'Size' },
-  { value: 'popular', label: 'Popular' },
+  { value: 'popular', label: 'Most Downloaded' },
+  { value: 'views', label: 'Most Viewed' },
 ];
 
 export default function Browse() {
@@ -20,11 +30,16 @@ export default function Browse() {
   const [results, setResults] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, totalPages: 0 });
   const [categories, setCategories] = useState([]);
+  const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
 
   const query = searchParams.get('q') || '';
   const category = searchParams.get('category') || '';
+  const folder = searchParams.get('folder') || '';
+  const tag = searchParams.get('tag') || '';
+  const license = searchParams.get('license_status') || '';
+  const featured = searchParams.get('featured') === '1';
   const fileType = searchParams.get('file_type') || '';
   const platform = searchParams.get('platform') || '';
   const arch = searchParams.get('architecture') || '';
@@ -33,13 +48,18 @@ export default function Browse() {
   const page = parseInt(searchParams.get('page') || '1');
 
   const [localQuery, setLocalQuery] = useState(query);
+  const [localTag, setLocalTag] = useState(tag);
 
   useEffect(() => {
     setLocalQuery(query);
   }, [query]);
+  useEffect(() => {
+    setLocalTag(tag);
+  }, [tag]);
 
   useEffect(() => {
     categoriesApi.list().then(d => setCategories(d.categories || [])).catch(() => {});
+    foldersApi.list().then(d => setFolders(d.folders || [])).catch(() => {});
   }, []);
 
   const fetchResults = useCallback(async () => {
@@ -48,6 +68,10 @@ export default function Browse() {
       const params = {
         q: query || undefined,
         category: category || undefined,
+        folder: folder || undefined,
+        tag: tag || undefined,
+        license_status: license || undefined,
+        featured: featured ? 1 : undefined,
         file_type: fileType || undefined,
         platform: platform || undefined,
         architecture: arch || undefined,
@@ -65,7 +89,7 @@ export default function Browse() {
     } finally {
       setLoading(false);
     }
-  }, [query, category, fileType, platform, arch, sort, order, page]);
+  }, [query, category, folder, tag, license, featured, fileType, platform, arch, sort, order, page]);
 
   useEffect(() => {
     fetchResults();
@@ -88,7 +112,7 @@ export default function Browse() {
     updateParam('q', localQuery);
   };
 
-  const hasFilters = category || fileType || platform || arch;
+  const hasFilters = category || folder || tag || license || featured || fileType || platform || arch;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -156,6 +180,61 @@ export default function Browse() {
                 <X className="w-4 h-4 text-textMuted" />
               </button>
             </div>
+          </div>
+
+          {/* Row of extra filters: folder, tag, license, featured */}
+          <div className="flex flex-wrap items-end gap-4 mb-6 pb-5 border-b border-white/5">
+            <div className="min-w-[160px]">
+              <label className="text-xs font-medium text-textMuted uppercase tracking-widest mb-2 block">Folder</label>
+              <div className="relative">
+                <Folder className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-textMuted pointer-events-none" />
+                <select
+                  value={folder}
+                  onChange={(e) => updateParam('folder', e.target.value)}
+                  className="w-full pl-8 pr-4 py-2 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50 appearance-none"
+                >
+                  <option value="">All folders</option>
+                  <option value="none">Unfiled</option>
+                  {folders.map(f => (
+                    <option key={f.id} value={f.slug}>{f.icon ? `${f.icon} ` : ''}{f.name} ({f.item_count})</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="min-w-[160px]">
+              <label className="text-xs font-medium text-textMuted uppercase tracking-widest mb-2 block">Tag</label>
+              <input
+                type="text"
+                value={localTag}
+                onChange={(e) => setLocalTag(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') updateParam('tag', localTag.trim()); }}
+                onBlur={() => updateParam('tag', localTag.trim())}
+                placeholder="e.g. linux"
+                className="w-full px-3 py-2 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50"
+              />
+            </div>
+
+            <div className="min-w-[170px]">
+              <label className="text-xs font-medium text-textMuted uppercase tracking-widest mb-2 block">License</label>
+              <select
+                value={license}
+                onChange={(e) => updateParam('license_status', e.target.value)}
+                className="w-full px-3 py-2 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50"
+              >
+                <option value="">Any license</option>
+                {licenses.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+              </select>
+            </div>
+
+            <button
+              onClick={() => updateParam('featured', featured ? '' : '1')}
+              className={`px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
+                featured ? 'bg-gradient-primary border-transparent text-white' : 'bg-surface border-border text-textSecondary hover:border-primary/30'
+              }`}
+            >
+              ★ Featured only
+            </button>
           </div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -253,6 +332,10 @@ export default function Browse() {
                 <div className="space-y-2 text-xs">
                   {query && <div className="flex items-center justify-between bg-surface rounded-lg px-3 py-2"><span>Search: "{query}"</span><button onClick={() => updateParam('q', '')}><X className="w-3 h-3" /></button></div>}
                   {category && <div className="flex items-center justify-between bg-surface rounded-lg px-3 py-2"><span>Category: {category}</span><button onClick={() => updateParam('category', '')}><X className="w-3 h-3" /></button></div>}
+                  {folder && <div className="flex items-center justify-between bg-surface rounded-lg px-3 py-2"><span>Folder: {folders.find(f => f.slug === folder)?.name || folder}</span><button onClick={() => updateParam('folder', '')}><X className="w-3 h-3" /></button></div>}
+                  {tag && <div className="flex items-center justify-between bg-surface rounded-lg px-3 py-2"><span>Tag: {tag}</span><button onClick={() => updateParam('tag', '')}><X className="w-3 h-3" /></button></div>}
+                  {license && <div className="flex items-center justify-between bg-surface rounded-lg px-3 py-2"><span>License: {licenses.find(l => l.value === license)?.label || license}</span><button onClick={() => updateParam('license_status', '')}><X className="w-3 h-3" /></button></div>}
+                  {featured && <div className="flex items-center justify-between bg-surface rounded-lg px-3 py-2"><span>Featured only</span><button onClick={() => updateParam('featured', '')}><X className="w-3 h-3" /></button></div>}
                   {fileType && <div className="flex items-center justify-between bg-surface rounded-lg px-3 py-2"><span>Type: {fileType}</span><button onClick={() => updateParam('file_type', '')}><X className="w-3 h-3" /></button></div>}
                   {platform && <div className="flex items-center justify-between bg-surface rounded-lg px-3 py-2"><span>Platform: {platform}</span><button onClick={() => updateParam('platform', '')}><X className="w-3 h-3" /></button></div>}
                   {arch && <div className="flex items-center justify-between bg-surface rounded-lg px-3 py-2"><span>Arch: {arch}</span><button onClick={() => updateParam('architecture', '')}><X className="w-3 h-3" /></button></div>}

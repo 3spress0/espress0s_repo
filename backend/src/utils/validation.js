@@ -30,6 +30,7 @@ export const itemSchema = z.object({
   description: z.string().min(5).max(500),
   long_description: z.string().max(5000).optional().nullable(),
   category_id: z.number().int().positive().optional().nullable(),
+  folder_id: z.number().int().positive().optional().nullable(),
   version: z.string().max(100).optional().nullable(),
   release_date: z.string().optional().nullable(),
   file_name: z.string().max(255).optional().nullable(),
@@ -63,6 +64,18 @@ export const categorySchema = z.object({
   description: z.string().max(500).optional().nullable(),
   icon: z.string().max(10).optional().nullable(),
   color: z.string().max(20).optional().nullable(),
+});
+
+// Folders are an admin-defined grouping that sits next to (not inside)
+// categories: an item has one category for *what it is* and optionally one
+// folder for *where the admin files it*.
+export const folderSchema = z.object({
+  name: z.string().min(2).max(100),
+  slug: z.string().min(2).max(100).optional(),
+  description: z.string().max(500).optional().nullable(),
+  icon: z.string().max(10).optional().nullable(),
+  color: z.string().max(20).optional().nullable(),
+  sort_order: z.number().int().optional(),
 });
 
 export const loginSchema = z.object({

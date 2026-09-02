@@ -3,6 +3,9 @@ export async function searchRoutes(fastify) {
     const {
       q = '',
       category,
+      folder,
+      tag,
+      license_status,
       file_type,
       platform,
       architecture,
@@ -10,6 +13,7 @@ export async function searchRoutes(fastify) {
       order = 'desc',
       page = 1,
       limit = 20,
+      featured,
     } = request.query;
 
     const { searchService, MAX_QUERY_LENGTH } = await import('../services/searchService.js');
@@ -27,6 +31,9 @@ export async function searchRoutes(fastify) {
     const result = searchService.search({
       q: safeQ,
       category: category || null,
+      folder: folder || null,
+      tag: tag ? String(tag).slice(0, 64) : null,
+      license_status: license_status || null,
       file_type: file_type || null,
       platform: platform || null,
       architecture: architecture || null,
@@ -34,6 +41,7 @@ export async function searchRoutes(fastify) {
       order,
       page: toInt(page, 1, 1, 1000),
       limit: toInt(limit, 20, 1, 50),
+      featured: featured !== undefined ? (featured === 'true' || featured === '1' ? 1 : 0) : null,
       published: 1,
     });
 
@@ -48,6 +56,9 @@ export async function searchRoutes(fastify) {
       },
       filters: {
         category,
+        folder,
+        tag,
+        license_status,
         file_type,
         platform,
         architecture,

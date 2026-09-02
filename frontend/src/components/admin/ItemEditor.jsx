@@ -3,11 +3,12 @@ import {
   X, Save, Loader2, AlertCircle, Eye, Check, Link as LinkIcon,
   RotateCcw, Sparkles, CheckCircle2, Circle, ArrowLeft, ArrowRight,
 } from 'lucide-react';
-import { itemsApi, categoriesApi, adminApi } from '../../lib/api';
+import { itemsApi, categoriesApi, foldersApi, adminApi } from '../../lib/api';
 import ImagePicker from './ImagePicker';
 import DownloadLinksEditor from './DownloadLinksEditor';
 import MarkdownField from './MarkdownField';
 import TemplatePicker from './TemplatePicker';
+import VersionHistory from './VersionHistory';
 import { applyTemplate } from './pageTemplates';
 
 const LICENSE_STATUSES = [
@@ -28,6 +29,9 @@ const BASE_SECTIONS = [
   { id: 'publishing', label: 'Publishing' },
 ];
 
+// Version history only makes sense for a page that exists.
+const EDIT_SECTIONS = [...BASE_SECTIONS, { id: 'history', label: 'History' }];
+
 /** Mirrors the backend's slugify closely enough for a live URL preview. */
 function slugify(text) {
   return String(text || '')
@@ -41,7 +45,7 @@ function slugify(text) {
 
 function emptyForm() {
   return {
-    name: '', slug: '', description: '', long_description: '', category_id: '', version: '',
+    name: '', slug: '', description: '', long_description: '', category_id: '', folder_id: '', version: '',
     release_date: '', file_name: '', file_size: '', file_type: '', platform: '',
     architecture: '', sha256: '', md5: '', storage_provider: 'external', storage_path: '',
     download_url: '', external_url: '', featured: false, published: true,
@@ -64,6 +68,7 @@ function itemToForm(item) {
     description: item.description || '',
     long_description: item.long_description || '',
     category_id: item.category_id ?? '',
+    folder_id: item.folder_id ?? '',
     version: item.version || '',
     release_date: item.release_date ? String(item.release_date).slice(0, 10) : '',
     file_name: item.file_name || '',
@@ -109,6 +114,7 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
   const [form, setForm] = useState(emptyForm);
   const [links, setLinks] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [folders, setFolders] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [templateId, setTemplateId] = useState(null);
@@ -118,13 +124,14 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
 
   const isEdit = !!item?.id;
   const sections = useMemo(
-    () => (isEdit ? BASE_SECTIONS : [{ id: 'start', label: 'Template' }, ...BASE_SECTIONS]),
+    () => (isEdit ? EDIT_SECTIONS : [{ id: 'start', label: 'Template' }, ...BASE_SECTIONS]),
     [isEdit]
   );
   const [section, setSection] = useState(isEdit ? 'basics' : 'start');
 
   useEffect(() => {
     categoriesApi.list().then(d => setCategories(d.categories || [])).catch(() => {});
+    foldersApi.list().then(d => setFolders(d.folders || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -184,6 +191,7 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
     ...form,
     slug: effectiveSlug || undefined,
     category_id: form.category_id === '' || form.category_id === null ? null : parseInt(form.category_id, 10),
+    folder_id: form.folder_id === '' || form.folder_id === null ? null : parseInt(form.folder_id, 10),
     file_size: form.file_size === '' || form.file_size === null ? null : parseInt(form.file_size, 10),
     featured: form.featured ? 1 : 0,
     published: form.published ? 1 : 0,
@@ -444,6 +452,11 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
             type: 'select',
             options: [{ value: '', label: '— None —' }, ...categories.map(c => ({ value: String(c.id), label: c.name }))],
           })}
+          {field('Folder', 'folder_id', {
+            type: 'select',
+            hint: 'Optional grouping for your own filing - visitors can filter by it in Browse.',
+            options: [{ value: '', label: '— Unfiled —' }, ...folders.map(f => ({ value: String(f.id), label: `${f.icon ? f.icon + ' ' : ''}${f.name}` }))],
+          })}
           {field('Version', 'version', { placeholder: '24.04.1' })}
           {field('Release date', 'release_date', { type: 'date' })}
           {field('Tags (comma separated)', 'tags', { placeholder: 'ubuntu, linux, lts' })}
@@ -558,6 +571,21 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
             Featured (shown on the homepage)
           </label>
         </div>
+      )}
+
+      {section === 'history' && isEdit && (
+        <VersionHistory
+          item={item}
+          onRestored={(restored) => {
+            // Roll the editor back to the restored snapshot so the form on
+            // screen matches what is now stored.
+            setForm(itemToForm(restored));
+            setLinks((restored.download_links || []).map(l => ({ ...l })));
+            setSlugTouched(true);
+            setError('');
+            setSection('basics');
+          }}
+        />
       )}
 
       {/* Readiness checklist — so nothing is discovered only after saving. */}

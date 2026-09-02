@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   email_hash TEXT UNIQUE, -- deterministic HMAC for lookup
   password_hash TEXT NOT NULL, -- pepper + bcrypt
   role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin', 'editor', 'viewer')),
+  auth_version INTEGER DEFAULT 0, -- bump to invalidate every issued token ("log out all devices")
   avatar_url TEXT, -- encrypted
   bio TEXT, -- encrypted
   theme TEXT DEFAULT 'dark' CHECK(theme IN ('dark', 'light', 'auto')),
@@ -27,6 +28,21 @@ CREATE TABLE IF NOT EXISTS categories (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Folders - free-form grouping of items, orthogonal to categories
+CREATE TABLE IF NOT EXISTS folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  slug TEXT UNIQUE NOT NULL,
+  description TEXT,
+  icon TEXT,
+  color TEXT,
+  sort_order INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_folders_slug ON folders(slug);
+
 -- Items (main repository entries) - sensitive fields encrypted
 CREATE TABLE IF NOT EXISTS items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,6 +51,7 @@ CREATE TABLE IF NOT EXISTS items (
   description TEXT,
   long_description TEXT,
   category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
   version TEXT,
   release_date DATE,
   file_name TEXT,
@@ -129,6 +146,7 @@ END;
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_items_slug ON items(slug);
 CREATE INDEX IF NOT EXISTS idx_items_category ON items(category_id);
+CREATE INDEX IF NOT EXISTS idx_items_folder ON items(folder_id);
 CREATE INDEX IF NOT EXISTS idx_items_featured ON items(featured);
 CREATE INDEX IF NOT EXISTS idx_items_published ON items(published);
 CREATE INDEX IF NOT EXISTS idx_items_platform ON items(platform);
@@ -151,6 +169,9 @@ CREATE TABLE IF NOT EXISTS item_download_links (
   down_reason TEXT, -- reason why down
   status TEXT DEFAULT 'up' CHECK(status IN ('up', 'down', 'unknown', 'checking')),
   last_checked DATETIME, -- last health check
+  http_status INTEGER, -- last HTTP response code seen by the link checker
+  check_error TEXT, -- last checker error/verdict message
+  check_duration_ms INTEGER, -- how long the last probe took
   sort_order INTEGER DEFAULT 0,
   download_count INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -160,6 +181,21 @@ CREATE TABLE IF NOT EXISTS item_download_links (
 CREATE INDEX IF NOT EXISTS idx_download_links_item ON item_download_links(item_id);
 CREATE INDEX IF NOT EXISTS idx_download_links_primary ON item_download_links(item_id, is_primary);
 CREATE INDEX IF NOT EXISTS idx_download_links_down ON item_download_links(is_down);
+
+-- Item version history - a full decrypted snapshot after every create/edit,
+-- so admins can inspect what changed and roll a page back.
+CREATE TABLE IF NOT EXISTS item_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  version_num INTEGER NOT NULL, -- 1-based, per item
+  snapshot TEXT NOT NULL, -- JSON: serialized item incl. download links
+  changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  change_summary TEXT, -- e.g. "name, description" or "Restored from version 3"
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(item_id, version_num)
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_versions_item ON item_versions(item_id, version_num DESC);
 
 -- Site-wide configuration. Everything the UI shows that isn't item data lives
 -- here so admins can change copy/branding/links without a code deploy.
@@ -224,6 +260,10 @@ export const DEFAULT_SETTINGS = [
   { key: 'maintenance_mode', value: 'false', type: 'boolean', group_name: 'general', label: 'Maintenance mode', description: 'Shows a maintenance banner across the site.', public: 1 },
   { key: 'maintenance_message', value: 'We are performing maintenance. Downloads may be temporarily unavailable.', type: 'textarea', group_name: 'general', label: 'Maintenance message', public: 1 },
   { key: 'uploads_max_bytes', value: '5242880', type: 'number', group_name: 'uploads', label: 'Max upload size (bytes)', public: 0 },
+  // download-link health checker
+  { key: 'linkcheck_enabled', value: 'false', type: 'boolean', group_name: 'linkcheck', label: 'Background link checks', description: 'Periodically probe every download mirror and record its status.', public: 0 },
+  { key: 'linkcheck_interval_minutes', value: '360', type: 'number', group_name: 'linkcheck', label: 'Check interval (minutes)', public: 0 },
+  { key: 'linkcheck_timeout_ms', value: '8000', type: 'number', group_name: 'linkcheck', label: 'Per-link timeout (ms)', public: 0 },
   // theming — see frontend/src/themes for the scheme registry
   { key: 'theme_default', value: 'midnight', type: 'text', group_name: 'theme', label: 'Default dark scheme', description: 'Scheme id used for visitors on a dark device (midnight, starrynight, galaxy, cotton-candy, forest, sunrise, amber).', public: 1 },
   { key: 'theme_light_default', value: 'daybreak', type: 'text', group_name: 'theme', label: 'Default light scheme', description: 'Scheme id used for visitors on a light device (daybreak, sky).', public: 1 },

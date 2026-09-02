@@ -4,6 +4,7 @@ import { storageManager } from '../services/storage/index.js';
 import { encryptionService } from '../services/encryptionService.js';
 import { monitoringService } from '../services/monitoringService.js';
 import { getItemLinksForMany, serializeItem } from '../services/itemSerializer.js';
+import { recordItemVersion, listVersions, getVersion, restoreItemVersion } from '../services/versionService.js';
 import { makeSlug } from '../utils/slug.js';
 
 export async function adminRoutes(fastify) {
@@ -205,18 +206,58 @@ export async function adminRoutes(fastify) {
       return newId;
     })();
 
+    recordItemVersion(copyId, request.user?.id, `Duplicated from "${source.name}" (#${source.id})`);
+
     const raw = db.prepare('SELECT * FROM items WHERE id = ?').get(copyId);
     return reply.code(201).send({ item: serializeItem(raw), message: `Duplicated as draft "${name}"` });
   });
 
+  // === VERSION HISTORY ===
+  //
+  // Every create/edit/duplicate/restore snapshots the full page. Admin-only:
+  // snapshots contain decrypted mirror URLs.
+
+  /** GET /admin/items/:id/versions — newest first, without payloads. */
+  fastify.get('/admin/items/:id/versions', async (request, reply) => {
+    const db = getDb();
+    const item = db.prepare('SELECT id, name, slug FROM items WHERE id = ?').get(request.params.id);
+    if (!item) return reply.code(404).send({ error: 'Item not found' });
+    return { item, versions: listVersions(item.id) };
+  });
+
+  /** GET /admin/items/:id/versions/:num — one full snapshot, for previewing. */
+  fastify.get('/admin/items/:id/versions/:num', async (request, reply) => {
+    const num = Number(request.params.num);
+    if (!Number.isInteger(num) || num < 1) return reply.code(400).send({ error: 'Invalid version number' });
+    const version = getVersion(Number(request.params.id), num);
+    if (!version || !version.snapshot) return reply.code(404).send({ error: 'Version not found' });
+    return version;
+  });
+
+  /** POST /admin/items/:id/versions/:num/restore — roll the page back. */
+  fastify.post('/admin/items/:id/versions/:num/restore', async (request, reply) => {
+    const num = Number(request.params.num);
+    if (!Number.isInteger(num) || num < 1) return reply.code(400).send({ error: 'Invalid version number' });
+    try {
+      const restored = restoreItemVersion(Number(request.params.id), num, request.user?.id);
+      if (!restored) return reply.code(404).send({ error: 'Version or item not found' });
+      request.log.info({ itemId: restored.id, version: num }, 'Item restored from version');
+      return { item: restored, message: `Restored from version ${num}` };
+    } catch (e) {
+      // FK violations land here when a snapshot references a since-deleted folder/category.
+      request.log.error(e, 'Restore failed');
+      return reply.code(409).send({ error: `Could not restore version ${num}: ${e.message}` });
+    }
+  });
+
   /**
-   * POST /admin/items/bulk  { action, ids: [] }
-   * Publish / unpublish / feature / unfeature / delete several pages at once.
-   * One transaction, so a bad id can't leave the list half-changed.
+   * POST /admin/items/bulk  { action, ids: [], folderId? }
+   * Publish / unpublish / feature / unfeature / delete / re-file several pages
+   * at once. One transaction, so a bad id can't leave the list half-changed.
    */
   fastify.post('/admin/items/bulk', async (request, reply) => {
-    const { action, ids } = request.body || {};
-    const allowed = ['publish', 'unpublish', 'feature', 'unfeature', 'delete'];
+    const { action, ids, folderId } = request.body || {};
+    const allowed = ['publish', 'unpublish', 'feature', 'unfeature', 'delete', 'folder'];
     if (!allowed.includes(action)) {
       return reply.code(400).send({ error: `action must be one of: ${allowed.join(', ')}` });
     }
@@ -228,6 +269,20 @@ export async function adminRoutes(fastify) {
     if (cleanIds.length > 200) return reply.code(400).send({ error: 'Too many items in one request (max 200)' });
 
     const db = getDb();
+
+    let folderName = null;
+    if (action === 'folder') {
+      const fid = folderId === null || folderId === undefined || folderId === '' ? null : Number(folderId);
+      if (fid !== null && (!Number.isInteger(fid) || fid <= 0)) {
+        return reply.code(400).send({ error: 'folderId must be a positive integer or null' });
+      }
+      if (fid !== null) {
+        const folder = db.prepare('SELECT id, name FROM folders WHERE id = ?').get(fid);
+        if (!folder) return reply.code(404).send({ error: 'Folder not found' });
+        folderName = folder.name;
+      }
+    }
+
     const placeholders = cleanIds.map(() => '?').join(',');
 
     const statements = {
@@ -235,12 +290,19 @@ export async function adminRoutes(fastify) {
       unpublish: `UPDATE items SET published = 0, updated_at = ? WHERE id IN (${placeholders})`,
       feature: `UPDATE items SET featured = 1, updated_at = ? WHERE id IN (${placeholders})`,
       unfeature: `UPDATE items SET featured = 0, updated_at = ? WHERE id IN (${placeholders})`,
+      folder: `UPDATE items SET folder_id = ?, updated_at = ? WHERE id IN (${placeholders})`,
     };
 
     let affected = 0;
     if (action === 'delete') {
       affected = db.transaction(() =>
         db.prepare(`DELETE FROM items WHERE id IN (${placeholders})`).run(...cleanIds).changes
+      )();
+    } else if (action === 'folder') {
+      const now = new Date().toISOString();
+      const fid = folderId === null || folderId === undefined || folderId === '' ? null : Number(folderId);
+      affected = db.transaction(() =>
+        db.prepare(statements.folder).run(fid, now, ...cleanIds).changes
       )();
     } else {
       const now = new Date().toISOString();
@@ -249,7 +311,7 @@ export async function adminRoutes(fastify) {
       )();
     }
 
-    return { success: true, action, affected, ids: cleanIds };
+    return { success: true, action, affected, ids: cleanIds, folder: folderName };
   });
 
   /**

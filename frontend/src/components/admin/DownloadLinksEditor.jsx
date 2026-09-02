@@ -1,5 +1,27 @@
 import { useState } from 'react';
-import { Plus, Trash2, Star, GripVertical, AlertTriangle, ClipboardPaste } from 'lucide-react';
+import { Plus, Trash2, Star, GripVertical, AlertTriangle, ClipboardPaste, Activity, Loader2 } from 'lucide-react';
+import { linkHealthApi } from '../../lib/api';
+
+/** Small badge for the health checker's verdict on a saved mirror. */
+function HealthBadge({ link }) {
+  if (!link?.id) return null; // only mirrors that are saved can be probed
+  const s = link.status || 'unknown';
+  const cls = s === 'up'
+    ? 'bg-green-500/10 border-green-500/30 text-green-400'
+    : s === 'down'
+      ? 'bg-red-500/10 border-red-500/30 text-red-400'
+      : 'bg-amber-500/10 border-amber-500/30 text-amber-400';
+  const label = s === 'up' ? `Up${link.http_status ? ` (${link.http_status})` : ''}`
+    : s === 'down' ? `Down${link.http_status ? ` (${link.http_status})` : ''}`
+    : 'Unknown';
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] ${cls}`} title={link.check_error || undefined}>
+      <Activity className="w-3 h-3" />
+      {label}
+      {link.last_checked && <span className="opacity-70">• checked {new Date(link.last_checked.replace(' ', 'T') + 'Z').toLocaleString()}</span>}
+    </span>
+  );
+}
 
 const PROVIDERS = [
   { value: 'external', label: 'External URL' },
@@ -82,6 +104,30 @@ export default function DownloadLinksEditor({ links, onChange }) {
   const list = links || [];
   const [pasted, setPasted] = useState('');
   const [pasteError, setPasteError] = useState('');
+  const [checking, setChecking] = useState(null); // link id currently being probed
+
+  /** Ask the backend to probe this mirror now; updates the row in place. */
+  const checkNow = async (index) => {
+    const link = list[index];
+    if (!link?.id) return;
+    setChecking(link.id);
+    try {
+      const result = await linkHealthApi.checkLink(link.id);
+      const next = list.map((l, i) => (i === index ? {
+        ...l,
+        status: result.status,
+        http_status: result.http_status,
+        check_error: result.check_error,
+        check_duration_ms: result.check_duration_ms,
+        last_checked: result.last_checked,
+      } : l));
+      onChange(next);
+    } catch (e) {
+      setPasteError(e.response?.data?.error || 'Link check failed');
+    } finally {
+      setChecking(null);
+    }
+  };
 
   const update = (index, field, value) => {
     const next = list.map((l, i) => {
@@ -291,6 +337,25 @@ export default function DownloadLinksEditor({ links, onChange }) {
                   />
                 )}
               </div>
+
+              {/* Health checker verdict (saved mirrors only). */}
+              {link.id && (
+                <div className="sm:col-span-2 flex flex-wrap items-center gap-2 pt-1">
+                  <HealthBadge link={link} />
+                  <button
+                    type="button"
+                    onClick={() => checkNow(index)}
+                    disabled={checking === link.id}
+                    className="px-2.5 py-1 rounded-lg bg-surface border border-border text-[11px] text-textSecondary hover:border-primary/40 flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {checking === link.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
+                    Check now
+                  </button>
+                  {link.check_error && link.status !== 'up' && (
+                    <span className="text-[11px] text-textMuted">{link.check_error}</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))}

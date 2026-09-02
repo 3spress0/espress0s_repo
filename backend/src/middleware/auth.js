@@ -69,7 +69,7 @@ export async function authenticate(request, reply) {
 
     const decoded = verifyToken(token);
     const db = getDb();
-    const row = db.prepare('SELECT id, username, email, role, password_hash FROM users WHERE id = ?').get(decoded.id);
+    const row = db.prepare('SELECT id, username, email, role, password_hash, auth_version FROM users WHERE id = ?').get(decoded.id);
 
     if (!row) {
       return reply.code(401).send({ error: 'User not found' });
@@ -81,8 +81,16 @@ export async function authenticate(request, reply) {
         loginUrl: '/login',
       });
     }
+    // "Log out all devices" bump: tokens minted before the bump die here.
+    if (decoded.av !== undefined && Number(decoded.av) !== (row.auth_version || 0)) {
+      return reply.code(401).send({
+        error: 'Session ended - the account was signed out everywhere',
+        loginRequired: true,
+        loginUrl: '/login',
+      });
+    }
 
-    const { password_hash, ...user } = row;
+    const { password_hash, auth_version, ...user } = row;
     request.user = user;
   } catch (err) {
     return reply.code(401).send({
@@ -99,10 +107,11 @@ export async function optionalAuthenticate(request) {
     if (!token) return;
     const decoded = verifyToken(token);
     const db = getDb();
-    const row = db.prepare('SELECT id, username, email, role, password_hash FROM users WHERE id = ?').get(decoded.id);
+    const row = db.prepare('SELECT id, username, email, role, password_hash, auth_version FROM users WHERE id = ?').get(decoded.id);
     if (!row) return;
     if (decoded.pwv && decoded.pwv !== passwordVersion(row.password_hash)) return;
-    const { password_hash, ...user } = row;
+    if (decoded.av !== undefined && Number(decoded.av) !== (row.auth_version || 0)) return;
+    const { password_hash, auth_version, ...user } = row;
     request.user = user;
   } catch {}
 }
@@ -115,7 +124,14 @@ export async function requireAdmin(request, reply) {
 export function generateToken(user, { passwordHash = user?.password_hash } = {}) {
   const pwv = passwordVersion(passwordHash);
   return jwt.sign(
-    { id: user.id, username: user.username, role: user.role, ...(pwv ? { pwv } : {}) },
+    {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      ...(pwv ? { pwv } : {}),
+      // auth_version lets "log out all devices" kill even unexpired tokens.
+      av: user.auth_version || 0,
+    },
     config.security.jwtSecret,
     { expiresIn: config.security.jwtExpiresIn, algorithm: 'HS256' }
   );

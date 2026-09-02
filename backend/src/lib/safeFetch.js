@@ -135,6 +135,97 @@ export async function assertPublicUrl(rawUrl) {
 }
 
 /**
+ * Lightweight liveness probe for the download-link health checker.
+ *
+ * Same SSRF guarantees as safeFetchBuffer (validated scheme/host/redirects),
+ * but never downloads the body: HEAD first, falling back to a 1-byte ranged
+ * GET for hosts that reject HEAD (some CDNs and share hosts do).
+ *
+ * Never throws - a probe that cannot reach anything is itself a finding:
+ *
+ * @param {string} rawUrl
+ * @param {{ timeoutMs?: number }} opts
+ * @returns {Promise<{ ok: boolean, status: number, finalUrl: string|null, error: string|null, durationMs: number }>}
+ */
+export async function safeProbeUrl(rawUrl, { timeoutMs = 8000 } = {}) {
+  const started = Date.now();
+  const fail = (error, status = 0, finalUrl = null) =>
+    ({ ok: false, status, finalUrl, error: String(error), durationMs: Date.now() - started });
+
+  let target;
+  try {
+    target = await assertPublicUrl(rawUrl);
+  } catch (e) {
+    return fail(e.message);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    let method = 'HEAD';
+    let response;
+    let hops = 0;
+
+    for (;;) {
+      response = await fetch(target, {
+        method,
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: {
+          // Some hosts 403 the default node fetch UA; look like a browser-ish bot.
+          'user-agent': 'Mozilla/5.0 (compatible; espress0-repo-linkcheck/1.0)',
+          ...(method === 'GET' ? { range: 'bytes=0-0' } : {}),
+        },
+      });
+
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        hops++;
+        if (hops > MAX_REDIRECTS) return fail('Too many redirects', response.status, target.toString());
+        const location = response.headers.get('location');
+        if (!location) return fail('Redirect without Location', response.status, target.toString());
+        // Drain before reusing the socket for the next hop.
+        await response.arrayBuffer().catch(() => {});
+        target = await assertPublicUrl(new URL(location, target).toString());
+        continue;
+      }
+
+      // HEAD not supported? Retry the whole hop chain with a ranged GET.
+      if (method === 'HEAD' && [405, 501].includes(response.status)) {
+        await response.arrayBuffer().catch(() => {});
+        method = 'GET';
+        hops = 0;
+        continue;
+      }
+
+      break;
+    }
+
+    try { response.body?.cancel(); } catch { /* already consumed */ }
+
+    return {
+      ok: response.status >= 200 && response.status < 400,
+      status: response.status,
+      finalUrl: target.toString(),
+      error: null,
+      durationMs: Date.now() - started,
+    };
+  } catch (e) {
+    let msg;
+    if (e?.name === 'AbortError') {
+      msg = `Timed out after ${timeoutMs}ms`;
+    } else {
+      // undici hides the useful bit (ENOTFOUND / ECONNREFUSED / TLS) in `cause`.
+      const cause = e?.cause?.code || e?.cause?.message;
+      msg = cause ? `${e.message} (${cause})` : (e?.message || 'Probe failed');
+    }
+    return fail(msg, e?.statusCode || 0);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * fetch() that validates the target (and every redirect hop) and refuses to
  * buffer more than `maxBytes`.
  *

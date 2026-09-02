@@ -10,13 +10,8 @@ export default function Encryption() {
 
   useEffect(() => {
     authApi.securityInfo().then(setSecurityInfo).catch(() => {});
-    // Try to get encryption status (requires auth)
-    fetch('/api/auth/encryption-status', {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('espress0_token')}` }
-    })
-      .then(r => r.json())
-      .then(setEncryptionStatus)
-      .catch(() => {});
+    // Encryption status requires a session; the cookie rides along automatically.
+    authApi.encryptionStatus().then(setEncryptionStatus).catch(() => {});
   }, []);
 
   const testEncryption = async () => {

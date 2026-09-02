@@ -34,12 +34,17 @@
 - **Dark futuristic UI** with purple → blue gradient, glassmorphism, rounded cards, micro-animations
 - **9 colour schemes** — Midnight, Starry Night, Galaxy, Cotton Candy, Forest, Sunrise, Amber, plus Sky and Daybreak for light mode. CSS-variable driven, switchable from the navbar, `auto` follows the OS, admins set the site default and the starfield/aurora effects. Palettes adapted from Spicetify's StarryNight — see [THEME.md](THEME.md)
 - **Fast search** with SQLite FTS5, typo-tolerance via Levenshtein reranking
+- **Advanced filters** — filter by category, folder, tag, license, file type, platform, architecture, featured; sort by date/updated/name/size/downloads/views
+- **Folders** — free-form, admin-managed grouping next to categories ("Linux ISOs 2026", "Recommended tools"). Assign in the editor or bulk-move from the file-pages list; visitors filter by folder in Browse
+- **Version history & rollback** — every save snapshots the whole page (fields + mirrors); the History tab in the editor diffs, previews and restores any of the last 50 versions
+- **Mirror link health checker** — HEAD-probes every mirror (SSRF-guarded, redirect-aware), records status/HTTP code/errors per link, marks 404/410 dead, flags access-denied separately from reachable. Run manually from Storage, per-link "Check now" in the editor, or enable periodic sweeps via `linkcheck_enabled`
+- **Backup & restore** — one-click JSON export of categories, folders, items with mirrors, FAQ and settings (never users); import with a mandatory dry-run preview, upsert by slug, nothing deleted
 - **Category browsing** — OS, ISOs, Apps, Utilities, Dev, Games, Docs, Other
 - **Storage abstraction** — `StorageProvider` interface with Google Drive, OneDrive, External, GitHub, Local providers. VM never stores large files; downloads redirect to providers
 - **AI FAQ** — "Ask espress0's repo" powered by [aandrew-me/tgpt](https://github.com/aandrew-me/tgpt) CLI. Searches metadata first, never hallucinates files, gracefully degrades to rule-based
 - **Admin panel** — add/edit files, set checksums, assign storage provider, feature/unpublish, reindex search
-- **Fast page authoring** — templates for new file pages, markdown body with preview and an AI draft button, paste-a-URL mirrors, live URL (slug) checking, duplicate-as-draft, bulk publish/unpublish/delete (see [Authoring file pages](#-authoring-file-pages))
-- **Security** — JWT auth, bcrypt, helmet, rate-limiting, CSRF-safe, no secrets in frontend
+- **Fast page authoring** — templates for new file pages, markdown body with preview and an AI draft button, paste-a-URL mirrors, live URL (slug) checking, duplicate-as-draft, bulk publish/unpublish/delete/move-to-folder (see [Authoring file pages](#-authoring-file-pages))
+- **Security** — JWT in httpOnly SameSite=Lax cookie only (nothing in localStorage), CSRF double-submit token on every cookie-authenticated mutation, "log out all devices" session invalidation, bcrypt, helmet, rate-limiting, no secrets in frontend
 - **Low-resource optimized** — designed for small Azure VM (1 vCPU, 1GB RAM), no local AI models, no ISO hosting on VM
 - **Production ready** — Docker, docker-compose, systemd, Nginx/Caddy examples, HTTPS, backup script, GitHub Actions CI/CD
 

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Search, Plus, Edit, Trash2, Eye, X, Link2, ImageIcon, Copy,
-  EyeOff, Loader2, AlertTriangle, CheckCircle2, Star,
+  EyeOff, Loader2, AlertTriangle, CheckCircle2, Star, Folder, FolderInput,
 } from 'lucide-react';
-import { adminApi, itemsApi } from '../../lib/api';
+import { adminApi, itemsApi, foldersApi } from '../../lib/api';
 import ItemEditor from '../../components/admin/ItemEditor';
 
 function formatSize(bytes) {
@@ -54,9 +54,13 @@ function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel, busy })
 export default function AdminItems() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState([]);
+  const [folders, setFolders] = useState([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const [folderFilter, setFolderFilter] = useState(searchParams.get('folder') || 'all');
+  const [moveTarget, setMoveTarget] = useState('');
   const [editing, setEditing] = useState(null); // item object being edited
   const [creating, setCreating] = useState(false);
   const [loadingId, setLoadingId] = useState(null);
@@ -81,6 +85,19 @@ export default function AdminItems() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    foldersApi.adminList().then(d => setFolders(d.folders || [])).catch(() => {});
+  }, []);
+
+  const folderById = useMemo(() => new Map(folders.map(f => [f.id, f])), [folders]);
+  const folderName = (folderId) => folderId ? (folderById.get(folderId)?.name || `#${folderId}`) : null;
+
+  const changeFolderFilter = (value) => {
+    setFolderFilter(value);
+    const next = new URLSearchParams(searchParams);
+    if (value && value !== 'all') next.set('folder', value); else next.delete('folder');
+    setSearchParams(next, { replace: true });
+  };
 
   // Deep link: /admin/items/:id opens that item's editor directly.
   useEffect(() => {
@@ -98,7 +115,11 @@ export default function AdminItems() {
     if (filter === 'published') return !!i.published;
     if (filter === 'draft') return !i.published;
     return true;
-  }), [items, filter]);
+  }).filter(i => {
+    if (folderFilter === 'all') return true;
+    if (folderFilter === 'none') return !i.folder_id;
+    return String(i.folder_id) === String(folderFilter);
+  }), [items, filter, folderFilter]);
 
   const allVisibleSelected = visible.length > 0 && visible.every(i => selected.includes(i.id));
 
@@ -228,6 +249,22 @@ export default function AdminItems() {
           Search
         </button>
 
+        <div className="relative">
+          <Folder className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-textMuted pointer-events-none" />
+          <select
+            value={folderFilter}
+            onChange={(e) => changeFolderFilter(e.target.value)}
+            title="Filter by folder"
+            className="pl-9 pr-8 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50 appearance-none"
+          >
+            <option value="all">All folders</option>
+            <option value="none">Unfiled</option>
+            {folders.map(f => (
+              <option key={f.id} value={String(f.id)}>{f.icon ? `${f.icon} ` : ''}{f.name}</option>
+            ))}
+          </select>
+        </div>
+
         <div className="flex items-center gap-1 p-1 bg-surface rounded-xl border border-border">
           {FILTERS.map(f => (
             <button
@@ -277,6 +314,39 @@ export default function AdminItems() {
             className="px-3 py-1.5 rounded-lg text-xs bg-surface border border-border hover:border-primary/40 text-textSecondary disabled:opacity-50">
             Unfeature
           </button>
+          <span className="inline-flex items-center gap-1 rounded-lg bg-surface border border-border px-1">
+            <FolderInput className="w-3.5 h-3.5 text-textMuted ml-1" />
+            <select
+              value={moveTarget}
+              onChange={async (e) => {
+                const v = e.target.value;
+                setMoveTarget('');
+                if (v === '') return;
+                setBusy(true);
+                try {
+                  const folderId = v === 'none' ? null : Number(v);
+                  const res = await adminApi.bulkItems('folder', selected, { folderId });
+                  await load(query);
+                  setSelected([]);
+                  notify('success', folderId === null
+                    ? `Removed ${res.affected} page${res.affected === 1 ? '' : 's'} from their folder`
+                    : `Moved ${res.affected} page${res.affected === 1 ? '' : 's'} to “${res.folder}”`);
+                } catch (err) {
+                  notify('error', err.response?.data?.error || 'Move failed');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              disabled={busy}
+              className="py-1.5 pr-1 bg-transparent text-xs text-textSecondary focus:outline-none disabled:opacity-50"
+            >
+              <option value="">Move to folder…</option>
+              <option value="none">— Remove from folder —</option>
+              {folders.map(f => (
+                <option key={f.id} value={String(f.id)}>{f.name}</option>
+              ))}
+            </select>
+          </span>
           <button onClick={askBulkDelete} disabled={busy}
             className="px-3 py-1.5 rounded-lg text-xs bg-red-500/10 border border-red-500/30 text-red-400 disabled:opacity-50">
             Delete
@@ -302,6 +372,7 @@ export default function AdminItems() {
                   />
                 </th>
                 <th className="text-left p-4 font-medium">Page</th>
+                <th className="text-left p-4 font-medium">Folder</th>
                 <th className="text-left p-4 font-medium">Type</th>
                 <th className="text-left p-4 font-medium">Size</th>
                 <th className="text-left p-4 font-medium">Links</th>
@@ -328,6 +399,19 @@ export default function AdminItems() {
                       {!!item.featured && <Star className="w-3 h-3 text-amber-400 flex-shrink-0" />}
                     </div>
                     <div className="text-xs text-textMuted font-mono">/file/{item.slug}</div>
+                  </td>
+                  <td className="p-4">
+                    {folderName(item.folder_id) ? (
+                      <span
+                        className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-white/10"
+                        style={folderById.get(item.folder_id)?.color ? { color: folderById.get(item.folder_id).color } : undefined}
+                      >
+                        {folderById.get(item.folder_id)?.icon || <Folder className="w-3 h-3" />}
+                        <span className="text-textSecondary">{folderName(item.folder_id)}</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-textMuted">—</span>
+                    )}
                   </td>
                   <td className="p-4 text-textSecondary">{item.file_type || '—'}{item.architecture ? ` • ${item.architecture}` : ''}</td>
                   <td className="p-4 text-textSecondary">{formatSize(item.file_size)}</td>
@@ -404,7 +488,7 @@ export default function AdminItems() {
               ))}
               {visible.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="p-10 text-center">
+                  <td colSpan={9} className="p-10 text-center">
                     <p className="text-sm text-textSecondary mb-1">
                       {items.length === 0 ? 'No file pages yet.' : 'No pages match this filter.'}
                     </p>

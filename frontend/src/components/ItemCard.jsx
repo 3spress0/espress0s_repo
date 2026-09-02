@@ -98,6 +98,14 @@ export default function ItemCard({ item, featured = false }) {
                 {item.file_type}
               </span>
             )}
+            {item.folder_name && (
+              <span
+                className="px-2.5 py-1 rounded-full bg-surfaceHover border border-border text-xs text-textSecondary"
+                title={`Folder: ${item.folder_name}`}
+              >
+                {item.folder_icon ? `${item.folder_icon} ` : ''}{item.folder_name}
+              </span>
+            )}
             {item.download_links_count !== undefined && (
               <span className="px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-xs text-blue-400">
                 {item.download_links_count} mirrors

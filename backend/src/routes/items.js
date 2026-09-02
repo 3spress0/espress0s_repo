@@ -4,6 +4,7 @@ import { itemSchema, downloadLinkSchema } from '../utils/validation.js';
 import { authenticate, optionalAuthenticate, requireAdmin } from '../middleware/auth.js';
 import { storageManager } from '../services/storage/index.js';
 import { encryptionService, ENCRYPTED_ITEM_FIELDS } from '../services/encryptionService.js';
+import { recordItemVersion } from '../services/versionService.js';
 
 function decryptItem(item) {
   if (!item) return item;
@@ -90,7 +91,7 @@ export async function itemsRoutes(fastify) {
   // GET /api/items - list with filters (public, but shows down status)
   fastify.get('/items', { preHandler: [optionalAuthenticate] }, async (request, reply) => {
     const {
-      q, category, file_type, platform, architecture,
+      q, category, folder, tag, license_status, file_type, platform, architecture,
       sort = 'date', order = 'desc', page = 1, limit = 20, featured, published = 1,
     } = request.query;
 
@@ -113,7 +114,9 @@ export async function itemsRoutes(fastify) {
 
     const result = searchService.search({
       q: String(q ?? '').slice(0, MAX_QUERY_LENGTH),
-      category: category || null, file_type: file_type || null,
+      category: category || null, folder: folder || null,
+      tag: tag ? String(tag).slice(0, 64) : null, license_status: license_status || null,
+      file_type: file_type || null,
       platform: platform || null, architecture: architecture || null,
       sort, order,
       page: toInt(page, 1, 1, 10000),
@@ -152,8 +155,11 @@ export async function itemsRoutes(fastify) {
     const db = getDb();
 
     const item = db.prepare(`
-      SELECT items.*, categories.name as category_name, categories.slug as category_slug, categories.color as category_color
-      FROM items LEFT JOIN categories ON items.category_id = categories.id
+      SELECT items.*, categories.name as category_name, categories.slug as category_slug, categories.color as category_color,
+             folders.name as folder_name, folders.slug as folder_slug, folders.color as folder_color, folders.icon as folder_icon
+      FROM items
+      LEFT JOIN categories ON items.category_id = categories.id
+      LEFT JOIN folders ON items.folder_id = folders.id
       WHERE items.slug = ? OR items.id = ?
     `).get(slug, slug);
 
@@ -217,6 +223,14 @@ export async function itemsRoutes(fastify) {
       return reply.code(400).send({ error: `Storage provider error: ${e.message}` });
     }
 
+    // FK constraints would turn a bad id into a 500; answer 400 instead.
+    if (data.folder_id && !db.prepare('SELECT id FROM folders WHERE id = ?').get(data.folder_id)) {
+      return reply.code(400).send({ error: 'Folder not found' });
+    }
+    if (data.category_id && !db.prepare('SELECT id FROM categories WHERE id = ?').get(data.category_id)) {
+      return reply.code(400).send({ error: 'Category not found' });
+    }
+
     const now = new Date().toISOString();
     let tagsJson = null;
     if (data.tags) {
@@ -238,13 +252,13 @@ export async function itemsRoutes(fastify) {
 
     const result = db.prepare(`
       INSERT INTO items (
-        name, slug, description, long_description, category_id, version, release_date,
+        name, slug, description, long_description, category_id, folder_id, version, release_date,
         file_name, file_size, file_type, platform, architecture, sha256, md5,
         storage_provider, storage_path, download_url, external_url,
         featured, published, license_status, license_notes, tags, icon_url, image_url, screenshots,
         documentation_url, changelog, created_at, updated_at, encryption_version
       ) VALUES (
-        @name, @slug, @description, @long_description, @category_id, @version, @release_date,
+        @name, @slug, @description, @long_description, @category_id, @folder_id, @version, @release_date,
         @file_name, @file_size, @file_type, @platform, @architecture, @sha256, @md5,
         @storage_provider, @storage_path, @download_url, @external_url,
         @featured, @published, @license_status, @license_notes, @tags, @icon_url, @image_url, @screenshots,
@@ -253,7 +267,8 @@ export async function itemsRoutes(fastify) {
     `).run({
       name: data.name, slug, description: data.description,
       long_description: data.long_description || null,
-      category_id: data.category_id || null, version: data.version || null,
+      category_id: data.category_id || null, folder_id: data.folder_id || null,
+      version: data.version || null,
       release_date: data.release_date || null, file_name: data.file_name || null,
       file_size: data.file_size || null, file_type: data.file_type || null,
       platform: data.platform || null, architecture: data.architecture || null,
@@ -293,6 +308,8 @@ export async function itemsRoutes(fastify) {
       }
     }
 
+    recordItemVersion(result.lastInsertRowid, request.user?.id, 'Created');
+
     const newItemRaw = db.prepare('SELECT * FROM items WHERE id = ?').get(result.lastInsertRowid);
     const newItem = decryptItem(newItemRaw);
     const newLinks = getItemLinks(newItem.id);
@@ -310,6 +327,15 @@ export async function itemsRoutes(fastify) {
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
 
     const data = parsed.data;
+
+    // FK constraints would turn a bad id into a 500; answer 400 instead.
+    if (data.folder_id && !db.prepare('SELECT id FROM folders WHERE id = ?').get(data.folder_id)) {
+      return reply.code(400).send({ error: 'Folder not found' });
+    }
+    if (data.category_id && !db.prepare('SELECT id FROM categories WHERE id = ?').get(data.category_id)) {
+      return reply.code(400).send({ error: 'Category not found' });
+    }
+
     const updates = [];
     const params = { id };
 
@@ -354,6 +380,8 @@ export async function itemsRoutes(fastify) {
         }
       }
     }
+
+    recordItemVersion(Number(id), request.user?.id);
 
     const updatedRaw = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
     const decrypted = decryptItem(updatedRaw);
