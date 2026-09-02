@@ -133,7 +133,7 @@ export default function Login() {
                     Credentials come from your server environment - they are never printed here.
                   </div>
                   <div className="text-[11px] text-textMuted">
-                    Turn this panel off in Admin → Site Settings.
+                    Turn this panel off in Admin  Site Settings.
                   </div>
                 </div>
               </div>
@@ -141,7 +141,7 @@ export default function Login() {
 
             <div className="flex items-center justify-center gap-4 text-xs">
               <Link to="/" className="text-textMuted hover:text-primary transition-colors">
-                ← Back
+                Back
               </Link>
               <span className="text-border">•</span>
               <Link to="/security" className="text-primary hover:text-primaryHover flex items-center gap-1">

@@ -7,6 +7,13 @@
 # by default. Idempotent: safe to re-run for updates, it will pull, rebuild and
 # restart without wiping data.
 #
+# Two topologies:
+#   - no --domain: the app itself listens publicly on port 80 (change with
+#     --port). Handy for quick IP-only deployments.
+#   - with --domain: nginx listens publicly on 80 (and 443 with --https) and
+#     proxies to the app, which binds 127.0.0.1:3000 (change with --port) so
+#     the app port is never exposed to the internet.
+#
 # First deploy (run from inside the checked-out repository):
 #
 #   ./scripts/deploy-ubuntu.sh --repo https://github.com/you/espress0s-repo.git
@@ -49,6 +56,7 @@ UPDATE_ONLY=0
 RESUME=0
 START_ONLY=0
 SKIP_FIREWALL=0
+PORT_GIVEN=0
 REPO_URL=""
 BRANCH=""
 # Untracked files an update must never lose (all gitignored).
@@ -61,9 +69,9 @@ else
   R=""; B=""; RED=""; GRN=""; YEL=""; BLU=""
 fi
 step() { printf '\n%s==> %s%s\n' "${BLU}${B}" "$1" "$R"; }
-ok()   { printf '  %s✓%s %s\n' "$GRN" "$R" "$1"; }
+ok()   { printf '  %s[ok]%s %s\n' "$GRN" "$R" "$1"; }
 warn() { printf '  %s!%s %s\n' "$YEL" "$R" "$1"; }
-err()  { printf '  %s✗%s %s\n' "$RED" "$R" "$1" >&2; }
+err()  { printf '  %s[x]%s %s\n' "$RED" "$R" "$1" >&2; }
 die()  { err "$1"; exit 1; }
 
 usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; }
@@ -74,8 +82,8 @@ while [ $# -gt 0 ]; do
     --domain)          DOMAIN="${2:-}"; shift ;;
     --domain=*)        DOMAIN="${1#*=}" ;;
     --https)           WANT_HTTPS=1 ;;
-    --port)            APP_PORT="${2:-}"; shift ;;
-    --port=*)          APP_PORT="${1#*=}" ;;
+    --port)            APP_PORT="${2:-}"; PORT_GIVEN=1; shift ;;
+    --port=*)          APP_PORT="${1#*=}"; PORT_GIVEN=1 ;;
     --user)            APP_USER="${2:-}"; shift ;;
     --user=*)          APP_USER="${1#*=}" ;;
     --update)          UPDATE_ONLY=1 ;;
@@ -95,6 +103,30 @@ done
 
 [ "$WANT_HTTPS" -eq 1 ] && [ -z "$DOMAIN" ] && die "--https requires --domain <hostname>."
 case "$APP_PORT" in (*[!0-9]*|'') die "--port must be a number." ;; esac
+
+# Public vs internal listener. With a domain, nginx owns 80/443 and proxies to
+# the app over loopback; the app must NOT also grab :80. Without a domain the
+# app is the public listener and binds APP_PORT directly.
+# Before this split, --domain made nginx and the app race for 0.0.0.0:80.
+if [ -n "$DOMAIN" ]; then
+  APP_HOST=127.0.0.1
+  INTERNAL_PORT=3000
+  if [ "${PORT_GIVEN:-0}" = "1" ]; then
+    # An explicit --port pins the internal listener instead of the default 3000.
+    INTERNAL_PORT="$APP_PORT"
+  elif [ -f .env ]; then
+    # Keep an existing deployment's custom internal port if there is one
+    # (80/443 mean the pre-fix topology, where the app raced nginx for :80).
+    EXISTING_PORT="$(sed -n 's|^PORT=\([0-9][0-9]*\).*|\1|p' .env | head -1)"
+    case "$EXISTING_PORT" in
+      ""|80|443) INTERNAL_PORT=3000 ;;
+      *)          INTERNAL_PORT="$EXISTING_PORT" ;;
+    esac
+  fi
+else
+  APP_HOST=0.0.0.0
+  INTERNAL_PORT="$APP_PORT"
+fi
 
 printf '%s\n' "$B"
 cat <<'BANNER'
@@ -222,11 +254,11 @@ start_and_verify() {
     fi
   fi
 
-  # Give the app a moment, then check it really answers on its port.
+  # Give the app a moment, then check it really answers on its internal port.
   step "Verifying the site responds"
   local probe_host="127.0.0.1"
-  local url="http://${probe_host}:${APP_PORT}/api/health"
-  [ "$APP_PORT" = "80" ] && url="http://${probe_host}/api/health"
+  local url="http://${probe_host}:${INTERNAL_PORT}/api/health"
+  [ "$INTERNAL_PORT" = "80" ] && url="http://${probe_host}/api/health"
 
   local attempt=1
   while [ "$attempt" -le 15 ]; do
@@ -255,8 +287,8 @@ start_and_verify() {
     $SUDO journalctl -u "$APP_NAME" -n 20 --no-pager 2>/dev/null | sed 's/^/      /' || true
   fi
   if command -v ss >/dev/null 2>&1; then
-    warn "Nothing listening on :$APP_PORT?" 
-    ss -ltnp 2>/dev/null | grep -E ":${APP_PORT}\b" | sed 's/^/      /' || echo "      (no listener on :$APP_PORT)"
+    warn "Nothing listening on :$INTERNAL_PORT?"
+    ss -ltnp 2>/dev/null | grep -E ":${INTERNAL_PORT}\b" | sed 's/^/      /' || echo "      (no listener on :$INTERNAL_PORT)"
   fi
   return 1
 }
@@ -431,7 +463,8 @@ else
     -e "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$(esc "$ADMIN_PW")|" \
     -e "s|^ADMIN_USERNAME=.*|ADMIN_USERNAME=admin|" \
     -e "s|^NODE_ENV=.*|NODE_ENV=production|" \
-    -e "s|^PORT=.*|PORT=$APP_PORT|" \
+    -e "s|^PORT=.*|PORT=$INTERNAL_PORT|" \
+    -e "s|^HOST=.*|HOST=$APP_HOST|" \
     .env
   NEW_ADMIN_PW="$ADMIN_PW"
   ok "Generated .env with fresh secrets (chmod 600)"
@@ -439,6 +472,14 @@ fi
 
 # Point CORS / frontend URL at the real domain when one was supplied.
 if [ -n "$DOMAIN" ]; then
+  # Domain mode made the app loopback-only; older installs had the app racing
+  # nginx for 0.0.0.0:80. Correct .env in place (secrets untouched).
+  if [ -f .env ]; then
+    sed -i "s|^PORT=.*|PORT=$INTERNAL_PORT|" .env
+    grep -q "^HOST=" .env \
+      && sed -i "s|^HOST=.*|HOST=127.0.0.1|" .env \
+      || printf '\nHOST=127.0.0.1\n' >> .env
+  fi
   SCHEME="http"; [ "$WANT_HTTPS" -eq 1 ] && SCHEME="https"
   sed -i \
     -e "s|^FRONTEND_URL=.*|FRONTEND_URL=${SCHEME}://${DOMAIN}|" \
@@ -508,16 +549,18 @@ sed -e "s|/opt/espress0s-repo|$ROOT_DIR|g" \
     -e "s|/usr/bin/node|$NODE_BIN|g" \
     "systemd/${APP_NAME}.service" > "$TMP"
 
-# The unit must be told which port to bind if it differs from the default.
-grep -q "^Environment=PORT=" "$TMP" || sed -i "/^Environment=NODE_ENV=/a Environment=PORT=$APP_PORT" "$TMP"
+# The unit must be told which interface/port to bind. In domain mode the app
+# is loopback-only; nginx is the only public listener.
+grep -q "^Environment=PORT=" "$TMP" || sed -i "/^Environment=NODE_ENV=/a Environment=PORT=$INTERNAL_PORT" "$TMP"
+grep -q "^Environment=HOST=" "$TMP" || sed -i "/^Environment=PORT=/a Environment=HOST=$APP_HOST" "$TMP"
 
 # Ports below 1024 are privileged. The service runs as an unprivileged user,
 # so grant just the bind capability rather than running it as root.
-if [ "$APP_PORT" -lt 1024 ]; then
+if [ "$INTERNAL_PORT" -lt 1024 ]; then
   if ! grep -q "^AmbientCapabilities=" "$TMP"; then
     sed -i "/^\[Service\]/a AmbientCapabilities=CAP_NET_BIND_SERVICE" "$TMP"
   fi
-  ok "Unit grants CAP_NET_BIND_SERVICE (port $APP_PORT is privileged)"
+  ok "Unit grants CAP_NET_BIND_SERVICE (port $INTERNAL_PORT is privileged)"
 fi
 
 $SUDO cp "$TMP" "$SERVICE_FILE"
@@ -554,7 +597,7 @@ if [ -n "$DOMAIN" ]; then
   VHOST="/etc/nginx/sites-available/${APP_NAME}"
   $SUDO tee "$VHOST" > /dev/null <<NGINX
 upstream ${APP_NAME}_backend {
-    server 127.0.0.1:${APP_PORT};
+    server 127.0.0.1:${INTERNAL_PORT};
     keepalive 32;
 }
 

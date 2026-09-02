@@ -316,7 +316,7 @@ export default function UserManager() {
           </div>
           <div className="p-3 rounded-xl bg-surface border border-border">
             <div className="font-medium text-textPrimary">Password</div>
-            <div className="text-textMuted mt-1">HMAC-SHA256(pepper, pwd)<br/>→ bcryptjs cost 12<br/>pepper_v1: prefix versioned</div>
+            <div className="text-textMuted mt-1">HMAC-SHA256(pepper, pwd)<br/>then bcryptjs cost 12<br/>stored as pepper_v1: prefixed hash (versioned)</div>
           </div>
           <div className="p-3 rounded-xl bg-surface border border-border">
             <div className="font-medium text-textPrimary">Roles</div>

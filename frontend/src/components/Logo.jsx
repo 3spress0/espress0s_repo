@@ -32,7 +32,7 @@ export default function Logo({ size = 36, showText = false, className = '' }) {
           // Fallback SVG with transparent bg
           <div 
             className="w-full h-full rounded-xl flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)' }}
+            style={{ background: 'linear-gradient(135deg, rgb(var(--c-primary)) 0%, rgb(var(--c-secondary)) 100%)' }}
           >
             <svg width={size * 0.6} height={size * 0.6} viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M8 12C8 8 11 6 16 6C21 6 24 8 24 12C24 16 21 18 16 18C11 18 8 16 8 12Z" fill="white" fillOpacity="0.95"/>
@@ -46,7 +46,7 @@ export default function Logo({ size = 36, showText = false, className = '' }) {
         <div 
           className="absolute inset-0 rounded-xl blur-xl transition-opacity duration-300 pointer-events-none"
           style={{ 
-            background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)',
+            background: 'linear-gradient(135deg, rgb(var(--c-primary)) 0%, rgb(var(--c-secondary)) 100%)',
             opacity: hover ? 0.3 : 0,
             zIndex: -1
           }}
@@ -140,4 +140,12 @@ function FileIcon({ type, size = 24 }) {
     return <svg {...props} viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8" /><path d="M12 17v4" /></svg>;
   }
   return <svg {...props} viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /></svg>;
+}
+
+export function FileTypeBadge({ type, size = 18, className = '' }) {
+  return (
+    <span className={`inline-flex items-center justify-center ${className}`}>
+      <FileIcon type={type} size={size} />
+    </span>
+  );
 }

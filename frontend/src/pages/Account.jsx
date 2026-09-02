@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee } from 'lucide-react';
+import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee, Palette } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import StarryBackground from '../components/StarryBackground';
+import ThemePicker from '../components/ThemePicker';
+import { useTheme } from '../context/ThemeContext';
 import Logo from '../components/Logo';
 
 export default function Account() {
-  const { user, logout, loading: authLoading } = useAuth();
+  const themeCtx = useTheme();
+  const { user, logout, logoutAll, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -131,6 +134,16 @@ export default function Account() {
     }
   };
 
+  const handleLogoutAll = async () => {
+    if (!confirm('Log out of ALL devices and browsers, including this one? Use this if you suspect your account is compromised.')) return;
+    try {
+      await logoutAll();
+      navigate('/login');
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not log out everywhere');
+    }
+  };
+
   if (authLoading || loading) {
     return (
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
@@ -227,12 +240,41 @@ export default function Account() {
                   <LogOut className="w-4 h-4" />
                   Log Out
                 </button>
-                <p className="text-[11px] text-textMuted">Logout asks for confirmation</p>
+                <button
+                  onClick={handleLogoutAll}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-surface border border-border text-textSecondary hover:border-red-500/40 hover:text-red-400 rounded-xl text-sm transition-colors"
+                >
+                  <Shield className="w-4 h-4" />
+                  Log out all devices
+                </button>
+                <p className="text-[11px] text-textMuted">“All devices” invalidates every session on this account, including this browser.</p>
               </div>
             </div>
           </div>
 
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 space-y-6">
+            {/* Appearance: the scheme is a per-browser preference, so it is not
+                part of the profile form and saves the moment it is clicked. */}
+            <div className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl">
+              <h2 className="text-xl font-bold text-textPrimary mb-1 flex items-center gap-2">
+                <Palette className="w-5 h-5 text-primary" />
+                Appearance
+              </h2>
+              <p className="text-xs text-textMuted mb-5">
+                {themeCtx.allowUserChoice
+                  ? 'Applies instantly and is remembered in this browser. "Match system" follows your device.'
+                  : 'The administrator has fixed the site theme, so this is a preview only.'}
+              </p>
+              {themeCtx.allowUserChoice
+                ? <ThemePicker variant="grid" />
+                : <p className="text-sm text-textSecondary">Current theme: {themeCtx.theme.label}</p>}
+              {themeCtx.effects.reducedMotion && (
+                <p className="text-[11px] text-textMuted mt-4">
+                  Your device asks for reduced motion, so the starfield and aurora animations are paused.
+                </p>
+              )}
+            </div>
+
             <div className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl">
               <h2 className="text-xl font-bold text-textPrimary mb-6 flex items-center gap-2">
                 <User className="w-5 h-5 text-primary" />

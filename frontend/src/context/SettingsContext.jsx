@@ -24,6 +24,13 @@ const FALLBACKS = {
   ai_enabled: true,
   maintenance_mode: false,
   maintenance_message: '',
+  theme_default: 'midnight',
+  theme_light_default: 'daybreak',
+  theme_allow_user_choice: true,
+  theme_starfield: true,
+  theme_shooting_stars: true,
+  theme_aurora: true,
+  theme_star_density: 100,
 };
 
 const SettingsContext = createContext(null);

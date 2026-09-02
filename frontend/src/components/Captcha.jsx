@@ -185,7 +185,7 @@ export function TurnstileCaptcha({ siteKey, onVerified }) {
         Cloudflare Turnstile
       </label>
       <div id="turnstile-widget" className="flex justify-center p-4 glass rounded-xl border border-white/5"></div>
-      {token && <div className="text-xs text-green-400">✓ Verified</div>}
+      {token && <div className="text-xs text-green-400">Verified</div>}
     </div>
   );
 }

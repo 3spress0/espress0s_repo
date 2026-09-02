@@ -4,10 +4,28 @@ import { encryptionService, ENCRYPTED_ITEM_FIELDS } from '../services/encryption
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+import { safeFetchBuffer, UnsafeUrlError } from '../lib/safeFetch.js';
 
 const PREVIEW_MAX_SIZE = 50 * 1024 * 1024; // 50MB max for preview
 const ALLOWED_PREVIEW_TYPES = ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'mp4', 'webm', 'mp3', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf'];
-const PREVIEW_DIR = path.resolve('./data/previews');
+// Anchored to this file, not to process.cwd(): a service started from / (systemd)
+// used to silently write its cache into the filesystem root.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PREVIEW_DIR = process.env.PREVIEW_DIR
+  ? path.resolve(process.env.PREVIEW_DIR)
+  : path.resolve(__dirname, '../../../data/previews');
+
+/**
+ * Headers for bytes we fetched from a third party and echo back. The content
+ * is never trusted: no sniffing, no scripting, no framing.
+ */
+function applyPreviewSecurityHeaders(reply) {
+  reply.header('X-Content-Type-Options', 'nosniff');
+  reply.header('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox");
+  reply.header('X-Frame-Options', 'DENY');
+  reply.header('Referrer-Policy', 'no-referrer');
+}
 
 function decryptItem(item) {
   if (!item) return item;
@@ -30,6 +48,8 @@ export async function previewRoutes(fastify) {
   // Preview requires login (same as download)
   const { authenticate } = await import('../middleware/auth.js');
 
+  const isAdmin = (request) => request.user?.role === 'admin';
+
   // GET /api/preview/:id - preview small media files - requires login
   fastify.get('/preview/:id', { preHandler: [authenticate] }, async (request, reply) => {
     const { id } = request.params;
@@ -42,8 +62,8 @@ export async function previewRoutes(fastify) {
 
     const item = decryptItem(itemRaw);
 
-    if (!item.published) {
-      return reply.code(403).send({ error: 'Item not published' });
+    if (!item.published && !isAdmin(request)) {
+      return reply.code(404).send({ error: 'Item not found' });
     }
 
     // Check if preview allowed
@@ -71,6 +91,7 @@ export async function previewRoutes(fastify) {
     
     if (fs.existsSync(cachedPath)) {
       const stat = fs.statSync(cachedPath);
+      applyPreviewSecurityHeaders(reply);
       reply.header('Content-Type', getContentType(fileType));
       reply.header('Content-Length', stat.size);
       reply.header('Cache-Control', 'public, max-age=3600');
@@ -88,35 +109,15 @@ export async function previewRoutes(fastify) {
         return reply.code(400).send({ error: 'Local file preview not configured' });
       }
 
-      // Fetch file (only small files)
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-      const response = await fetch(downloadUrl, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'espress0-repo-preview/1.0'
-        }
+      // SSRF guard: the URL comes from the database, so it is attacker-
+      // influenced input as far as this process is concerned. safeFetchBuffer
+      // refuses non-public targets, re-checks every redirect hop and caps the
+      // number of bytes we are willing to buffer.
+      const { buffer } = await safeFetchBuffer(downloadUrl, {
+        maxBytes: PREVIEW_MAX_SIZE,
+        timeoutMs: 30000,
+        headers: { 'User-Agent': 'espress0-repo-preview/1.0' },
       });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch from storage: ${response.status} ${response.statusText}`);
-      }
-
-      const contentLength = response.headers.get('content-length');
-      if (contentLength && parseInt(contentLength) > PREVIEW_MAX_SIZE) {
-        return reply.code(400).send({ error: 'File too large for preview' });
-      }
-
-      // Stream to cache file and to response simultaneously
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
-      if (buffer.length > PREVIEW_MAX_SIZE) {
-        return reply.code(400).send({ error: 'File too large for preview' });
-      }
 
       // Save to cache
       fs.writeFileSync(cachedPath, buffer);
@@ -134,6 +135,7 @@ export async function previewRoutes(fastify) {
         }
       } catch {}
 
+      applyPreviewSecurityHeaders(reply);
       reply.header('Content-Type', getContentType(fileType));
       reply.header('Content-Length', buffer.length);
       reply.header('Cache-Control', 'public, max-age=3600');
@@ -143,10 +145,17 @@ export async function previewRoutes(fastify) {
       return reply.send(buffer);
 
     } catch (e) {
-      if (e.name === 'AbortError') {
+      if (e.name === 'AbortError' || e.name === 'TimeoutError') {
         return reply.code(504).send({ error: 'Preview timeout - storage provider too slow' });
       }
-      return reply.code(500).send({ error: `Preview failed: ${e.message}` });
+      if (e instanceof UnsafeUrlError) {
+        request.log.warn({ itemId: item.id, err: e.message }, 'Blocked unsafe preview target');
+        return reply.code(400).send({ error: 'This item\'s storage URL is not allowed for preview' });
+      }
+      if (e.statusCode === 413) return reply.code(400).send({ error: 'File too large for preview' });
+      // Do not leak upstream error text (paths, hostnames) to the client.
+      request.log.error({ itemId: item.id, err: e.message }, 'Preview failed');
+      return reply.code(502).send({ error: 'Preview failed - storage provider unreachable' });
     }
   });
 
@@ -157,6 +166,9 @@ export async function previewRoutes(fastify) {
 
     const itemRaw = db.prepare('SELECT * FROM items WHERE id = ? OR slug = ?').get(id, id);
     if (!itemRaw) {
+      return reply.code(404).send({ error: 'Item not found' });
+    }
+    if (!itemRaw.published && !isAdmin(request)) {
       return reply.code(404).send({ error: 'Item not found' });
     }
 
@@ -189,7 +201,8 @@ export async function previewRoutes(fastify) {
       }
       return { success: true, message: 'Preview cache cleared' };
     } catch (e) {
-      return reply.code(500).send({ error: e.message });
+      request.log.error({ err: e }, 'Failed to clear preview cache');
+      return reply.code(500).send({ error: 'Failed to clear preview cache' });
     }
   });
 }

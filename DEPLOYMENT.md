@@ -84,7 +84,7 @@ sudo certbot --nginx -d espress0.example.com
 
 ## GitHub Actions Deploy
 
-Add secrets in GitHub repo → Settings → Secrets:
+Add secrets in GitHub repo -> Settings -> Secrets:
 
 - `AZURE_VM_HOST`: VM IP or domain
 - `AZURE_VM_USER`: e.g., espress0

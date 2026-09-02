@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# espress0 — one entry point for every repo script.
+#
+# Usage:
+#   ./espress0 <command> [args...]
+#
+# Commands:
+#   setup              First-time local setup: .env, secrets, deps, database.
+#                      Wizard auto-fires whenever NO --flag is given (fresh
+#                      checkout or reconfigure). Flags like --admin-password X,
+#                      --with-tgpt, --reset-db, --build, --start, --no-wizard
+#                      keep it scripted.
+#   config             Re-run the wizard on an already-set-up machine (after
+#                      the first run, scripts/setup.sh renames itself to
+#                      scripts/config.sh; both commands reach it).
+#   dev [--build]      Dev servers: frontend :5173 + API :3000
+#                      (--build: production build, single origin on :3000)
+#   serve              Run in the background inside tmux (survives logout).
+#                      Serve flags: dev | --build | --no-updater |
+#                      stop | restart | status | logs
+#   update             Auto-updater: watches origin, pulls, rebuilds, restarts.
+#                      (--once for cron/single-shot, --interval N, --service NAME,
+#                       --branch NAME — see ./espress0 update --help)
+#   deploy <args>      Full Ubuntu server deploy (root): systemd + nginx +
+#                      certbot. Needs sudo; same args as scripts/deploy-ubuntu.sh
+#                      (./espress0 deploy --repo <url> [--domain d] [--https] | --update)
+#   backup [dir]       Copy the database + uploads with a timestamp
+#   db                 (Re)run migrations + seed an empty database
+#   ai                 Install tgpt so the admin "Draft with AI" button works
+#   scan               Security probe of the RUNNING app on BASE_URL
+#   scan --full        Full audit: secrets, deps, tests, and HTTP probes
+#   test               Run the backend test suite
+#   status             Dashboard: git, ports, tmux session, updater state
+#   version            Print the current commit + branch
+#   help               This text
+#
+# Every command dispatches to a script in scripts/, which you can still run
+# directly — espress0 is a unified face over the same tools, nothing more.
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+CMD="${1:-help}"
+[ $# -gt 0 ] && shift || true
+
+run() { echo "+ $*"; exec "$@"; }
+
+case "$CMD" in
+  setup)
+    if [ -f scripts/setup.sh ]; then exec scripts/setup.sh "$@"; fi
+    echo "setup.sh has already run (it is config.sh now) — running config:" >&2
+    exec scripts/config.sh "$@" ;;
+  config)
+    if [ -f scripts/config.sh ]; then exec scripts/config.sh "$@"; fi
+    echo "Nothing configured yet — running setup:" >&2
+    exec scripts/setup.sh "$@" ;;
+  ubuntu)
+    echo "!! 'ubuntu' was removed: ./espress0 setup covers local machines and"
+    echo "   './espress0 deploy' covers Ubuntu servers." >&2
+    exit 1 ;;
+  dev)
+    exec scripts/dev.sh "$@" ;;
+  serve|start|tmux)
+    exec scripts/start-tmux.sh "$@" ;;
+  update|auto-update)
+    exec scripts/auto-update.sh "$@" ;;
+  deploy)
+    if [ "$(id -u)" != "0" ] && [ "${1:-}" != "--help" ] && [ "${1:-}" != "-h" ]; then
+      echo "!! deploy needs root: sudo ./espress0 deploy $*" >&2
+      exit 1
+    fi
+    exec scripts/deploy-ubuntu.sh "$@" ;;
+  backup)
+    exec scripts/backup.sh "$@" ;;
+  db|init-db|migrate)
+    exec scripts/init-db.sh "$@" ;;
+  ai|tgpt)
+    exec scripts/install-tgpt.sh "$@" ;;
+  scan)
+    if [ "${1:-}" = "--full" ]; then shift; exec scripts/vuln-scan.sh "$@"; fi
+    exec scripts/test-vuln.sh "$@" ;;
+  test|tests)
+    run bash -c "cd backend && node --test tests/*.test.js" ;;
+  status)
+    echo "── git ───────────────────────────────────────────"
+    git log --oneline -1 2>/dev/null || echo "not a git checkout?"
+    git status --short --branch 2>/dev/null | grep -E "^##" || true
+    DIRTY=$(git status --porcelain --untracked-files=no 2>/dev/null | wc -l)
+    [ "$DIRTY" -gt 0 ] && echo "  [!] $DIRTY tracked file(s) with local edits"
+    echo "── ports ─────────────────────────────────────────"
+    ST_PORT="$(awk -F= '/^PORT=/{print $2}' .env 2>/dev/null)"; ST_PORT="${ST_PORT:-3000}"
+    ss -ltn 2>/dev/null | awk 'NR>1 {print $4}' | grep -oE ":(80|443|5173|$ST_PORT)$" | sort -u \
+      | while read -r p; do echo "  listening on $p"; done || true
+    ss -ltn 2>/dev/null | grep -qE ":$ST_PORT " || echo "  nothing on :$ST_PORT (backend not running?)"
+    echo "── tmux session ──────────────────────────────────"
+    if command -v tmux >/dev/null 2>&1 && tmux has-session -t espress0 2>/dev/null; then
+      tmux list-windows -t espress0 -F "  #I: #W"
+    else
+      echo "  no session — start with: ./espress0 serve"
+    fi
+    echo "── auto-updater ──────────────────────────────────"
+    if [ -f data/.auto-update-disabled ]; then
+      echo "  PAUSED (data/.auto-update-disabled exists)"
+    fi
+    if [ -f data/.auto-update-status ]; then
+      cat data/.auto-update-status
+    else
+      echo "  not running — start with './espress0 serve' or './espress0 update'"
+    fi ;;
+  version|--version|-v)
+    git log --oneline -1 2>/dev/null && git rev-parse --abbrev-ref HEAD ;;
+  help|--help|-h|"")
+    sed -n '2,40p' "$0" ;;
+  *)
+    echo "Unknown command: $CMD" >&2
+    sed -n '8,36p' "$0" | grep -E "^#   " >&2
+    exit 1 ;;
+esac

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import Logo from './Logo';
+import ThemePicker from './ThemePicker';
 
 export default function Navbar({ onAskOpen }) {
   const location = useLocation();
@@ -77,6 +78,8 @@ export default function Navbar({ onAskOpen }) {
                 Ask AI
               </button>
 
+              <ThemePicker />
+
               {user ? (
                 <div className="ml-2 flex items-center gap-1">
                   <Link to="/account" className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${isActive('/account') ? 'bg-surface border border-primary/30 text-primary' : 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'}`}>
@@ -95,9 +98,12 @@ export default function Navbar({ onAskOpen }) {
               )}
             </div>
 
-            <button onClick={() => setMobileOpen(!mobileOpen)} className="md:hidden p-2 rounded-xl bg-surface border border-border text-textSecondary hover:text-textPrimary">
-              {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
+            <div className="md:hidden flex items-center gap-1">
+              <ThemePicker />
+              <button onClick={() => setMobileOpen(!mobileOpen)} className="p-2 rounded-xl bg-surface border border-border text-textSecondary hover:text-textPrimary">
+                {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
+            </div>
           </div>
 
           {mobileOpen && (

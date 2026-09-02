@@ -1,12 +1,109 @@
-import { exec } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
-import path from 'path';
 import { config } from '../config.js';
 import { getDb } from '../db/index.js';
 import { searchService } from './searchService.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+// Provider names are pasted into an argv slot; keep them boring.
+const PROVIDER_PATTERN = /^[a-zA-Z0-9_.-]{1,32}$/;
+// Models may contain slashes (meta-llama/…) and colons (ollama llama3:8b).
+const MODEL_PATTERN = /^[a-zA-Z0-9_.:/-]{1,64}$/;
+
+// Providers that cannot answer anything without a key; tgpt just errors out.
+const KEY_PROVIDERS = new Set(['openai', 'deepseek', 'groq', 'gemini', 'mistral', 'anthropic']);
+let warnedAboutKeylessProvider = false;
+
+function providerArgs() {
+  const provider = config.ai.provider;
+  if (!provider) return [];
+  if (!PROVIDER_PATTERN.test(provider)) {
+    console.warn(`[ai] Ignoring invalid TGPT_PROVIDER value: ${provider}`);
+    return [];
+  }
+  if (KEY_PROVIDERS.has(provider) && !config.ai.apiKey) {
+    // A .env from before the defaults changed says TGPT_PROVIDER=openai
+    // without a key, which makes every AI call fail. Fall back to tgpt's
+    // built-in free provider and say so once.
+    if (!warnedAboutKeylessProvider) {
+      warnedAboutKeylessProvider = true;
+      console.warn(`[ai] TGPT_PROVIDER=${provider} needs TGPT_API_KEY in .env; using tgpt's free default provider instead.`);
+    }
+    return [];
+  }
+  return ['--provider', provider];
+}
+
+function modelArgs() {
+  const model = config.ai.model;
+  if (!model) return [];
+  // Model names are provider-specific ('gpt-3.5-turbo' means nothing to
+  // phind). Only forward one when a provider was explicitly chosen.
+  if (!config.ai.provider) {
+    if (!warnedAboutKeylessProvider) {
+      warnedAboutKeylessProvider = true;
+      console.warn('[ai] TGPT_MODEL is set but TGPT_PROVIDER is empty; ignoring the model (provider default will be used).');
+    }
+    return [];
+  }
+  if (!MODEL_PATTERN.test(model)) {
+    console.warn(`[ai] Ignoring invalid TGPT_MODEL value: ${model}`);
+    return [];
+  }
+  return ['--model', model];
+}
+
+/**
+ * Run tgpt with the prompt on stdin.
+ *
+ * Replaces the previous `cat /tmp/tgpt-prompt-<timestamp>.txt | tgpt ...`
+ * shell pipeline, which (a) invoked a shell with interpolated values, and
+ * (b) wrote predictable filenames into a world-writable directory, so any
+ * local user could pre-create a symlink there and have us clobber a file or
+ * feed the model their own prompt.
+ *
+ * The API key (when the chosen provider needs one) goes in via the
+ * AI_API_KEY environment variable, never on the command line where other
+ * local users could read it from ps(1).
+ */
+function runTgpt(binary, prompt, { timeoutMs = 30000, maxBytes = 1024 * 1024 } = {}) {
+  const env = { ...process.env };
+  if (config.ai.apiKey) env.AI_API_KEY = config.ai.apiKey;
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, [...providerArgs(), ...modelArgs(), '--quiet'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false,
+      env,
+    });
+
+    let out = '';
+    let err = '';
+    let settled = false;
+    const finish = (fn, value) => { if (!settled) { settled = true; fn(value); } };
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish(reject, Object.assign(new Error('tgpt timed out'), { code: 'ETIMEDOUT' }));
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk) => {
+      out += chunk;
+      if (out.length > maxBytes) { child.kill('SIGKILL'); out = out.slice(0, maxBytes); }
+    });
+    child.stderr.on('data', (chunk) => { if (err.length < 8192) err += chunk; });
+    child.on('error', (e) => { clearTimeout(timer); finish(reject, e); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      if (!out.trim() && err.trim()) return finish(reject, new Error(err.trim().slice(0, 500)));
+      finish(resolve, out);
+    });
+
+    child.stdin.on('error', () => {}); // tgpt may exit before we finish writing
+    child.stdin.end(prompt);
+  });
+}
 
 /**
  * AI Service using tgpt as backend
@@ -19,31 +116,59 @@ const execAsync = promisify(exec);
 export class AIService {
   constructor() {
     this.tgptAvailable = null; // null = unknown, check lazily
+    this.tgptBinary = null;    // resolved once alongside availability
+    this.lastError = null;     // why the last tgpt call failed (shown to admins)
   }
 
+  /**
+   * Decide once which tgpt binary we use, preferring TGPT_BINARY_PATH but
+   * falling back to a tgpt on PATH, and answer whether it actually runs.
+   * Previously a tgpt found via PATH marked us available while the fixed
+   * default path (/usr/local/bin/tgpt) was what got spawned — install via a
+   * package manager (~/go/bin, ~/.local/bin) and every AI call died with
+   * ENOENT even though `tgpt` worked fine in a shell.
+   */
   async checkTgptAvailable() {
     if (this.tgptAvailable !== null) return this.tgptAvailable;
-    
+
     if (!config.ai.enabled) {
       this.tgptAvailable = false;
       return false;
     }
 
-    try {
-      const binary = config.ai.binaryPath;
-      if (!fs.existsSync(binary)) {
-        // Try which tgpt
-        await execAsync('which tgpt');
-        this.tgptAvailable = true;
-        return true;
-      }
-      await execAsync(`${binary} --version`);
-      this.tgptAvailable = true;
-      return true;
-    } catch {
+    const configured = config.ai.binaryPath;
+    let binary = null;
+    if (configured && fs.existsSync(configured)) {
+      binary = configured;
+    } else if (configured && configured !== 'tgpt') {
+      // Configured path missing — try PATH before giving up.
+      try { binary = (await execFileAsync('which', ['tgpt'])).stdout.trim() || 'tgpt'; }
+      catch { binary = null; }
+    } else {
+      try { binary = (await execFileAsync('which', ['tgpt'])).stdout.trim() || 'tgpt'; }
+      catch { binary = null; }
+    }
+
+    if (!binary) {
       this.tgptAvailable = false;
+      this.lastError = 'tgpt binary not found (./espress0 ai installs it)';
       return false;
     }
+    try {
+      await execFileAsync(binary, ['--version']);
+      this.tgptBinary = binary;
+      this.tgptAvailable = true;
+      return true;
+    } catch (e) {
+      this.tgptAvailable = false;
+      this.lastError = `tgpt found at ${binary} but failed to run: ${e.message}`.slice(0, 200);
+      return false;
+    }
+  }
+
+  async tgptSpawnTarget() {
+    if (await this.checkTgptAvailable()) return this.tgptBinary;
+    return fs.existsSync(config.ai.binaryPath) ? config.ai.binaryPath : 'tgpt';
   }
 
   /**
@@ -76,20 +201,7 @@ export class AIService {
     if (tgptAvailable) {
       try {
         const answer = await this.askWithTgpt(question, context);
-        return {
-          answer,
-          sources: searchResults.results.slice(0, 3).map(item => ({
-            id: item.id,
-            name: item.name,
-            slug: item.slug,
-            category: item.category_slug,
-          })),
-          relatedItems: searchResults.results,
-          usedTgpt: true,
-          metadata: {
-            totalFound: searchResults.total,
-          }
-        };
+        return this.askResponse(answer, searchResults, true);
       } catch (e) {
         console.warn('tgpt failed, falling back to rule-based:', e.message);
         // Fall through to rule-based
@@ -97,8 +209,13 @@ export class AIService {
     }
 
     // 3. Fallback: rule-based answering using only metadata
-    const answer = this.ruleBasedAnswer(question, searchResults.results, faqResults);
+    return this.askResponse(
+      this.ruleBasedAnswer(question, searchResults.results, faqResults),
+      searchResults, false);
+  }
 
+  /** Uniform ask() payload: answer + the verified items backing it. */
+  askResponse(answer, searchResults, usedTgpt) {
     return {
       answer,
       sources: searchResults.results.slice(0, 3).map(item => ({
@@ -108,10 +225,8 @@ export class AIService {
         category: item.category_slug,
       })),
       relatedItems: searchResults.results,
-      usedTgpt: false,
-      metadata: {
-        totalFound: searchResults.total,
-      }
+      usedTgpt,
+      metadata: { totalFound: searchResults.total },
     };
   }
 
@@ -165,7 +280,7 @@ STRICT RULES:
   }
 
   async askWithTgpt(question, context) {
-    const binary = fs.existsSync(config.ai.binaryPath) ? config.ai.binaryPath : 'tgpt';
+    const binary = await this.tgptSpawnTarget();
     
     // Build prompt - we use context + question
     // tgpt usage: echo "prompt" | tgpt --provider openai
@@ -173,30 +288,15 @@ STRICT RULES:
     
     const fullPrompt = `${context}\n\nProvide a concise, helpful answer (max 300 words). Include links to relevant items as /file/{slug} if applicable.`;
 
-    // Write prompt to temp file to avoid shell escaping issues
-    const tmpFile = path.join('/tmp', `tgpt-prompt-${Date.now()}.txt`);
-    fs.writeFileSync(tmpFile, fullPrompt);
+    const stdout = await runTgpt(binary, fullPrompt, { timeoutMs: 30000 });
 
-    try {
-      // Use tgpt with provider
-      const providerFlag = config.ai.provider ? `--provider ${config.ai.provider}` : '';
-      const cmd = `cat ${tmpFile} | ${binary} ${providerFlag} --quiet 2>&1`;
-      
-      const { stdout } = await execAsync(cmd, {
-        timeout: 30000,
-        maxBuffer: 1024 * 1024,
-      });
+    // Clean output - tgpt may include extra formatting
+    let answer = stdout.trim();
 
-      // Clean output - tgpt may include extra formatting
-      let answer = stdout.trim();
-      
-      // Basic sanitization: remove any potential hallucinated download URLs that aren't in our DB
-      answer = this.sanitizeAnswer(answer);
+    // Basic sanitization: remove any potential hallucinated download URLs that aren't in our DB
+    answer = this.sanitizeAnswer(answer);
 
-      return answer || this.ruleBasedAnswer(question, [], []);
-    } finally {
-      try { fs.unlinkSync(tmpFile); } catch {}
-    }
+    return answer || this.ruleBasedAnswer(question, [], []);
   }
 
   ruleBasedAnswer(question, items, faqs) {
@@ -277,11 +377,155 @@ STRICT RULES:
       const suspicious = urls.filter(url => !allowedDomains.some(d => url.includes(d)));
       
       if (suspicious.length > 0) {
-        answer += `\n\n⚠️ Note: Some links in this answer may not be verified. Always download from the official item page at /file/{slug} to ensure integrity.`;
+        answer += `\n\nNote: Some links in this answer may not be verified. Always download from the official item page at /file/{slug} to ensure integrity.`;
       }
     }
 
     return answer;
+  }
+
+  /**
+   * Draft the copy for a file page from the metadata an admin has typed so far.
+   *
+   * This is a *writing* helper, not the visitor-facing Q&A path: it produces a
+   * one-line summary plus a markdown body the admin can edit before saving.
+   * tgpt is used when available; otherwise a deterministic markdown skeleton is
+   * generated from the same metadata so the button always does something useful
+   * on a VM without tgpt installed.
+   *
+   * @param {object} meta  { name, version, category, platform, architecture,
+   *                         file_type, file_size, tags[], links[], notes }
+   * @returns {{description: string, long_description: string, usedTgpt: boolean}}
+   */
+  async describeItem(meta = {}) {
+    const clean = {
+      name: String(meta.name || '').trim(),
+      version: String(meta.version || '').trim(),
+      category: String(meta.category || '').trim(),
+      platform: String(meta.platform || '').trim(),
+      architecture: String(meta.architecture || '').trim(),
+      file_type: String(meta.file_type || '').trim(),
+      file_size: Number(meta.file_size) || null,
+      tags: Array.isArray(meta.tags) ? meta.tags.filter(Boolean).map(String).slice(0, 15) : [],
+      links: Array.isArray(meta.links) ? meta.links.filter(Boolean).map(String).slice(0, 10) : [],
+      notes: String(meta.notes || '').trim().slice(0, 1000),
+    };
+
+    if (!clean.name) throw new Error('name is required to draft a description');
+
+    if (await this.checkTgptAvailable()) {
+      try {
+        const draft = await this.draftWithTgpt(clean);
+        if (draft) return { ...draft, usedTgpt: true };
+      } catch (e) {
+        console.warn('tgpt draft failed, falling back to template:', e.message);
+        this.lastError = String(e.message || e).slice(0, 200);
+        return { ...this.templateDraft(clean), usedTgpt: false, tgptError: this.lastError };
+      }
+    }
+
+    return { ...this.templateDraft(clean), usedTgpt: false, tgptError: this.lastError };
+  }
+
+  async draftWithTgpt(meta) {
+    const binary = await this.tgptSpawnTarget();
+
+    const facts = [
+      `Name: ${meta.name}`,
+      meta.version && `Version: ${meta.version}`,
+      meta.category && `Category: ${meta.category}`,
+      meta.platform && `Platform: ${meta.platform}`,
+      meta.architecture && `Architecture: ${meta.architecture}`,
+      meta.file_type && `File type: ${meta.file_type}`,
+      meta.file_size && `File size: ${(meta.file_size / 1024 / 1024).toFixed(1)} MB`,
+      meta.tags.length && `Tags: ${meta.tags.join(', ')}`,
+      meta.links.length && `Download sources: ${meta.links.join(', ')}`,
+      meta.notes && `Admin notes: ${meta.notes}`,
+    ].filter(Boolean).join('\n');
+
+    const prompt = `You are writing the catalogue page for a file in a personal software archive.
+
+FACTS (the only things you know for certain):
+${facts}
+
+Write the page copy. Rules:
+- Never invent version numbers, checksums, file sizes or download links.
+- If you are unsure about a detail, leave a placeholder in square brackets, e.g. [confirm minimum RAM].
+- Neutral, factual, technical tone. No marketing hype.
+
+Reply with exactly this structure and nothing else:
+SUMMARY: <one sentence, max 160 characters>
+BODY:
+<markdown body, 120-250 words, using "## " headings such as Overview, What's included, Requirements, Notes, plus bullet lists>`;
+
+    try {
+      const stdout = await runTgpt(binary, prompt, { timeoutMs: 45000 });
+
+      const out = (stdout || '').trim();
+      if (!out) return null;
+
+      const summaryMatch = out.match(/SUMMARY:\s*(.+)/i);
+      const bodyMatch = out.match(/BODY:\s*([\s\S]+)/i);
+
+      const description = (summaryMatch?.[1] || '').trim().slice(0, 480);
+      const long_description = (bodyMatch?.[1] || (summaryMatch ? '' : out)).trim().slice(0, 5000);
+
+      if (!description && !long_description) return null;
+
+      return {
+        description: description || this.templateDraft(meta).description,
+        long_description: long_description || this.templateDraft(meta).long_description,
+      };
+    } catch (e) {
+      console.warn('[ai] describe failed:', e.message);
+      return null;
+    }
+  }
+
+  /**
+   * Deterministic fallback draft. Produces a filled-in markdown skeleton from
+   * the metadata, with [bracketed] prompts where the admin has to decide.
+   */
+  templateDraft(meta) {
+    const label = [meta.name, meta.version].filter(Boolean).join(' ');
+    const kind = meta.file_type ? meta.file_type.toUpperCase() : 'file';
+    const target = [meta.platform, meta.architecture].filter(Boolean).join(' / ');
+
+    const description = [
+      label,
+      meta.category ? `— ${meta.category.toLowerCase()}` : '',
+      target ? `for ${target}` : '',
+    ].filter(Boolean).join(' ').slice(0, 480);
+
+    const lines = [
+      '## Overview',
+      '',
+      `${label || meta.name} is [describe what this ${kind} is and who it is for].`,
+      '',
+      '## What you get',
+      '',
+      `- ${kind} download${meta.file_size ? ` (${(meta.file_size / 1024 / 1024).toFixed(1)} MB)` : ''}`,
+      meta.links.length
+        ? `- ${meta.links.length} mirror${meta.links.length === 1 ? '' : 's'}: ${meta.links.join(', ')}`
+        : '- [add at least one download mirror]',
+      '- [list notable contents, editions or bundled tools]',
+      '',
+      '## Requirements',
+      '',
+      target ? `- Runs on: ${target}` : '- Runs on: [platform / architecture]',
+      '- [minimum RAM, disk space or dependencies]',
+      '',
+      '## Notes',
+      '',
+      '- Verify the SHA-256 checksum after downloading.',
+      '- [licensing, source or anything a visitor should know]',
+    ];
+
+    if (meta.tags.length) {
+      lines.push('', `Tags: ${meta.tags.map(t => `\`${t}\``).join(', ')}`);
+    }
+
+    return { description, long_description: lines.join('\n').slice(0, 5000) };
   }
 
   async getSuggestions() {

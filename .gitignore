@@ -68,3 +68,6 @@ coverage/
 
 # tgpt binary
 tgpt
+
+# Renamed by scripts/setup.sh after its first successful run
+scripts/config.sh

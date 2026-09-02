@@ -1,4 +1,11 @@
 /** @type {import('tailwindcss').Config} */
+
+// Colours resolve to CSS variables written by ThemeProvider (src/themes),
+// so `bg-surface`, `text-primary`, `border-border/50` etc. all follow the
+// active scheme without a rebuild. The `<alpha-value>` placeholder is what
+// keeps opacity modifiers (`bg-primary/10`) working.
+const withAlpha = (variable) => `rgb(var(${variable}) / <alpha-value>)`;
+
 export default {
   content: [
     "./index.html",
@@ -7,23 +14,33 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#0a0a0f',
-        surface: '#12121a',
-        surfaceHover: '#1a1a26',
-        border: '#232334',
-        textPrimary: '#f1f1f3',
-        textSecondary: '#a1a1b5',
-        textMuted: '#6b6b80',
-        primary: '#8b5cf6',
-        primaryHover: '#7c3aed',
-        secondary: '#3b82f6',
-        accent: '#a855f7',
+        background: withAlpha('--c-background'),
+        surface: withAlpha('--c-surface'),
+        surfaceHover: withAlpha('--c-surface-hover'),
+        border: withAlpha('--c-border'),
+        textPrimary: withAlpha('--c-text-primary'),
+        textSecondary: withAlpha('--c-text-secondary'),
+        textMuted: withAlpha('--c-text-muted'),
+        primary: withAlpha('--c-primary'),
+        primaryHover: withAlpha('--c-primary-hover'),
+        secondary: withAlpha('--c-secondary'),
+        accent: withAlpha('--c-accent'),
+        // Starfield colours, so components can use them as utilities too.
+        star: withAlpha('--c-star'),
+        starGlow: withAlpha('--c-star-glow'),
+        skyTop: withAlpha('--sky-top'),
+        skyBottom: withAlpha('--sky-bottom'),
       },
       backgroundImage: {
-        'gradient-primary': 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)',
-        'gradient-primary-hover': 'linear-gradient(135deg, #7c3aed 0%, #2563eb 100%)',
-        'gradient-subtle': 'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%)',
-        'gradient-mesh': 'radial-gradient(at 40% 20%, rgba(139, 92, 246, 0.15) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(168, 85, 247, 0.1) 0px, transparent 50%)',
+        'gradient-primary': 'linear-gradient(135deg, rgb(var(--c-primary)) 0%, rgb(var(--c-secondary)) 100%)',
+        'gradient-primary-hover': 'linear-gradient(135deg, rgb(var(--c-primary-hover)) 0%, rgb(var(--c-secondary)) 100%)',
+        'gradient-subtle': 'linear-gradient(135deg, rgb(var(--c-primary) / 0.15) 0%, rgb(var(--c-secondary) / 0.15) 100%)',
+        'gradient-mesh': [
+          'radial-gradient(at 40% 20%, rgb(var(--c-primary) / 0.15) 0px, transparent 50%)',
+          'radial-gradient(at 80% 0%, rgb(var(--c-secondary) / 0.15) 0px, transparent 50%)',
+          'radial-gradient(at 0% 50%, rgb(var(--c-accent) / 0.10) 0px, transparent 50%)',
+        ].join(', '),
+        'gradient-sky': 'linear-gradient(180deg, rgb(var(--sky-top)) 0%, rgb(var(--sky-bottom)) 100%)',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],

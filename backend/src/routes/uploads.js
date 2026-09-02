@@ -38,6 +38,50 @@ function detectImageType(buffer) {
   return null;
 }
 
+/**
+ * SVG is a document format: it can carry <script>, event handlers and
+ * external references, and it is served from our own origin. Even with the
+ * hardened response headers below we refuse the obviously active constructs
+ * rather than betting everything on one control.
+ */
+const SVG_FORBIDDEN = [
+  /<\s*script/i,
+  /<\s*foreignobject/i,
+  /<\s*iframe/i,
+  /<\s*embed/i,
+  /<\s*object/i,
+  /<\s*use[^>]+href\s*=\s*["']?\s*(?:https?:)?\/\//i,
+  /\son\w+\s*=/i,          // onload=, onclick=, ...
+  /javascript\s*:/i,
+  /<!ENTITY/i,               // XXE / billion laughs
+  /<\s*set[^>]+attributeName/i,
+];
+
+function svgRejectionReason(buffer) {
+  const text = buffer.toString('utf8');
+  for (const pattern of SVG_FORBIDDEN) {
+    if (pattern.test(text)) return `SVG contains disallowed markup (${pattern.source})`;
+  }
+  return null;
+}
+
+/**
+ * Uploaded bytes are served from the app's own origin, so a stored file must
+ * never be able to run as a document. `sandbox` + a null default-src makes an
+ * SVG or HTML-ish payload inert even when opened directly, and `nosniff`
+ * keeps the browser on the declared type.
+ */
+function applyUploadSecurityHeaders(reply, mimeType) {
+  reply.header('X-Content-Type-Options', 'nosniff');
+  reply.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; sandbox");
+  reply.header('X-Frame-Options', 'DENY');
+  reply.header('Referrer-Policy', 'no-referrer');
+  if (mimeType === 'image/svg+xml') {
+    // Renders fine in <img>; a direct hit downloads instead of executing.
+    reply.header('Content-Disposition', 'attachment');
+  }
+}
+
 function safeBaseName(name) {
   return path.basename(String(name || ''))
     .replace(/[^a-zA-Z0-9._-]/g, '-')
@@ -71,6 +115,7 @@ export async function uploadsRoutes(fastify) {
     }
     if (!fs.existsSync(filePath)) return reply.code(404).send({ error: 'File missing from disk' });
 
+    applyUploadSecurityHeaders(reply, row.mime_type);
     reply.header('Content-Type', row.mime_type);
     reply.header('Cache-Control', 'public, max-age=31536000, immutable');
     return reply.send(fs.createReadStream(filePath));
@@ -139,6 +184,11 @@ export async function uploadsRoutes(fastify) {
       return reply.code(415).send({
         error: 'Unsupported file type. Allowed: PNG, JPEG, GIF, WebP, SVG.',
       });
+    }
+
+    if (detected.mime === 'image/svg+xml') {
+      const reason = svgRejectionReason(buffer);
+      if (reason) return reply.code(422).send({ error: reason });
     }
 
     const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);

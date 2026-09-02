@@ -5,7 +5,15 @@ import { getDb } from '../db/index.js';
  * Uses FTS5 for full-text + custom ranking + Levenshtein for typo tolerance
  */
 
+// Levenshtein is O(n*m); refuse to run it on pathological input so a long
+// query string cannot pin a CPU core.
+const MAX_TERM_LENGTH = 64;
+export const MAX_QUERY_LENGTH = 128;
+
 function levenshtein(a, b) {
+  if (a.length > MAX_TERM_LENGTH || b.length > MAX_TERM_LENGTH) {
+    return Math.abs(a.length - b.length) + MAX_TERM_LENGTH;
+  }
   const matrix = [];
   for (let i = 0; i <= b.length; i++) matrix[i] = [i];
   for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
@@ -26,12 +34,32 @@ function levenshtein(a, b) {
 }
 
 function tokenize(query) {
-  return query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+  return String(query || '')
+    .slice(0, MAX_QUERY_LENGTH)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(t => t.length > 1)
+    .slice(0, 12);
+}
+
+/**
+ * Build an FTS5 MATCH expression.
+ *
+ * The tokens are wrapped in double quotes, so a token containing a quote used
+ * to break out of the phrase and let the caller inject FTS operators (NEAR,
+ * column filters, unbalanced syntax that throws). Everything except letters,
+ * digits, dot, underscore and dash is stripped first - FTS5 has no bound
+ * parameters inside a MATCH string, so escaping is the only option.
+ */
+function sanitizeFtsToken(token) {
+  return token.replace(/[^\p{L}\p{N}._-]+/gu, ' ').trim();
 }
 
 function buildFtsQuery(query) {
   // Convert "ubuntu 24.04" to "ubuntu* 24.04*"
-  const tokens = tokenize(query);
+  const tokens = tokenize(query)
+    .map(sanitizeFtsToken)
+    .filter(t => t.length > 1);
   if (tokens.length === 0) return '';
   // Use prefix matching for typo tolerance: token*
   // Also handle OR for better recall
@@ -42,6 +70,9 @@ export class SearchService {
   search({
     q = '',
     category = null,
+    folder = null,
+    tag = null,
+    license_status = null,
     file_type = null,
     platform = null,
     architecture = null,
@@ -57,6 +88,98 @@ export class SearchService {
     let results = [];
     let total = 0;
 
+    const { conditions, params } = this._buildFilters(db, {
+      category, folder, tag, license_status, file_type, platform, architecture, featured, published,
+    });
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    if (q && q.trim().length > 0) {
+      const ftsQuery = buildFtsQuery(q);
+      // Try FTS search first
+      try {
+        const countQuery = `
+          SELECT COUNT(*) as total FROM items
+          JOIN items_fts ON items.id = items_fts.rowid
+          ${whereClause ? whereClause + ' AND' : 'WHERE'} items_fts MATCH @ftsQuery
+        `;
+        const countResult = db.prepare(countQuery).get({ ...params, ftsQuery });
+        total = countResult?.total || 0;
+
+        const orderClause = this._sortClause(sort, order, true);
+
+        const searchQuery = `
+          SELECT items.*, categories.name as category_name, categories.slug as category_slug,
+                 folders.name as folder_name, folders.slug as folder_slug, folders.color as folder_color, folders.icon as folder_icon,
+                 items_fts.rank as fts_rank
+          FROM items
+          JOIN items_fts ON items.id = items_fts.rowid
+          LEFT JOIN categories ON items.category_id = categories.id
+          LEFT JOIN folders ON items.folder_id = folders.id
+          ${whereClause ? whereClause + ' AND' : 'WHERE'} items_fts MATCH @ftsQuery
+          ${orderClause}
+          LIMIT @limit OFFSET @offset
+        `;
+
+        results = db.prepare(searchQuery).all({
+          ...params,
+          ftsQuery,
+          limit,
+          offset,
+        });
+
+        // If FTS returned nothing, fallback to LIKE with typo tolerance
+        if (results.length === 0 && total === 0) {
+          return this.fallbackLikeSearch({ q, category, folder, tag, license_status, file_type, platform, architecture, sort, order, page, limit, featured, published });
+        }
+
+        // Enhance with Levenshtein for typo tolerance ranking if needed
+        if (sort === 'relevance') {
+          results = this.rerankWithLevenshtein(results, q);
+        }
+
+      } catch (e) {
+        console.warn('FTS search failed, fallback:', e.message);
+        return this.fallbackLikeSearch({ q, category, folder, tag, license_status, file_type, platform, architecture, sort, order, page, limit, featured, published });
+      }
+    } else {
+      // No query, just filter
+      const countQuery = `
+        SELECT COUNT(*) as total FROM items
+        ${whereClause}
+      `;
+      total = db.prepare(countQuery).get(params)?.total || 0;
+
+      const orderClause = this._sortClause(sort, order, false);
+
+      const query = `
+        SELECT items.*, categories.name as category_name, categories.slug as category_slug,
+                 folders.name as folder_name, folders.slug as folder_slug, folders.color as folder_color, folders.icon as folder_icon
+        FROM items
+        LEFT JOIN categories ON items.category_id = categories.id
+          LEFT JOIN folders ON items.folder_id = folders.id
+        ${whereClause}
+        ${orderClause}
+        LIMIT @limit OFFSET @offset
+      `;
+      results = db.prepare(query).all({ ...params, limit, offset });
+    }
+
+    return {
+      results,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * Shared WHERE conditions for search() and the LIKE fallback. Everything is
+   * bound parameters or allow-listed literals; folder/category accept a slug
+   * or numeric id.
+   */
+  _buildFilters(db, { category, folder, tag, license_status, file_type, platform, architecture, featured, published }) {
     const conditions = [];
     const params = {};
 
@@ -74,6 +197,40 @@ export class SearchService {
       }
     }
 
+    if (folder) {
+      // folder can be slug or id; 'none' matches unfiled items
+      if (folder === 'none') {
+        conditions.push('items.folder_id IS NULL');
+      } else {
+        const fld = db.prepare('SELECT id FROM folders WHERE slug = ? OR id = ?').get(folder, folder);
+        if (fld) {
+          conditions.push('items.folder_id = @folder_id');
+          params.folder_id = fld.id;
+        } else {
+          // Unknown folder slug matches nothing rather than everything.
+          conditions.push('1 = 0');
+        }
+      }
+    }
+
+    if (tag) {
+      // tags are a JSON array on the row; a quoted LIKE keeps "iso" from
+      // matching "isolator" and stays index-free but exact enough.
+      const clean = String(tag).replace(/["%_\\]/g, '').slice(0, 64);
+      if (clean) {
+        conditions.push(`items.tags LIKE @tag ESCAPE '\\'`);
+        params.tag = `%"${clean}"%`;
+      }
+    }
+
+    if (license_status) {
+      const allowed = ['public-domain', 'redistributable', 'proprietary', 'check-license', 'internal-only', 'abandonware'];
+      if (allowed.includes(license_status)) {
+        conditions.push('items.license_status = @license_status');
+        params.license_status = license_status;
+      }
+    }
+
     if (file_type) {
       conditions.push('items.file_type = @file_type');
       params.file_type = file_type;
@@ -89,134 +246,40 @@ export class SearchService {
       params.architecture = architecture;
     }
 
-    if (featured !== null) {
+    if (featured !== null && featured !== undefined) {
       conditions.push('items.featured = @featured');
       params.featured = featured ? 1 : 0;
     }
 
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    if (q && q.trim().length > 0) {
-      const ftsQuery = buildFtsQuery(q);
-      // Try FTS search first
-      try {
-        const countQuery = `
-          SELECT COUNT(*) as total FROM items
-          JOIN items_fts ON items.id = items_fts.rowid
-          ${whereClause ? whereClause + ' AND' : 'WHERE'} items_fts MATCH @ftsQuery
-        `;
-        const countResult = db.prepare(countQuery).get({ ...params, ftsQuery });
-        total = countResult?.total || 0;
-
-        // Get ranked results
-        let orderClause = 'ORDER BY rank';
-        if (sort === 'name') orderClause = `ORDER BY items.name ${order === 'desc' ? 'DESC' : 'ASC'}`;
-        if (sort === 'date') orderClause = `ORDER BY items.created_at ${order === 'desc' ? 'DESC' : 'ASC'}`;
-        if (sort === 'size') orderClause = `ORDER BY items.file_size ${order === 'desc' ? 'DESC' : 'ASC'}`;
-        if (sort === 'popular') orderClause = `ORDER BY items.download_count ${order === 'desc' ? 'DESC' : 'ASC'}`;
-
-        const searchQuery = `
-          SELECT items.*, categories.name as category_name, categories.slug as category_slug,
-                 items_fts.rank as fts_rank
-          FROM items
-          JOIN items_fts ON items.id = items_fts.rowid
-          LEFT JOIN categories ON items.category_id = categories.id
-          ${whereClause ? whereClause + ' AND' : 'WHERE'} items_fts MATCH @ftsQuery
-          ${orderClause}
-          LIMIT @limit OFFSET @offset
-        `;
-
-        results = db.prepare(searchQuery).all({
-          ...params,
-          ftsQuery,
-          limit,
-          offset,
-        });
-
-        // If FTS returned nothing, fallback to LIKE with typo tolerance
-        if (results.length === 0 && total === 0) {
-          return this.fallbackLikeSearch({ q, category, file_type, platform, architecture, sort, order, page, limit, featured, published });
-        }
-
-        // Enhance with Levenshtein for typo tolerance ranking if needed
-        if (sort === 'relevance') {
-          results = this.rerankWithLevenshtein(results, q);
-        }
-
-      } catch (e) {
-        console.warn('FTS search failed, fallback:', e.message);
-        return this.fallbackLikeSearch({ q, category, file_type, platform, architecture, sort, order, page, limit, featured, published });
-      }
-    } else {
-      // No query, just filter
-      const countQuery = `
-        SELECT COUNT(*) as total FROM items
-        ${whereClause}
-      `;
-      total = db.prepare(countQuery).get(params)?.total || 0;
-
-      let orderClause = 'ORDER BY items.created_at DESC';
-      if (sort === 'name') orderClause = `ORDER BY items.name ${order === 'desc' ? 'DESC' : 'ASC'}`;
-      if (sort === 'date') orderClause = `ORDER BY items.created_at ${order === 'desc' ? 'DESC' : 'ASC'}`;
-      if (sort === 'size') orderClause = `ORDER BY items.file_size ${order === 'desc' ? 'DESC' : 'ASC'}`;
-      if (sort === 'popular') orderClause = `ORDER BY items.download_count ${order === 'desc' ? 'DESC' : 'ASC'}`;
-      if (sort === 'version') orderClause = `ORDER BY items.version ${order === 'desc' ? 'DESC' : 'ASC'}`;
-
-      const query = `
-        SELECT items.*, categories.name as category_name, categories.slug as category_slug
-        FROM items
-        LEFT JOIN categories ON items.category_id = categories.id
-        ${whereClause}
-        ${orderClause}
-        LIMIT @limit OFFSET @offset
-      `;
-      results = db.prepare(query).all({ ...params, limit, offset });
-    }
-
-    return {
-      results,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return { conditions, params };
   }
 
-  fallbackLikeSearch({ q, category, file_type, platform, architecture, sort, order, page, limit, featured, published }) {
+  /**
+   * ORDER BY clause from an allow-list of columns only - `sort` arrives as a
+   * query string, so it must never be interpolated unchecked.
+   * @param {boolean} hasRank FTS mode defaults to rank order when no sort given
+   */
+  _sortClause(sort, order, hasRank) {
+    const dir = order === 'desc' ? 'DESC' : 'ASC';
+    switch (sort) {
+      case 'name': return `ORDER BY items.name ${dir}`;
+      case 'date': return `ORDER BY items.created_at ${dir}`;
+      case 'updated': return `ORDER BY items.updated_at ${dir}`;
+      case 'size': return `ORDER BY items.file_size ${dir}`;
+      case 'popular': return `ORDER BY items.download_count ${dir}`;
+      case 'views': return `ORDER BY items.view_count ${dir}`;
+      case 'version': return `ORDER BY items.version ${dir}`;
+      default: return hasRank ? 'ORDER BY rank' : 'ORDER BY items.created_at DESC';
+    }
+  }
+
+  fallbackLikeSearch({ q, category, folder, tag, license_status, file_type, platform, architecture, sort, order, page, limit, featured, published }) {
     const db = getDb();
     const offset = (page - 1) * limit;
     const likeQ = `%${q.toLowerCase()}%`;
 
-    const conditions = [];
-    const params = { likeQ };
-
-    if (published !== null) {
-      conditions.push('items.published = @published');
-      params.published = published ? 1 : 0;
-    }
-    if (category) {
-      const cat = db.prepare('SELECT id FROM categories WHERE slug = ? OR id = ?').get(category, category);
-      if (cat) {
-        conditions.push('items.category_id = @category_id');
-        params.category_id = cat.id;
-      }
-    }
-    if (file_type) {
-      conditions.push('items.file_type = @file_type');
-      params.file_type = file_type;
-    }
-    if (platform) {
-      conditions.push('items.platform = @platform');
-      params.platform = platform;
-    }
-    if (architecture) {
-      conditions.push('items.architecture = @architecture');
-      params.architecture = architecture;
-    }
-    if (featured !== null) {
-      conditions.push('items.featured = @featured');
-      params.featured = featured ? 1 : 0;
-    }
+    const { conditions, params } = this._buildFilters(db, { category, folder, tag, license_status, file_type, platform, architecture, featured, published });
+    params.likeQ = likeQ;
 
     // Search in multiple fields
     conditions.push(`(
@@ -232,13 +295,14 @@ export class SearchService {
     const countQuery = `SELECT COUNT(*) as total FROM items ${whereClause}`;
     const total = db.prepare(countQuery).get(params)?.total || 0;
 
-    let orderClause = 'ORDER BY items.created_at DESC';
-    if (sort === 'name') orderClause = `ORDER BY items.name ${order === 'desc' ? 'DESC' : 'ASC'}`;
+    const orderClause = this._sortClause(sort === 'relevance' ? 'date' : sort, order, false);
 
     const query = `
-      SELECT items.*, categories.name as category_name, categories.slug as category_slug
+      SELECT items.*, categories.name as category_name, categories.slug as category_slug,
+                 folders.name as folder_name, folders.slug as folder_slug, folders.color as folder_color, folders.icon as folder_icon
       FROM items
       LEFT JOIN categories ON items.category_id = categories.id
+          LEFT JOIN folders ON items.folder_id = folders.id
       ${whereClause}
       ${orderClause}
       LIMIT @limit OFFSET @offset
@@ -276,9 +340,11 @@ export class SearchService {
   getPopular(limit = 10) {
     const db = getDb();
     return db.prepare(`
-      SELECT items.*, categories.name as category_name, categories.slug as category_slug
+      SELECT items.*, categories.name as category_name, categories.slug as category_slug,
+                 folders.name as folder_name, folders.slug as folder_slug, folders.color as folder_color, folders.icon as folder_icon
       FROM items
       LEFT JOIN categories ON items.category_id = categories.id
+          LEFT JOIN folders ON items.folder_id = folders.id
       WHERE items.published = 1
       ORDER BY items.download_count DESC, items.view_count DESC
       LIMIT ?
@@ -288,9 +354,11 @@ export class SearchService {
   getRecent(limit = 10) {
     const db = getDb();
     return db.prepare(`
-      SELECT items.*, categories.name as category_name, categories.slug as category_slug
+      SELECT items.*, categories.name as category_name, categories.slug as category_slug,
+                 folders.name as folder_name, folders.slug as folder_slug, folders.color as folder_color, folders.icon as folder_icon
       FROM items
       LEFT JOIN categories ON items.category_id = categories.id
+          LEFT JOIN folders ON items.folder_id = folders.id
       WHERE items.published = 1
       ORDER BY items.created_at DESC
       LIMIT ?
@@ -300,9 +368,11 @@ export class SearchService {
   getFeatured(limit = 10) {
     const db = getDb();
     return db.prepare(`
-      SELECT items.*, categories.name as category_name, categories.slug as category_slug
+      SELECT items.*, categories.name as category_name, categories.slug as category_slug,
+                 folders.name as folder_name, folders.slug as folder_slug, folders.color as folder_color, folders.icon as folder_icon
       FROM items
       LEFT JOIN categories ON items.category_id = categories.id
+          LEFT JOIN folders ON items.folder_id = folders.id
       WHERE items.published = 1 AND items.featured = 1
       ORDER BY items.created_at DESC
       LIMIT ?

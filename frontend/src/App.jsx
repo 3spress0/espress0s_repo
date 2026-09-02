@@ -12,6 +12,8 @@ import Admin from './pages/Admin';
 import AdminOverview from './pages/admin/Overview';
 import AdminItems from './pages/admin/Items';
 import AdminCategories from './pages/admin/Categories';
+import AdminFolders from './pages/admin/Folders';
+import AdminBackup from './pages/admin/Backup';
 import AdminStorage from './pages/admin/Storage';
 import AdminSettings from './pages/admin/Settings';
 import UserManager from './components/UserManager';
@@ -23,6 +25,7 @@ import Monitoring from './components/Monitoring';
 import AskAIPopup from './components/AskAIPopup';
 import { AuthProvider } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
+import { ThemeProvider } from './context/ThemeContext';
 
 function ItemRedirect() {
   const { slug } = useParams();
@@ -51,8 +54,10 @@ function AppContent() {
             <Route path="items" element={<AdminItems />} />
             <Route path="items/:id" element={<AdminItems />} />
             <Route path="categories" element={<AdminCategories />} />
+            <Route path="folders" element={<AdminFolders />} />
             <Route path="users" element={<div className="glass rounded-2xl border border-white/5 p-6"><UserManager /></div>} />
             <Route path="storage" element={<AdminStorage />} />
+            <Route path="backup" element={<AdminBackup />} />
             <Route path="settings" element={<AdminSettings />} />
             <Route path="monitoring" element={<Monitoring />} />
           </Route>
@@ -71,11 +76,14 @@ function AppContent() {
 function App() {
   return (
     <SettingsProvider>
-      <AuthProvider>
-        <Router>
-          <AppContent />
-        </Router>
-      </AuthProvider>
+      {/* Theme sits inside Settings: the admin's default scheme is a setting. */}
+      <ThemeProvider>
+        <AuthProvider>
+          <Router>
+            <AppContent />
+          </Router>
+        </AuthProvider>
+      </ThemeProvider>
     </SettingsProvider>
   );
 }

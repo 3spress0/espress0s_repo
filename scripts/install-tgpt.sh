@@ -48,21 +48,21 @@ fi
 
 # Verify
 if command -v tgpt &> /dev/null; then
-  echo "✓ tgpt installed: $(tgpt --version 2>&1)"
-  echo "Configure provider:"
-  echo "  tgpt --provider duckduckgo  # free, no key"
-  echo "  tgpt --provider openai --key sk-...  # openai"
-  echo "  tgpt --provider groq --key gsk_...   # groq"
+  echo "[ok] tgpt installed: $(tgpt --version 2>&1)"
+  echo "Smoke test (uses tgpt's free default provider, no key):"
+  echo "  echo 'Say hi in one word' | tgpt --quiet"
   echo ""
-  echo "Test:"
-  echo "  echo 'Which Ubuntu for Intel PC?' | tgpt --provider duckduckgo"
+  echo "Optional providers (.env):"
+  echo "  TGPT_PROVIDER=openai + TGPT_API_KEY=sk-...   # paid"
+  echo "  TGPT_PROVIDER=groq   + TGPT_API_KEY=gsk_...  # free signup"
+  echo "  Leave TGPT_PROVIDER empty for the built-in free default."
 else
-  echo "⚠ tgpt not installed, Barista will use fallback mode (rule-based metadata search)"
+  echo "[!] tgpt not installed, Barista will use fallback mode (rule-based metadata search)"
   echo "  Fallback still works: searches SQLite FTS5, no hallucination"
 fi
 
 echo ""
-echo "Barista AI config in .env:"
+echo "Barista AI config in .env (these are the defaults):"
 echo "  TGPT_ENABLED=true"
-echo "  TGPT_BINARY_PATH=/usr/local/bin/tgpt"
-echo "  TGPT_PROVIDER=duckduckgo"
+echo "  TGPT_BINARY_PATH=/usr/local/bin/tgpt   # falls back to PATH lookup"
+echo "  TGPT_PROVIDER=                          # empty = tgpt's free default"

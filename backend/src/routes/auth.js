@@ -4,7 +4,73 @@ import { generateToken, authenticate } from '../middleware/auth.js';
 import { config } from '../config.js';
 import { encryptionService } from '../services/encryptionService.js';
 import { captchaService } from '../services/captchaService.js';
+import crypto from 'crypto';
 import { z } from 'zod';
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+let warnedAboutInsecureCookie = false;
+
+/**
+ * Session cookie options. `secure` follows the environment (see
+ * config.security.cookieSecure) instead of being pinned to false, which used
+ * to send the session token in clear text on every production request.
+ *
+ * Adaptive downgrade: browsers *refuse to store* Secure cookies that arrive
+ * over plain http:// (localhost excepted). A production server exposed
+ * directly on http would otherwise appear to log in, then answer every
+ * request — /download included — with "Authentication required". When the
+ * login itself travels over insecure HTTP to a non-local host, drop Secure
+ * for compatibility (the transport already has no secrecy either way) and
+ * warn loudly once. HTTPS deployments keep full hardening, and an explicit
+ * COOKIE_SECURE env var always wins.
+ */
+function cookieIsSecureFor(request) {
+  const secure = config.security.cookieSecure;
+  if (!secure || process.env.COOKIE_SECURE !== undefined) return secure;
+  const proto = (request.protocol || 'http').toLowerCase();
+  const host = (request.hostname || '').toLowerCase();
+  if (proto === 'https' || LOCAL_HOSTS.has(host)) return true;
+  if (!warnedAboutInsecureCookie && request.log?.warn) {
+    warnedAboutInsecureCookie = true;
+    request.log.warn(
+      'Session cookies are being served WITHOUT the Secure flag because the ' +
+      'login arrived over plain http:// from a non-local host. Browsers refuse ' +
+      'to store Secure-but-plain-HTTP cookies, which silently breaks logins. ' +
+      'Deploy behind HTTPS (scripts/deploy-ubuntu.sh --domain ... --https) or ' +
+      'set COOKIE_SECURE=false to silence this.'
+    );
+  }
+  return false;
+}
+
+function sessionCookieOptions(request, extra = {}) {
+  return {
+    path: '/',
+    httpOnly: true,
+    secure: cookieIsSecureFor(request),
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60,
+    ...extra,
+  };
+}
+
+/**
+ * Mint (and set) the CSRF double-submit cookie. Deliberately NOT httpOnly:
+ * the SPA must read it to echo it back as X-CSRF-Token. It holds no session
+ * power by itself - it only proves the page could read our cookies.
+ */
+function issueCsrfCookie(request, reply) {
+  const token = crypto.randomBytes(24).toString('base64url');
+  reply.setCookie('espress0_csrf', token, sessionCookieOptions(request, { httpOnly: false }));
+  return token;
+}
+
+/** Issue the full cookie set (session + auth-present flag + CSRF) at once. */
+function issueSessionCookies(request, reply, token) {
+  reply.setCookie('espress0_token', token, sessionCookieOptions(request));
+  reply.setCookie('espress0_auth', '1', sessionCookieOptions(request, { httpOnly: false }));
+  return issueCsrfCookie(request, reply);
+}
 
 const profileSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_-]+$/, 'Invalid username').optional(),
@@ -12,7 +78,13 @@ const profileSchema = z.object({
   currentPassword: z.string().min(4).max(200).optional().nullable(),
   newPassword: z.string().min(8).max(128).regex(/[a-z]/, 'Need lowercase').regex(/[A-Z]/, 'Need uppercase').regex(/[0-9]/, 'Need number').optional().nullable(),
   confirmNewPassword: z.string().optional().nullable(),
-  avatar_url: z.string().url().or(z.literal('')).optional().nullable(),
+  // z.string().url() happily accepts javascript: and data: URLs; restrict the
+  // schemes since this value is rendered back into the page.
+  avatar_url: z.string().url()
+    .refine(v => /^https?:\/\//i.test(v), 'Avatar URL must start with http:// or https://')
+    .or(z.string().regex(/^\/api\/uploads\/[a-zA-Z0-9._-]+$/, 'Invalid upload path'))
+    .or(z.literal(''))
+    .optional().nullable(),
   bio: z.string().max(500).optional().nullable(),
   theme: z.enum(['dark', 'light', 'auto']).optional(),
 }).refine(data => {
@@ -60,6 +132,7 @@ export async function authRoutes(fastify) {
     if (!user.password_hash.startsWith('pepper_v1:')) {
       const newHash = await encryptionService.hashPasswordWithPepper(password);
       db.prepare('UPDATE users SET password_hash = ?, encryption_version = ? WHERE id = ?').run(newHash, 'v1', user.id);
+      user = { ...user, password_hash: newHash };
     }
     let decryptedEmail = user.email;
     try { decryptedEmail = encryptionService.decrypt(user.email); } catch {}
@@ -67,24 +140,10 @@ export async function authRoutes(fastify) {
     let decBio = null; try { decBio = user.bio ? encryptionService.decrypt(user.bio) : null; } catch {}
     const token = generateToken({ ...user, email: decryptedEmail });
 
-    // Set cookies - actual cookies for downloads
-    reply.setCookie('espress0_token', token, {
-      path: '/',
-      httpOnly: true,
-      secure: false, // set true in prod with HTTPS
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60,
-    });
-    reply.setCookie('espress0_auth', '1', {
-      path: '/',
-      httpOnly: false,
-      secure: false,
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60,
-    });
+    const csrfToken = issueSessionCookies(request, reply, token);
 
     request.log.info({ userId: user.id, username: user.username }, 'User logged in with cookies');
-    return { token, user: { id: user.id, username: user.username, email: decryptedEmail, role: user.role, avatar_url: decAvatar, bio: decBio, theme: user.theme || 'dark' } };
+    return { token, csrfToken, user: { id: user.id, username: user.username, email: decryptedEmail, role: user.role, avatar_url: decAvatar, bio: decBio, theme: user.theme || 'dark' } };
   });
 
   fastify.post('/auth/register', {
@@ -92,6 +151,12 @@ export async function authRoutes(fastify) {
   }, async (request, reply) => {
     const parsed = registerSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+
+    // Checked before any lookup: with registration closed the endpoint must
+    // not double as a username/email oracle.
+    if (!config.security.allowRegistration) {
+      return reply.code(403).send({ error: 'Registration is disabled. Contact admin.' });
+    }
 
     const { username, email, password, captchaId, captchaAnswer, captchaToken } = request.body;
     const captchaType = process.env.CAPTCHA_TYPE || 'math';
@@ -109,7 +174,6 @@ export async function authRoutes(fastify) {
     for (const u of allUsers) {
       try { const dec = encryptionService.decrypt(u.email); if (dec.toLowerCase() === email.toLowerCase()) return reply.code(409).send({ error: 'Email already exists' }); } catch { if (u.email.toLowerCase() === email.toLowerCase()) return reply.code(409).send({ error: 'Email already exists' }); }
     }
-    if (!config.security.allowRegistration) return reply.code(403).send({ error: 'Registration is disabled. Contact admin.' });
     const encryptedEmail = encryptionService.encrypt(email);
     const hash = await encryptionService.hashPasswordWithPepper(password);
     const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
@@ -118,26 +182,14 @@ export async function authRoutes(fastify) {
       const result = db.prepare(`INSERT INTO users (username, email, email_hash, password_hash, role, encryption_version) VALUES (?, ?, ?, ?, ?, ?)`).run(username, encryptedEmail, emailHash, hash, role, 'v1');
       const newUser = db.prepare('SELECT id, username, email, role FROM users WHERE id = ?').get(result.lastInsertRowid);
       let decEmail = newUser.email; try { decEmail = encryptionService.decrypt(newUser.email); } catch {}
-      const token = generateToken({ ...newUser, email: decEmail });
+      const token = generateToken({ ...newUser, email: decEmail }, { passwordHash: hash });
 
-      reply.setCookie('espress0_token', token, {
-        path: '/',
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60,
-      });
-      reply.setCookie('espress0_auth', '1', {
-        path: '/',
-        httpOnly: false,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60,
-      });
+      const csrfToken = issueSessionCookies(request, reply, token);
 
       request.log.info({ userId: newUser.id, username: newUser.username, role }, 'New user registered with cookies');
       return reply.code(201).send({
         token,
+        csrfToken,
         user: { id: newUser.id, username: newUser.username, email: decEmail, role: newUser.role },
         message: role === 'admin' ? 'First user created as admin' : 'Registration successful',
       });
@@ -279,10 +331,38 @@ export async function authRoutes(fastify) {
     };
   });
 
+  /**
+   * GET /auth/csrf - make sure the caller has a CSRF cookie. Called by the SPA
+   * on boot: a restored session (httpOnly token survived, readable CSRF cookie
+   * did not) would otherwise be unable to mutate anything until next login.
+   */
+  fastify.get('/auth/csrf', async (request, reply) => {
+    const existing = request.cookies?.espress0_csrf;
+    if (existing && existing.length >= 16) return { csrfToken: existing };
+    return { csrfToken: issueCsrfCookie(request, reply) };
+  });
+
   fastify.post('/auth/logout', { preHandler: [authenticate] }, async (request, reply) => {
     reply.clearCookie('espress0_token', { path: '/' });
     reply.clearCookie('espress0_auth', { path: '/' });
+    reply.clearCookie('espress0_csrf', { path: '/' });
     return { success: true, message: 'Logged out' };
+  });
+
+  /**
+   * POST /auth/logout-all - "log out all devices". Bumping auth_version
+   * invalidates every token minted so far, including the caller's own, so the
+   * response also clears this device's cookies.
+   */
+  fastify.post('/auth/logout-all', { preHandler: [authenticate] }, async (request, reply) => {
+    const db = getDb();
+    db.prepare('UPDATE users SET auth_version = COALESCE(auth_version, 0) + 1, updated_at = ? WHERE id = ?')
+      .run(new Date().toISOString(), request.user.id);
+    reply.clearCookie('espress0_token', { path: '/' });
+    reply.clearCookie('espress0_auth', { path: '/' });
+    reply.clearCookie('espress0_csrf', { path: '/' });
+    request.log.info({ userId: request.user.id }, 'User logged out of all sessions');
+    return { success: true, message: 'All sessions were signed out. Log in again to continue.' };
   });
 
   fastify.get('/auth/security-info', async (request, reply) => {
@@ -291,10 +371,11 @@ export async function authRoutes(fastify) {
         passwordHashing: 'pepper (HMAC-SHA256) + bcrypt cost 12 + versioned',
         emailEncryption: 'AES-256-GCM with random IV + HMAC hash for lookup',
         itemEncryption: 'storage_path, download_url, external_url, license_notes AES-256-GCM',
-        jwt: 'HS256 with expiry, cookies httpOnly SameSite Lax + Bearer header + query token',
+        jwt: 'HS256 (algorithm pinned) with expiry, invalidated on password change and on "log out all devices"; httpOnly SameSite=Lax cookie or Bearer header (query ?token= only on download/preview)',
+        csrf: 'Double-submit cookie (espress0_csrf + X-CSRF-Token) on every cookie-authenticated mutation',
         rateLimiting: 'Enabled',
         sqlInjection: 'Parameterized queries',
-        xss: 'React auto-escapes',
+        xss: 'React auto-escapes, strict Content-Security-Policy, uploads served sandboxed with nosniff',
         captcha: `Type: ${process.env.CAPTCHA_TYPE || 'math'}`,
         downloads: 'Login required, unlimited mirrors, can mark as down',
       },

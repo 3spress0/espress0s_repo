@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Download, HardDrive, Calendar, Tag, Shield, Cpu, Monitor, FileType, Hash, ExternalLink, ArrowLeft, Eye, Clock, Music, Video, Play, Image as ImageIcon, Disc, File, Link2, Star, Lock, AlertTriangle, Pencil } from 'lucide-react';
+import { Download, HardDrive, Calendar, Tag, Shield, Cpu, Monitor, FileType, Hash, ExternalLink, ArrowLeft, Eye, Clock, Music, Video, Play, Image as ImageIcon, Disc, File, Link2, Star, Lock, AlertTriangle, Pencil, Folder } from 'lucide-react';
 import { itemsApi } from '../lib/api';
 import { formatBytes, formatDate, startDownload } from '../lib/utils';
 import { ItemPlaceholder } from '../components/Logo';
 import ItemEditor from '../components/admin/ItemEditor';
+import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
 
 export default function ItemDetail() {
@@ -27,21 +28,18 @@ export default function ItemDetail() {
       .finally(() => setLoading(false));
   }, [slug]);
 
-  const getAuthHeader = () => {
-    const token = localStorage.getItem('espress0_token');
-    return token ? { 'Authorization': `Bearer ${token}` } : {};
-  };
-
+  // Auth is an httpOnly cookie - fetch() with credentials sends it for us;
+  // no token ever touches JS-readable storage.
   const handleDownload = async (linkId = null) => {
     if (!isAuthenticated) {
       navigate('/login?redirect=' + encodeURIComponent(window.location.pathname));
       return;
     }
     try {
-      const token = localStorage.getItem('espress0_token');
       const baseUrl = linkId ? `/api/download/${item.id}/${linkId}` : `/api/download/${item.id}`;
       const response = await fetch(`${baseUrl}?json=1`, {
-        headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json', 'X-Requested-With': 'fetch' }
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json', 'X-Requested-With': 'fetch' }
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({ error: 'Download failed' }));
@@ -72,7 +70,7 @@ export default function ItemDetail() {
         setPreviewLoading(false);
         return;
       }
-      const response = await fetch(`/api/preview/${item.id}`, { headers: getAuthHeader() });
+      const response = await fetch(`/api/preview/${item.id}`, { credentials: 'same-origin' });
       if (!response.ok) {
         const err = await response.json().catch(() => ({ error: 'Preview failed' }));
         if (response.status === 401) { navigate('/login'); throw new Error('Login required for preview'); }
@@ -210,6 +208,12 @@ export default function ItemDetail() {
                   <Link to={`/browse?category=${item.category_slug}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surfaceHover border border-border text-xs font-medium hover:border-primary/30 hover:text-primary transition-colors">
                     <Tag className="w-3 h-3" />
                     {item.category_name}
+                  </Link>
+                )}
+                {item.folder_name && (
+                  <Link to={`/browse?folder=${item.folder_slug}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surfaceHover border border-border text-xs font-medium hover:border-primary/30 hover:text-primary transition-colors">
+                    <Folder className="w-3 h-3" style={item.folder_color ? { color: item.folder_color } : undefined} />
+                    {item.folder_name}
                   </Link>
                 )}
                 {item.version && <span className="px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-xs font-medium text-primary">v{item.version}</span>}
@@ -357,7 +361,14 @@ export default function ItemDetail() {
           {item.long_description && (
             <div className="glass rounded-2xl border border-white/5 p-6">
               <h2 className="font-semibold text-textPrimary mb-3">About</h2>
-              <p className="text-sm text-textSecondary leading-relaxed whitespace-pre-wrap">{item.long_description}</p>
+              {/* Admin-authored markdown, rendered as React elements (no raw HTML). */}
+              <Markdown>{item.long_description}</Markdown>
+            </div>
+          )}
+          {item.changelog && (
+            <div className="glass rounded-2xl border border-white/5 p-6">
+              <h2 className="font-semibold text-textPrimary mb-3">Changelog</h2>
+              <Markdown>{item.changelog}</Markdown>
             </div>
           )}
           <div className="glass rounded-2xl border border-white/5 p-6">
@@ -371,6 +382,7 @@ export default function ItemDetail() {
               <DetailRow icon={Calendar} label="Release Date" value={formatDate(item.release_date)} />
               <DetailRow icon={Clock} label="Added" value={formatDate(item.created_at)} />
               <DetailRow icon={Tag} label="Category" value={item.category_name} />
+              {item.folder_name && <DetailRow icon={Folder} label="Folder" value={item.folder_name} />}
             </div>
             {item.sha256 && (
               <div className="mt-6 pt-6 border-t border-white/5">

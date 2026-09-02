@@ -14,7 +14,9 @@ export async function monitoringRoutes(fastify) {
       db.prepare('SELECT 1').get();
     } catch (e) {
       dbStatus = 'error';
-      dbError = e.message;
+      // Public endpoint: report the failure, not the file path in the message.
+      request.log.error({ err: e }, 'Health check: database unreachable');
+      dbError = 'Database unreachable';
     }
 
     return {

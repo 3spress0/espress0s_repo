@@ -3,12 +3,17 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import cookie from '@fastify/cookie';
-import { config } from './config.js';
+import { config, assertProductionSecrets } from './config.js';
+import crypto from 'crypto';
+import fsSync from 'fs';
+import pathSync from 'path';
+import { fileURLToPath } from 'url';
 import { getDb } from './db/index.js';
 
 // Routes
 import { itemsRoutes } from './routes/items.js';
 import { categoriesRoutes } from './routes/categories.js';
+import { foldersRoutes } from './routes/folders.js';
 import { searchRoutes } from './routes/search.js';
 import { statsRoutes } from './routes/stats.js';
 import { authRoutes } from './routes/auth.js';
@@ -19,8 +24,43 @@ import { monitoringRoutes } from './routes/monitoring.js';
 import { previewRoutes } from './routes/preview.js';
 import { settingsRoutes } from './routes/settings.js';
 import { uploadsRoutes } from './routes/uploads.js';
+import { linkHealthRoutes } from './routes/linkHealth.js';
+import { backupRoutes } from './routes/backup.js';
 import multipart from '@fastify/multipart';
 import { monitoringService } from './services/monitoringService.js';
+import { linkHealthService } from './services/linkHealthService.js';
+
+// Boot-time configuration audit. In production this throws; in development it
+// prints the same list so the gap is visible before deploy day.
+{
+  const problems = assertProductionSecrets();
+  if (problems.length && config.isDev) {
+    console.warn('\n[security] Development defaults in use:\n  - ' + problems.join('\n  - ') + '\n');
+  }
+}
+
+/**
+ * Hashes of the inline <script> blocks in the built index.html (the theme
+ * pre-paint that avoids a light flash). Hashing them keeps script-src free of
+ * 'unsafe-inline' while still allowing exactly those bytes.
+ */
+function inlineScriptHashes() {
+  try {
+    const dir = pathSync.dirname(fileURLToPath(import.meta.url));
+    const indexHtml = pathSync.resolve(dir, '../../frontend/dist/index.html');
+    if (!fsSync.existsSync(indexHtml)) return [];
+    const html = fsSync.readFileSync(indexHtml, 'utf8');
+    const hashes = [];
+    for (const match of html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/gi)) {
+      const body = match[1];
+      if (!body.trim()) continue;
+      hashes.push(`'sha256-${crypto.createHash('sha256').update(body, 'utf8').digest('base64')}'`);
+    }
+    return hashes;
+  } catch {
+    return [];
+  }
+}
 
 const fastify = Fastify({
   logger: {
@@ -34,16 +74,89 @@ await fastify.register(cookie, {
   secret: config.security.jwtSecret, // for signed cookies
 });
 
+// Content-Security-Policy. Cover images and mirrors legitimately point at
+// arbitrary https hosts, so img-src/media-src stay open, but scripts are
+// restricted to our own bundle (plus the hashed inline theme bootstrap), which
+// is what actually contains an XSS.
 await fastify.register(helmet, {
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    // Explicit list rather than helmet's defaults, so the policy does not
+    // change under us on a dependency bump.
+    useDefaults: false,
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      formAction: ["'self'"],
+      scriptSrc: ["'self'", ...inlineScriptHashes()],
+      scriptSrcAttr: ["'none'"],
+      // Tailwind ships a stylesheet, but React inline styles and the
+      // starfield's injected keyframes need attribute/inline styles.
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      mediaSrc: ["'self'", 'blob:', 'https:'],
+      fontSrc: ["'self'", 'data:'],
+      connectSrc: config.isDev ? ["'self'", 'http:', 'https:', 'ws:', 'wss:'] : ["'self'", 'https:'],
+      workerSrc: ["'self'", 'blob:'],
+      manifestSrc: ["'self'"],
+      // Only meaningful behind TLS; leaving it on in dev would break a
+      // locally served production build over plain http.
+      ...(config.isProd ? { upgradeInsecureRequests: [] } : {}),
+    },
+  },
   crossOriginEmbedderPolicy: false,
+  // Uploaded images are consumed by the SPA on the same origin; in dev the
+  // Vite origin differs, so keep this permissive there only.
+  crossOriginResourcePolicy: { policy: config.isDev ? 'cross-origin' : 'same-site' },
+  hsts: config.isProd ? { maxAge: 31536000, includeSubDomains: true } : false,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 });
 
 await fastify.register(cors, {
   origin: config.corsOrigin,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Access-Token', 'X-Requested-With', 'Cookie'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Access-Token', 'X-CSRF-Token', 'X-Requested-With', 'Cookie'],
+});
+
+/**
+ * CSRF protection: double-submit cookie.
+ *
+ * Session auth rides on an httpOnly cookie, which browsers attach to every
+ * request - including forged ones from other origins. SameSite=Lax already
+ * blocks cross-site POSTs, but that is a relatively new behaviour and says
+ * nothing about same-site gadgets. So for every *mutating* API call that is
+ * authenticated by cookie (and ONLY those - Bearer/header auth is not ambient
+ * and cannot be CSRFed) we require the X-CSRF-Token header to match the
+ * readable espress0_csrf cookie. A foreign page cannot read our cookies, so
+ * it cannot produce the header.
+ *
+ * Login/register are exempt: the caller provably has no session cookie yet
+ * (the guard only engages when espress0_token is present).
+ */
+const CSRF_SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const CSRF_EXEMPT_PATHS = new Set(['/api/auth/login', '/api/auth/register']);
+
+fastify.addHook('onRequest', async (request, reply) => {
+  if (CSRF_SAFE_METHODS.has(request.method)) return;
+  const pathname = (request.raw?.url || request.url || '').split('?')[0];
+  if (!pathname.startsWith('/api/')) return;
+  if (CSRF_EXEMPT_PATHS.has(pathname)) return;
+  if (!request.cookies?.espress0_token) return; // cookie-less = Bearer/anon, not CSRF-able
+  if (request.headers.authorization || request.headers['x-access-token']) return; // explicit token wins
+
+  const header = String(request.headers['x-csrf-token'] || '');
+  const cookieToken = String(request.cookies.espress0_csrf || '');
+  const valid = header.length > 0 && header.length === cookieToken.length &&
+    crypto.timingSafeEqual(Buffer.from(header), Buffer.from(cookieToken));
+  if (!valid) {
+    request.log.warn({ url: pathname }, 'CSRF validation failed');
+    return reply.code(403).send({
+      error: 'CSRF validation failed - refresh the page and try again',
+      code: 'CSRF_MISMATCH',
+    });
+  }
 });
 
 // Image uploads from the admin UI. Per-request size limit is enforced in the
@@ -87,6 +200,7 @@ fastify.get('/api/health', async () => {
 await fastify.register(async (api) => {
   await api.register(itemsRoutes);
   await api.register(categoriesRoutes);
+  await api.register(foldersRoutes);
   await api.register(searchRoutes);
   await api.register(statsRoutes);
   await api.register(authRoutes);
@@ -97,6 +211,8 @@ await fastify.register(async (api) => {
   await api.register(previewRoutes);
   await api.register(settingsRoutes);
   await api.register(uploadsRoutes);
+  await api.register(linkHealthRoutes);
+  await api.register(backupRoutes);
 }, { prefix: '/api' });
 
 // Serve the built frontend when it exists, in any environment. Deep links
@@ -144,6 +260,8 @@ fastify.setErrorHandler((error, request, reply) => {
 const start = async () => {
   try {
     await fastify.listen({ port: config.port, host: config.host });
+    // Periodic download-link checks; idle unless linkcheck_enabled is set.
+    linkHealthService.start(fastify.log);
     console.log(`
   ███████ ███████ ██████  ██████  ███████ ███████  ██████        ██████  ███████ ██████   ██████  
   ██      ██      ██   ██ ██   ██ ██      ██      ██    ██       ██   ██ ██      ██   ██ ██    ██ 

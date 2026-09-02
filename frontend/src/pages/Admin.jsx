@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Shield, Database, HardDrive, FolderTree, Users, Activity, ExternalLink, Settings } from 'lucide-react';
+import { Shield, Database, HardDrive, FolderTree, Folder, Users, Activity, ExternalLink, Settings, Archive } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 /**
@@ -10,10 +10,12 @@ import { useAuth } from '../context/AuthContext';
  */
 const NAV = [
   { to: '/admin', end: true, label: 'Overview', icon: Database },
-  { to: '/admin/items', label: 'Files', icon: HardDrive },
+  { to: '/admin/items', label: 'File pages', icon: HardDrive },
   { to: '/admin/categories', label: 'Categories', icon: FolderTree },
+  { to: '/admin/folders', label: 'Folders', icon: Folder },
   { to: '/admin/users', label: 'Users', icon: Users },
   { to: '/admin/storage', label: 'Storage', icon: ExternalLink },
+  { to: '/admin/backup', label: 'Backup', icon: Archive },
   { to: '/admin/settings', label: 'Site Settings', icon: Settings },
   { to: '/admin/monitoring', label: 'Monitoring', icon: Activity },
 ];

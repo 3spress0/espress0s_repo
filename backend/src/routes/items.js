@@ -1,9 +1,10 @@
 import { getDb } from '../db/index.js';
 import { makeSlug, formatBytes } from '../utils/slug.js';
 import { itemSchema, downloadLinkSchema } from '../utils/validation.js';
-import { authenticate, requireAdmin } from '../middleware/auth.js';
+import { authenticate, optionalAuthenticate, requireAdmin } from '../middleware/auth.js';
 import { storageManager } from '../services/storage/index.js';
 import { encryptionService, ENCRYPTED_ITEM_FIELDS } from '../services/encryptionService.js';
+import { recordItemVersion } from '../services/versionService.js';
 
 function decryptItem(item) {
   if (!item) return item;
@@ -16,6 +17,22 @@ function decryptItem(item) {
     }
   }
   return decrypted;
+}
+
+/** Only admins may see unpublished (draft) items or their mirrors. */
+function isAdmin(request) {
+  return request.user?.role === 'admin';
+}
+
+/**
+ * Outbound download URLs come from the database. Refuse to hand a
+ * `javascript:`/`data:` URL back to the browser or put one in a Location
+ * header, whatever an admin (or an imported feed) may have stored.
+ */
+function isSafeRedirectUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  if (url.startsWith('/')) return !url.startsWith('//');
+  return /^https?:\/\//i.test(url);
 }
 
 function encryptItemFields(data) {
@@ -72,21 +89,40 @@ function getAvailableLinks(itemId) {
 
 export async function itemsRoutes(fastify) {
   // GET /api/items - list with filters (public, but shows down status)
-  fastify.get('/items', async (request, reply) => {
+  fastify.get('/items', { preHandler: [optionalAuthenticate] }, async (request, reply) => {
     const {
-      q, category, file_type, platform, architecture,
+      q, category, folder, tag, license_status, file_type, platform, architecture,
       sort = 'date', order = 'desc', page = 1, limit = 20, featured, published = 1,
     } = request.query;
 
     const db = getDb();
-    const { searchService } = await import('../services/searchService.js');
+    const { searchService, MAX_QUERY_LENGTH } = await import('../services/searchService.js');
+
+    // `?published=0` used to expose every draft - decrypted download URLs
+    // included - to anonymous callers. Only admins may ask for anything other
+    // than the published set.
+    const requestedPublished = published !== undefined
+      ? (published === 'true' || published === '1' || published === 1 ? 1 : 0)
+      : 1;
+    const effectivePublished = isAdmin(request) ? requestedPublished : 1;
+
+    const toInt = (value, fallback, min, max) => {
+      const n = parseInt(value, 10);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.min(Math.max(n, min), max);
+    };
 
     const result = searchService.search({
-      q: q || '', category: category || null, file_type: file_type || null,
+      q: String(q ?? '').slice(0, MAX_QUERY_LENGTH),
+      category: category || null, folder: folder || null,
+      tag: tag ? String(tag).slice(0, 64) : null, license_status: license_status || null,
+      file_type: file_type || null,
       platform: platform || null, architecture: architecture || null,
-      sort, order, page: parseInt(page), limit: Math.min(parseInt(limit), 100),
+      sort, order,
+      page: toInt(page, 1, 1, 10000),
+      limit: toInt(limit, 20, 1, 100),
       featured: featured !== undefined ? (featured === 'true' || featured === '1' ? 1 : 0) : null,
-      published: published !== undefined ? (published === 'true' || published === '1' || published === 1 ? 1 : 0) : 1,
+      published: effectivePublished,
     });
 
     return {
@@ -114,19 +150,31 @@ export async function itemsRoutes(fastify) {
   });
 
   // GET /api/items/:slug - single item with unlimited links
-  fastify.get('/items/:slug', async (request, reply) => {
+  fastify.get('/items/:slug', { preHandler: [optionalAuthenticate] }, async (request, reply) => {
     const { slug } = request.params;
     const db = getDb();
 
     const item = db.prepare(`
-      SELECT items.*, categories.name as category_name, categories.slug as category_slug, categories.color as category_color
-      FROM items LEFT JOIN categories ON items.category_id = categories.id
+      SELECT items.*, categories.name as category_name, categories.slug as category_slug, categories.color as category_color,
+             folders.name as folder_name, folders.slug as folder_slug, folders.color as folder_color, folders.icon as folder_icon
+      FROM items
+      LEFT JOIN categories ON items.category_id = categories.id
+      LEFT JOIN folders ON items.folder_id = folders.id
       WHERE items.slug = ? OR items.id = ?
     `).get(slug, slug);
 
     if (!item) return reply.code(404).send({ error: 'Item not found' });
 
-    db.prepare('UPDATE items SET view_count = view_count + 1 WHERE id = ?').run(item.id);
+    // Drafts are invisible to everyone but admins - 404, not 403, so the
+    // endpoint does not confirm that a hidden slug exists.
+    if (!item.published && !isAdmin(request)) {
+      return reply.code(404).send({ error: 'Item not found' });
+    }
+
+    // Admin previews of a draft should not inflate public view counts.
+    if (item.published) {
+      db.prepare('UPDATE items SET view_count = view_count + 1 WHERE id = ?').run(item.id);
+    }
 
     const related = db.prepare(`
       SELECT id, name, slug, description, version, file_type, platform, architecture, icon_url, image_url
@@ -175,6 +223,14 @@ export async function itemsRoutes(fastify) {
       return reply.code(400).send({ error: `Storage provider error: ${e.message}` });
     }
 
+    // FK constraints would turn a bad id into a 500; answer 400 instead.
+    if (data.folder_id && !db.prepare('SELECT id FROM folders WHERE id = ?').get(data.folder_id)) {
+      return reply.code(400).send({ error: 'Folder not found' });
+    }
+    if (data.category_id && !db.prepare('SELECT id FROM categories WHERE id = ?').get(data.category_id)) {
+      return reply.code(400).send({ error: 'Category not found' });
+    }
+
     const now = new Date().toISOString();
     let tagsJson = null;
     if (data.tags) {
@@ -196,13 +252,13 @@ export async function itemsRoutes(fastify) {
 
     const result = db.prepare(`
       INSERT INTO items (
-        name, slug, description, long_description, category_id, version, release_date,
+        name, slug, description, long_description, category_id, folder_id, version, release_date,
         file_name, file_size, file_type, platform, architecture, sha256, md5,
         storage_provider, storage_path, download_url, external_url,
         featured, published, license_status, license_notes, tags, icon_url, image_url, screenshots,
         documentation_url, changelog, created_at, updated_at, encryption_version
       ) VALUES (
-        @name, @slug, @description, @long_description, @category_id, @version, @release_date,
+        @name, @slug, @description, @long_description, @category_id, @folder_id, @version, @release_date,
         @file_name, @file_size, @file_type, @platform, @architecture, @sha256, @md5,
         @storage_provider, @storage_path, @download_url, @external_url,
         @featured, @published, @license_status, @license_notes, @tags, @icon_url, @image_url, @screenshots,
@@ -211,7 +267,8 @@ export async function itemsRoutes(fastify) {
     `).run({
       name: data.name, slug, description: data.description,
       long_description: data.long_description || null,
-      category_id: data.category_id || null, version: data.version || null,
+      category_id: data.category_id || null, folder_id: data.folder_id || null,
+      version: data.version || null,
       release_date: data.release_date || null, file_name: data.file_name || null,
       file_size: data.file_size || null, file_type: data.file_type || null,
       platform: data.platform || null, architecture: data.architecture || null,
@@ -251,6 +308,8 @@ export async function itemsRoutes(fastify) {
       }
     }
 
+    recordItemVersion(result.lastInsertRowid, request.user?.id, 'Created');
+
     const newItemRaw = db.prepare('SELECT * FROM items WHERE id = ?').get(result.lastInsertRowid);
     const newItem = decryptItem(newItemRaw);
     const newLinks = getItemLinks(newItem.id);
@@ -268,6 +327,15 @@ export async function itemsRoutes(fastify) {
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
 
     const data = parsed.data;
+
+    // FK constraints would turn a bad id into a 500; answer 400 instead.
+    if (data.folder_id && !db.prepare('SELECT id FROM folders WHERE id = ?').get(data.folder_id)) {
+      return reply.code(400).send({ error: 'Folder not found' });
+    }
+    if (data.category_id && !db.prepare('SELECT id FROM categories WHERE id = ?').get(data.category_id)) {
+      return reply.code(400).send({ error: 'Category not found' });
+    }
+
     const updates = [];
     const params = { id };
 
@@ -313,6 +381,8 @@ export async function itemsRoutes(fastify) {
       }
     }
 
+    recordItemVersion(Number(id), request.user?.id);
+
     const updatedRaw = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
     const decrypted = decryptItem(updatedRaw);
     const links = getItemLinks(id);
@@ -328,11 +398,12 @@ export async function itemsRoutes(fastify) {
   });
 
   // GET /api/items/:id/links
-  fastify.get('/items/:id/links', async (request, reply) => {
+  fastify.get('/items/:id/links', { preHandler: [optionalAuthenticate] }, async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
-    const item = db.prepare('SELECT id FROM items WHERE id = ? OR slug = ?').get(id, id);
+    const item = db.prepare('SELECT id, published FROM items WHERE id = ? OR slug = ?').get(id, id);
     if (!item) return reply.code(404).send({ error: 'Item not found' });
+    if (!item.published && !isAdmin(request)) return reply.code(404).send({ error: 'Item not found' });
     const links = getItemLinks(item.id);
     return { links, count: links.length, available: links.filter(l => !l.is_down).length, down: links.filter(l => l.is_down).length };
   });
@@ -424,8 +495,6 @@ export async function itemsRoutes(fastify) {
     const item = decryptItem(itemRaw);
     if (!item.published) return reply.code(403).send({ error: 'Item not published' });
 
-    db.prepare('UPDATE items SET download_count = download_count + 1 WHERE id = ?').run(item.id);
-
     try {
       let downloadUrl = null;
       let usedLink = null;
@@ -462,6 +531,13 @@ export async function itemsRoutes(fastify) {
 
       if (!downloadUrl) return reply.code(404).send({ error: 'No download URL configured' });
       if (downloadUrl.startsWith('/api/files/')) return reply.code(501).send({ error: 'Local file serving not configured' });
+      if (!isSafeRedirectUrl(downloadUrl)) {
+        request.log.error({ itemId: item.id }, 'Refusing to serve unsafe download URL');
+        return reply.code(502).send({ error: 'Stored download URL is not a valid http(s) link' });
+      }
+
+      // Counted only once we actually have something to hand out.
+      db.prepare('UPDATE items SET download_count = download_count + 1 WHERE id = ?').run(item.id);
 
       // If client wants JSON (frontend fetch), return JSON with URL, else redirect
       const wantsJson = request.headers.accept && request.headers.accept.includes('application/json');
@@ -479,7 +555,8 @@ export async function itemsRoutes(fastify) {
 
       return reply.redirect(downloadUrl, 302);
     } catch (e) {
-      return reply.code(500).send({ error: `Failed to get download URL: ${e.message}` });
+      request.log.error({ err: e }, 'Failed to resolve download URL');
+      return reply.code(502).send({ error: 'Failed to get download URL from the storage provider' });
     }
   });
 
@@ -506,6 +583,10 @@ export async function itemsRoutes(fastify) {
     try {
       const downloadUrl = await storageManager.getDownloadUrl(link.storage_provider, link.storage_path, link);
       if (downloadUrl.startsWith('/api/files/')) return reply.code(501).send({ error: 'Local file serving not configured' });
+      if (!isSafeRedirectUrl(downloadUrl)) {
+        request.log.error({ itemId: item.id, linkId: link.id }, 'Refusing to serve unsafe download URL');
+        return reply.code(502).send({ error: 'Stored download URL is not a valid http(s) link' });
+      }
 
       const wantsJson = request.headers.accept && request.headers.accept.includes('application/json');
       const isFetch = request.headers['x-requested-with'] === 'fetch' || request.query.json === '1' || wantsJson;
@@ -521,7 +602,8 @@ export async function itemsRoutes(fastify) {
 
       return reply.redirect(downloadUrl, 302);
     } catch (e) {
-      return reply.code(500).send({ error: `Failed to get download URL: ${e.message}` });
+      request.log.error({ err: e }, 'Failed to resolve download URL');
+      return reply.code(502).send({ error: 'Failed to get download URL from the storage provider' });
     }
   });
 }

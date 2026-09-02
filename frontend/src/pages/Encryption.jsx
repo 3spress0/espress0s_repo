@@ -10,13 +10,8 @@ export default function Encryption() {
 
   useEffect(() => {
     authApi.securityInfo().then(setSecurityInfo).catch(() => {});
-    // Try to get encryption status (requires auth)
-    fetch('/api/auth/encryption-status', {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('espress0_token')}` }
-    })
-      .then(r => r.json())
-      .then(setEncryptionStatus)
-      .catch(() => {});
+    // Encryption status requires a session; the cookie rides along automatically.
+    authApi.encryptionStatus().then(setEncryptionStatus).catch(() => {});
   }, []);
 
   const testEncryption = async () => {
@@ -62,7 +57,7 @@ export default function Encryption() {
                   </p>
                   <div className="mt-3 p-3 rounded-xl bg-surface border border-border font-mono text-xs">
                     <div className="text-textMuted">Plain: MyPassword123!</div>
-                    <div className="text-textMuted">Peppered: HMAC-SHA256(pepper, password) → 64 hex chars</div>
+                    <div className="text-textMuted">Peppered: HMAC-SHA256(pepper, password) {'->'} 64 hex chars</div>
                     <div className="text-green-400">Stored: pepper_v1:$2b$12$...bcrypt...</div>
                   </div>
                 </div>
@@ -99,11 +94,11 @@ export default function Encryption() {
                   <h3 className="font-semibold text-textPrimary">Searchable Encryption: HMAC for Email Lookup</h3>
                   <p className="text-sm text-textSecondary mt-1 leading-relaxed">
                     Email needs to be searchable for login, but we can't use random IV (would break lookup). Solution: store <strong>deterministic HMAC-SHA256 hash</strong> as <code className="text-xs bg-surface px-1 py-0.5 rounded">email_hash</code> for lookup, plus encrypted email for display.
-                    Login flow: hash input email with same key → lookup via <code className="text-xs">email_hash</code> → decrypt email → verify.
+                    Login flow: hash the input email with the same key, look up via <code className="text-xs">email_hash</code>, decrypt the email, verify.
                   </p>
                   <div className="mt-3 p-3 rounded-xl bg-surface border border-border font-mono text-xs space-y-1">
                     <div><span className="text-textMuted">Input:</span> <span className="text-textPrimary">user@example.com</span></div>
-                    <div><span className="text-textMuted">email_hash:</span> <span className="text-blue-400">HMAC-SHA256(key, lower(email)) → 64 hex (deterministic)</span></div>
+                    <div><span className="text-textMuted">email_hash:</span> <span className="text-blue-400">HMAC-SHA256(key, lower(email)) {'->'} 64 hex (deterministic)</span></div>
                     <div><span className="text-textMuted">email:</span> <span className="text-green-400">enc_v1:iv:tag:AES-GCM(email) (random IV)</span></div>
                   </div>
                 </div>
