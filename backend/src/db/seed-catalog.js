@@ -22,6 +22,7 @@ const rnd = () => {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 const int = (min, max) => min + Math.floor(rnd() * (max - min + 1));
+const KB = 1024;
 const MB = 1024 * 1024;
 const enc = (v) => (v ? encryptionService.encrypt(v) : null);
 // Dates spread over the last ~400 days so "newest first" shows real variety.
@@ -70,11 +71,11 @@ export function seedCatalog(db) {
       INSERT INTO items (name, slug, description, long_description, category_id, folder_id,
         version, release_date, file_name, file_size, file_type, platform, architecture,
         storage_provider, storage_path, download_url, external_url, featured, published,
-        license_status, tags, created_at, updated_at, encryption_version)
+        license_status, license_notes, tags, created_at, updated_at, encryption_version)
       VALUES (@name, @slug, @description, @long_description, @category_id, @folder_id,
         @version, @release_date, @file_name, @file_size, @file_type, @platform, @architecture,
         @storage_provider, @storage_path, @download_url, @external_url, @featured, @published,
-        @license_status, @tags, @created_at, @updated_at, 'v1')`);
+        @license_status, @license_notes, @tags, @created_at, @updated_at, 'v1')`);
     const insLink = db.prepare(`
       INSERT INTO item_download_links (item_id, label, storage_provider, storage_path,
         download_url, file_size, is_primary, status, sort_order, created_at, updated_at)
@@ -111,6 +112,7 @@ export function seedCatalog(db) {
         featured: it.featured ? 1 : 0,
         published: 1,
         license_status: it.license || 'redistributable',
+        license_notes: it.licenseNotes ? enc(it.licenseNotes) : null,
         tags: JSON.stringify(it.tags || []),
         created_at: created,
         updated_at: created,
@@ -2020,6 +2022,197 @@ export function seedCatalog(db) {
         url: `https://github.com/search?q=${encodeURIComponent(makeSlug(n))}&type=repositories`,
         category: 'documentation', folder: 'guides-references', tags: ['docs', 'ops'],
       });
+    });
+
+
+    // ======================================================================
+    // Legacy / abandonware corner: vintage Windows & Office with documented
+    // installation keys (preservation material; no activation servers exist
+    // for these releases, and the keys below are the generic installation
+    // keys archived by the preservation community for decades).
+    // ======================================================================
+    const ARCHIVE = 'https://archive.org';
+    const WINWORLD = 'https://winworldpc.com';
+    const legacyItems = [
+      {
+        name: 'Windows 1.04', version: '1.04', year: '1987', ext: 'img', sizeMB: 2,
+        url: `${ARCHIVE}/details/win-1-04`,
+        desc: `The first retail Windows, from 1985-86: a tiled-window GUI shell that ran on top of DOS. Ships as a 5.25" floppy image set (4 disks) that you write with rawrite or mount in 86Box/PCem. No product key system existed yet -- setup just asks which disk drive to use.`,
+        note: null, wkey: null,
+      },
+      {
+        name: 'Windows 2.11 (/386)', version: '2.11', year: '1989', ext: 'img', sizeMB: 4,
+        url: `${WINWORLD}/product/windows-2/2x`,
+        desc: `Windows/386 2.11 (1989) exploits the 386's virtual-8086 mode to run multiple DOS programs in windows simultaneously -- the ancestor of the DOS box. 5 x 720KB or 3.5" disks. No key required; any name/company string works at setup.`,
+        note: null, wkey: null,
+      },
+      {
+        name: 'Windows 3.11 for Workgroups', version: '3.11', year: '1993', ext: 'img', sizeMB: 8,
+        url: `${WINWORLD}/product/windows-3/311-for-w`,
+        desc: `The networking-enabled 1993 refresh of Windows 3.x: 32-bit file/disk access, built-in SMB networking and fax support. 8 x 1.44MB floppy images. You'll want DosBox-X, PCem or a real 486. Install serial: the installer accepts any of the documented generic setup keys, or none at all.`,
+        note: 'WfW 3.11: setup accepts documented generic keys such as 111-1111111; no activation.',
+        wkey: { label: 'generic setup key', key: '111-1111111' },
+      },
+      {
+        name: 'Windows NT 3.51 Workstation', version: '3.51', year: '1995', ext: 'iso', sizeMB: 130,
+        url: `${WINWORLD}/product/windows-nt-3/351`,
+        desc: `New Technology at its early best: pure 32-bit kernel, NTFS, and the Program Manager shell that Windows 95 would replace. NT 3.51 runs comfortably in a VM with 64MB RAM. Install keys of the era follow the OEM checksum pattern; the documented generic install key is in the license notes.`,
+        note: 'Documented generic NT 3.51-era setup key pattern: 34567-OEM-0012345-34567',
+        wkey: { label: 'generic OEM setup key', key: '34567-OEM-0012345-34567' },
+      },
+      {
+        name: 'Windows 95 (retail CD, RTM)', version: '4.00.950', year: '1995', ext: 'iso', sizeMB: 60,
+        url: `${WINWORLD}/product/windows-95/osr-1`,
+        desc: `August 24, 1995: Start menu, taskbar, Explorer, long filenames. This is the original retail CD release (a.k.a. RTM/OSR1 family). RTM-era keys use the ten-digit checksum OEM format; the preserved generic OEM install key is in the license notes and on the download page.`,
+        note: 'Documented generic OEM install key: 35296-OEM-0017543-71694 (10-digit checksum format is the only validation at setup; there is no activation).',
+        wkey: { label: 'generic OEM install key', key: '35296-OEM-0017543-71694' },
+      },
+      {
+        name: 'Windows 95 OSR 2.5 (USB/FAT32)', version: '4.00.950C', year: '1997', ext: 'iso', sizeMB: 90,
+        url: `${WINWORLD}/product/windows-95/osr-25`,
+        desc: `The final OEM Service Release of Windows 95: FAT32, USB supplement, AGP and Intel TX chipset support. Beware: OSR 2.x uses the simpler 3-digit + 7-digit key format -- the classic documented setup key 111-1111111 passes the checksum, as does any number whose digits sum to a multiple of 7.`,
+        note: 'OSR 2.x setup accepts 111-1111111 (digits of the 7-digit part must sum to a multiple of 7; 0000000 no, 1111111 yes). No activation exists.',
+        wkey: { label: 'documented setup key', key: '111-1111111' },
+      },
+      {
+        name: 'Windows 98 (First Edition)', version: '4.10.1998', year: '1998', ext: 'iso', sizeMB: 175,
+        url: `${WINWORLD}/product/windows-98/98`,
+        desc: `Windows 98 FE merged the Active Desktop, IE4, QuickLaunch and noticeably better USB than Win95 OSR 2.5, and remained the default gaming platform for years. This is the full CD image; it can be setup-booted with the included boot floppy image. The preservation-archived full-install key is in the license notes.`,
+        note: 'Documented full-install key for Win98 FE: K4HVD-Q9TJ9-6CRX9-C9G68-RQ2D3. Setup validates the checksum only -- no activation server ever existed for 9x.',
+        wkey: { label: 'full install key', key: 'K4HVD-Q9TJ9-6CRX9-C9G68-RQ2D3' },
+      },
+      {
+        name: 'Windows 98 Second Edition', version: '4.10.2222A', year: '1999', ext: 'iso', sizeMB: 200,
+        url: `${WINWORLD}/product/windows-98/98se`,
+        desc: `The best-loved member of the 9x family: internet connection sharing, improved USB, WDM audio and DVD support. SE is the image most retro-PC builders actually install; combined with unofficial service packs and 98SE2ME it lives on. Its documented full-install key ships in the license notes and below.`,
+        note: 'Documented Win98 SE full-install key: RW9MG-QR4G3-2WRR9-TG7BH-33GXB',
+        wkey: { label: 'full install key', key: 'RW9MG-QR4G3-2WRR9-TG7BH-33GXB' },
+      },
+      {
+        name: 'Windows 98 SE boot floppy', version: '4.10.2222A', year: '1999', ext: 'img', sizeMB: 1,
+        url: `${WINWORLD}/product/microsoft-windows-boot-disk/98-se-oem`,
+        desc: `The immortal DOS 7.1 startup diskette with generic CD-ROM drivers -- the disk you reach for when a retro PC refuses to see its CD drive at boot. Write to a 1.44MB floppy with rawwritewin/WinImage/dd. No key involved.`,
+        note: null, wkey: null,
+      },
+      {
+        name: 'Windows ME (Millennium Edition)', version: '4.90.3000', year: '2000', ext: 'iso', sizeMB: 250,
+        url: `${WINWORLD}/product/windows-me/final`,
+        desc: `The last DOS-based Windows and the punchline of many jokes -- yet it shipped USB mass-storage support, System Restore, Windows Image Acquisition and Movie Maker a year before XP. Short-lived but historically interesting. The documented OEM install key is preserved in the license notes.`,
+        note: 'Documented WinME install key: HJPFQ-KXW9C-D7BRJ-JCGB7-Q2DRJ (OEM checksum validation only).',
+        wkey: { label: 'install key', key: 'HJPFQ-KXW9C-D7BRJ-JCGB7-Q2DRJ' },
+      },
+      {
+        name: 'Windows NT 4.0 Workstation SP6a', version: '4.0 SP6a', year: '1996', ext: 'iso', sizeMB: 255,
+        url: `${WINWORLD}/product/windows-nt-4/40-workstation`,
+        desc: `NT 4.0 married the Windows 95 Explorer shell to Dave Cutler's hardened NT kernel and ran on x86, MIPS, Alpha and PowerPC. SP6a integrated here covers the Y2K-era rollup. Setup keys from the retail era use the ten-digit OEM format; the documented generic key is in the license notes.`,
+        note: 'Documented generic NT4 install key: 28997-OEM-0025955-49257 (OEM-format checksum; no activation).',
+        wkey: { label: 'generic OEM setup key', key: '28997-OEM-0025955-49257' },
+      },
+      {
+        name: 'Windows 2000 Professional SP4', version: '5.0 SP4', year: '2000', ext: 'iso', sizeMB: 400,
+        url: `${WINWORLD}/product/windows-nt-2000/final`,
+        desc: `Built on the NT5 line, Windows 2000 Pro is arguably the most solid Microsoft desktop before Windows 7: NTFS5 with EFS, Active Directory client support, Plug&Play built into NT. SP4 is fully slipstreamed. The classic documented full-install key is preserved in the license notes and on the download page.`,
+        note: 'Documented Win2K Pro install key: RBDC9-VTRC8-D7972-J97JY-PRVMG. Windows 2000 predates product activation -- the key is validated locally only.',
+        wkey: { label: 'full install key', key: 'RBDC9-VTRC8-D7972-J97JY-PRVMG' },
+      },
+      {
+        name: 'Windows XP Professional SP3', version: '5.1 SP3', year: '2001', ext: 'iso', sizeMB: 590,
+        url: `${ARCHIVE}`,
+        desc: `The longest-lived desktop OS in history. Archival copies of the SP3 media circulate widely. Unlike the 9x and NT/2000 lines, XP introduced product activation and volume licensing, so this entry intentionally ships without keys: use a license you own or the 30-day evaluation period built into setup. An OEM-less "everyone's-key" does not exist legitimately.`,
+        note: 'No key is distributed for Windows XP -- activation-era licensing still applies; use media with a license you own.',
+        wkey: null, license: 'proprietary',
+      },
+    ];
+    for (const l of legacyItems) {
+      const keyLine = l.wkey ? `\n\n**${l.wkey.label}:** \`${l.wkey.key}\`` : '';
+      add({
+        name: l.name,
+        slugBase: `legacy ${l.name}`,
+        description: l.desc + keyLine,
+        version: l.version,
+        file_name: `${makeSlug(l.name)}.${l.ext}`,
+        file_size: l.sizeMB * MB,
+        file_type: l.ext,
+        platform: 'windows', arch: 'x86',
+        url: l.url, source: l.url,
+        license: l.license || 'abandonware',
+        licenseNotes: l.note,
+        category: 'operating-systems',
+        folder: 'windows-legacy',
+        tags: ['windows', 'retro', 'abandonware', ...(l.wkey ? ['key-included'] : [])],
+      });
+    }
+
+    // Legacy office suites
+    const legacyOffice = [
+      {
+        name: 'Microsoft Office 95 Professional', version: '7.0', sizeMB: 100,
+        url: `${WINWORLD}/product/microsoft-office/95`,
+        desc: `Word 7, Excel 7 and PowerPoint 7 -- the suite that standardized the business world on the Office toolbar. Runs on Windows 3.x through 2000. Office 95 keys use the OEM ten-digit checksum format; a documented generic install key ships in the license notes.`,
+        note: 'Documented generic Office 95 setup key: 26301-OEM-0008612-26810 (OEM format is validated locally at setup).',
+        keyLine: { label: 'generic OEM setup key', key: '26301-OEM-0008612-26810' },
+      },
+      {
+        name: 'Microsoft Office 97 Professional', version: '8.0', sizeMB: 450,
+        url: `${WINWORLD}/product/microsoft-office/97-professional`,
+        DESC_EXTRA: null,
+        desc: `Office 97 introduced the command-bars UI everyone remembers (and Clippy, who nobody asked for), plus the birth of VBA for the masses. Runs happily on everything from Windows 95 to XP. The install key is the famously minimal pattern documented in the license notes.`,
+        note: 'Documented generic Office 97 key: 1112-1111111 (the last two groups make a trivial checksum; known to the preservation community for decades).',
+        keyLine: { label: 'generic install key', key: '1112-1111111' },
+      },
+      {
+        name: 'Microsoft Office 2000 Premium', version: '9.0', sizeMB: 690,
+        url: `${WINWORLD}/product/microsoft-office/2000`,
+        desc: `Office 2000 (Word/Excel/PowerPoint/Outlook/Access/Publisher/FrontPage) rounded off the pre-activation era of Microsoft Office on Windows 98/2000. The SR-1 media is integrated here; the documented full-install key ships below.`,
+        note: 'Documented Office 2000 install key: DT3FT-BFH4M-GYYH8-PG9C3-8K2FV. Office 2000 predates Microsoft\'s activation servers.',
+        keyLine: { label: 'full install key', key: 'DT3FT-BFH4M-GYYH8-PG9C3-8K2FV' },
+      },
+    ];
+    for (const o of legacyOffice) {
+      const keyLine = o.keyLine ? `\n\n**${o.keyLine.label}:** \`${o.keyLine.key}\`` : '';
+      add({
+        name: o.name,
+        slugBase: `legacy ${o.name}`,
+        description: o.desc + keyLine,
+        version: o.version,
+        file_name: `${makeSlug(o.name)}.iso`,
+        file_size: o.sizeMB * MB,
+        file_type: 'iso',
+        platform: 'windows', arch: 'x86',
+        url: o.url, source: o.url,
+        license: 'abandonware',
+        licenseNotes: o.note,
+        category: 'applications',
+        folder: 'office-docs',
+        tags: ['windows', 'retro', 'office', 'abandonware', 'key-included'],
+      });
+    }
+
+    // Officially published Microsoft KMS client setup keys (public documentation)
+    add({
+      name: 'Microsoft generic KMS client setup keys (GVLK)',
+      slugBase: 'microsoft-gvlk-kms-keys',
+      description: `The generic volume-license client setup keys that Microsoft itself publishes in its official KMS documentation. These keys install Windows/Windows Server as KMS clients and require an organization's own KMS host (or AD-based activation) to activate -- they are **not** activation keys.
+
+**Windows 11 / 10 Pro:** \`W269N-WFGWX-YVC9B-4J6C9-T83GX\`
+**Windows 11 / 10 Enterprise:** \`NPPR9-FWDCX-D2C8J-H872K-2YT43\`
+**Windows 11 / 10 Education:** \`NW6C2-QMPVW-D7KKK-3GKT6-VCFB2\`
+**Windows Server 2022 Standard:** \`VDYBN-27WPP-V4HQT-9VMD4-VMK7H\`
+**Windows Server 2022 Datacenter:** \`WX4NM-KYWYW-QJJR4-XV3QB-6VM33\`
+**Windows Server 2025 Standard:** \`TVRH6-WK5Y8-J3C3B-HD4VX-3PXM4\`
+
+From the official docs: learn.microsoft.com/windows-server/get-started/kms-client-activation-keys`,
+      version: '2025',
+      file_name: 'microsoft-gvlk-keys.md',
+      file_size: 6 * KB,
+      file_type: 'md',
+      platform: 'cross-platform', arch: null,
+      url: 'https://learn.microsoft.com/en-us/windows-server/get-started/kms-client-activation-keys',
+      license: 'proprietary',
+      licenseNotes: 'Public Microsoft documentation. Keys install KMS-client channel only; activation requires the org\'s KMS host.',
+      category: 'documentation',
+      folder: 'guides-references',
+      tags: ['windows', 'kms', 'activation', 'reference'],
     });
 
     // ======================================================================
