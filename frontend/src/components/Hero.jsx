@@ -18,10 +18,12 @@ export default function Hero({ stats }) {
     if (query.trim()) navigate(`/browse?q=${encodeURIComponent(query.trim())}`);
   };
 
+  // Sky fills the whole viewport below the 4rem sticky navbar instead of only
+  // the hero's content height — matches the /ask and /account wrappers.
   return (
-    <div className="relative overflow-hidden">
+    <div className="relative overflow-hidden min-h-[calc(100vh-4rem)] flex items-center">
       <StarryBackground />
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20">
+      <div className="relative w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20">
         <div className="text-center max-w-3xl mx-auto">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-4 animate-slide-up">
             {titleLead && <><span className="text-textPrimary">{titleLead}</span>{' '}</>}
