@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { safeFetchBuffer, UnsafeUrlError } from '../lib/safeFetch.js';
 
 const PREVIEW_MAX_SIZE = 50 * 1024 * 1024; // 50MB max for preview
-const ALLOWED_PREVIEW_TYPES = ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'mp4', 'webm', 'mp3', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf'];
+const ALLOWED_PREVIEW_TYPES = ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'mp4', 'webm', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf'];
 // Anchored to this file, not to process.cwd(): a service started from / (systemd)
 // used to silently write its cache into the filesystem root.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

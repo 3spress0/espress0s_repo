@@ -506,14 +506,12 @@ export async function itemsRoutes(fastify) {
         if (link.is_down || link.status === 'down') {
           return reply.code(503).send({ error: 'This mirror is marked as down', reason: link.down_reason || 'Marked as down by admin', link });
         }
-        db.prepare('UPDATE item_download_links SET download_count = download_count + 1 WHERE id = ?').run(link.id);
         downloadUrl = await storageManager.getDownloadUrl(link.storage_provider, link.storage_path, link);
         usedLink = link;
       } else {
         const availableLinks = getAvailableLinks(item.id);
         if (availableLinks.length > 0) {
           const primary = availableLinks.find(l => l.is_primary) || availableLinks[0];
-          db.prepare('UPDATE item_download_links SET download_count = download_count + 1 WHERE id = ?').run(primary.id);
           downloadUrl = await storageManager.getDownloadUrl(primary.storage_provider, primary.storage_path, primary);
           usedLink = primary;
         } else {
@@ -536,8 +534,13 @@ export async function itemsRoutes(fastify) {
         return reply.code(502).send({ error: 'Stored download URL is not a valid http(s) link' });
       }
 
-      // Counted only once we actually have something to hand out.
+      // Counted only once we actually have something to hand out - a 404/501/502
+      // above means the visitor left empty-handed, so the mirror's counter moves
+      // here too instead of before the URL is resolved.
       db.prepare('UPDATE items SET download_count = download_count + 1 WHERE id = ?').run(item.id);
+      if (usedLink) {
+        db.prepare('UPDATE item_download_links SET download_count = download_count + 1 WHERE id = ?').run(usedLink.id);
+      }
 
       // If client wants JSON (frontend fetch), return JSON with URL, else redirect
       const wantsJson = request.headers.accept && request.headers.accept.includes('application/json');
@@ -577,16 +580,19 @@ export async function itemsRoutes(fastify) {
       return reply.code(503).send({ error: 'This mirror is marked as down', reason: link.down_reason || 'Marked as down', link });
     }
 
-    db.prepare('UPDATE items SET download_count = download_count + 1 WHERE id = ?').run(item.id);
-    db.prepare('UPDATE item_download_links SET download_count = download_count + 1 WHERE id = ?').run(link.id);
-
     try {
       const downloadUrl = await storageManager.getDownloadUrl(link.storage_provider, link.storage_path, link);
+      if (!downloadUrl) return reply.code(404).send({ error: 'No download URL configured' });
       if (downloadUrl.startsWith('/api/files/')) return reply.code(501).send({ error: 'Local file serving not configured' });
       if (!isSafeRedirectUrl(downloadUrl)) {
         request.log.error({ itemId: item.id, linkId: link.id }, 'Refusing to serve unsafe download URL');
         return reply.code(502).send({ error: 'Stored download URL is not a valid http(s) link' });
       }
+
+      // Same rule as GET /download/:id: only count a download that was actually
+      // handed out, so a broken mirror cannot inflate the popularity counters.
+      db.prepare('UPDATE items SET download_count = download_count + 1 WHERE id = ?').run(item.id);
+      db.prepare('UPDATE item_download_links SET download_count = download_count + 1 WHERE id = ?').run(link.id);
 
       const wantsJson = request.headers.accept && request.headers.accept.includes('application/json');
       const isFetch = request.headers['x-requested-with'] === 'fetch' || request.query.json === '1' || wantsJson;

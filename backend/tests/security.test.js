@@ -155,6 +155,26 @@ describe('Security - espress0 repo', () => {
   });
 
   describe('Search Security', () => {
+    // These assertions only mean something when the items table has rows to
+    // leak. On a freshly migrated (unseeded) database `total < totalItems` is
+    // `0 < 0`, so the SQLi test failed on an empty database for the wrong
+    // reason. Drop in one canary row when there is nothing else to search.
+    let canaryId = null;
+
+    before(() => {
+      const d = getDb();
+      if (d.prepare('SELECT COUNT(*) c FROM items').get().c === 0) {
+        canaryId = d.prepare(`
+          INSERT INTO items (name, slug, description, published)
+          VALUES ('Search canary', 'search-canary', 'Fixture row for the search security tests', 1)
+        `).run().lastInsertRowid;
+      }
+    });
+
+    after(() => {
+      if (canaryId) getDb().prepare('DELETE FROM items WHERE id = ?').run(canaryId);
+    });
+
     it('should handle XSS payload without execution', async () => {
       const { searchService } = await import('../src/services/searchService.js');
       const result = searchService.search({ q: "<script>alert('XSS')</script>", published: 1, limit: 5 });

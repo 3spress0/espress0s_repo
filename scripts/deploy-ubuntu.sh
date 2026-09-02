@@ -130,12 +130,10 @@ fi
 
 printf '%s\n' "$B"
 cat <<'BANNER'
-  ███████ ███████ ██████  ██████  ███████ ███████  ██████
-  ██      ██      ██   ██ ██   ██ ██      ██      ██    ██
-  █████   ███████ ██████  ██████  █████   ███████ ██    ██
-  ██           ██ ██      ██           ██      ██ ██    ██
-  ███████ ███████ ██      ██      ███████ ███████  ██████
-                 Ubuntu deployment
+  ░█▀▀░█▀▀░█▀█░█▀▄░█▀▀░█▀▀░█▀▀░▄▀▄░▀░█▀▀░░░█▀▄░█▀▀░█▀█░█▀█
+  ░█▀▀░▀▀█░█▀▀░█▀▄░█▀▀░▀▀█░▀▀█░█/█░░░▀▀█░░░█▀▄░█▀▀░█▀▀░█░█
+  ░▀▀▀░▀▀▀░▀░░░▀░▀░▀▀▀░▀▀▀░▀▀▀░░▀░░░░▀▀▀░░░▀░▀░▀▀▀░▀░░░▀▀▀
+                    Ubuntu deployment
 BANNER
 printf '%s\n' "$R"
 ok "Project:  $ROOT_DIR"
@@ -156,6 +154,15 @@ else
   command -v sudo >/dev/null 2>&1 || die "sudo is required for non-root deploys."
   SUDO="sudo"
 fi
+
+# $SUDO is either "sudo" or "" (already root), and that empty case bites twice:
+#   - `$SUDO VAR=value cmd` is NOT an environment assignment. Bash decides what
+#     is an assignment before it expands $SUDO, so with SUDO="" the word
+#     "VAR=value" becomes the command: "DEBIAN_FRONTEND=noninteractive: command
+#     not found". Pass assignments through `env` instead.
+#   - `$SUDO -E bash -` fails the same way ("-E: command not found"), so
+#     anything piped into a root shell goes through this helper.
+root_bash() { if [ -n "$SUDO" ]; then $SUDO -E bash -; else bash -; fi; }
 
 for f in backend/package.json frontend/package.json .env.example systemd/${APP_NAME}.service; do
   [ -e "$f" ] || die "Missing $f - run this script from the repository root."
@@ -423,7 +430,7 @@ fi
 step "Installing system packages"
 $SUDO apt-get update -qq
 PKGS="ca-certificates curl gnupg git nginx"
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $PKGS > /dev/null
+$SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $PKGS > /dev/null
 ok "nginx and build prerequisites"
 
 # --- 2. Node 20 --------------------------------------------------------------
@@ -434,8 +441,8 @@ if command -v node >/dev/null 2>&1; then
   if [ "$MAJOR" -ge 20 ]; then NEED_NODE=0; ok "Node $(node -v) present"; else warn "Node $(node -v) too old"; fi
 fi
 if [ "$NEED_NODE" -eq 1 ]; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO -E bash - > /dev/null
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs > /dev/null
+  curl -fsSL https://deb.nodesource.com/setup_20.x | root_bash > /dev/null
+  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs > /dev/null
   ok "Installed Node $(node -v)"
 fi
 MAJOR="$(node -v | sed 's/^v\([0-9]*\).*/\1/')"
@@ -660,7 +667,7 @@ NGINX
 
   if [ "$WANT_HTTPS" -eq 1 ]; then
     step "Requesting a TLS certificate"
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq certbot python3-certbot-nginx > /dev/null
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq certbot python3-certbot-nginx > /dev/null
     if $SUDO certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
          --redirect --keep-until-expiring -m "admin@${DOMAIN}" 2>/dev/null; then
       ok "HTTPS enabled for https://${DOMAIN}"
