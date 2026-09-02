@@ -81,8 +81,14 @@ the origin, and the session token lives in `localStorage`.
 
 `secure: false` was hardcoded with a `// set true in prod` comment, so the
 session cookie travelled in clear text on any plain-HTTP hop. It now follows
-`config.security.cookieSecure` (on by default when `NODE_ENV=production`,
-overridable with `COOKIE_SECURE`).
+`config.security.cookieSecure` (on by default when `NODE_ENV=production`).
+Better: the flag is **adaptive** — a login that itself arrives over plain
+`http://` from a non-localhost host is issued the cookie without `Secure`
+(with a one-time warning), because browsers refuse to store
+Secure-over-plain-HTTP cookies and logins would silently break
+(`/api/download` answering "Authentication required" for a signed-in admin
+was the symptom). HTTPS logins keep the flag; `COOKIE_SECURE=true|false`
+overrides the heuristic entirely.
 
 ### 6. No Content-Security-Policy — **medium**
 

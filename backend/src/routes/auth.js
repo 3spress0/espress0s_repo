@@ -7,16 +7,47 @@ import { captchaService } from '../services/captchaService.js';
 import crypto from 'crypto';
 import { z } from 'zod';
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+let warnedAboutInsecureCookie = false;
+
 /**
  * Session cookie options. `secure` follows the environment (see
  * config.security.cookieSecure) instead of being pinned to false, which used
  * to send the session token in clear text on every production request.
+ *
+ * Adaptive downgrade: browsers *refuse to store* Secure cookies that arrive
+ * over plain http:// (localhost excepted). A production server exposed
+ * directly on http would otherwise appear to log in, then answer every
+ * request — /download included — with "Authentication required". When the
+ * login itself travels over insecure HTTP to a non-local host, drop Secure
+ * for compatibility (the transport already has no secrecy either way) and
+ * warn loudly once. HTTPS deployments keep full hardening, and an explicit
+ * COOKIE_SECURE env var always wins.
  */
-function sessionCookieOptions(extra = {}) {
+function cookieIsSecureFor(request) {
+  const secure = config.security.cookieSecure;
+  if (!secure || process.env.COOKIE_SECURE !== undefined) return secure;
+  const proto = (request.protocol || 'http').toLowerCase();
+  const host = (request.hostname || '').toLowerCase();
+  if (proto === 'https' || LOCAL_HOSTS.has(host)) return true;
+  if (!warnedAboutInsecureCookie && request.log?.warn) {
+    warnedAboutInsecureCookie = true;
+    request.log.warn(
+      'Session cookies are being served WITHOUT the Secure flag because the ' +
+      'login arrived over plain http:// from a non-local host. Browsers refuse ' +
+      'to store Secure-but-plain-HTTP cookies, which silently breaks logins. ' +
+      'Deploy behind HTTPS (scripts/deploy-ubuntu.sh --domain ... --https) or ' +
+      'set COOKIE_SECURE=false to silence this.'
+    );
+  }
+  return false;
+}
+
+function sessionCookieOptions(request, extra = {}) {
   return {
     path: '/',
     httpOnly: true,
-    secure: config.security.cookieSecure,
+    secure: cookieIsSecureFor(request),
     sameSite: 'lax',
     maxAge: 7 * 24 * 60 * 60,
     ...extra,
@@ -28,9 +59,9 @@ function sessionCookieOptions(extra = {}) {
  * the SPA must read it to echo it back as X-CSRF-Token. It holds no session
  * power by itself - it only proves the page could read our cookies.
  */
-function issueCsrfCookie(reply) {
+function issueCsrfCookie(request, reply) {
   const token = crypto.randomBytes(24).toString('base64url');
-  reply.setCookie('espress0_csrf', token, sessionCookieOptions({ httpOnly: false }));
+  reply.setCookie('espress0_csrf', token, sessionCookieOptions(request, { httpOnly: false }));
   return token;
 }
 
@@ -103,9 +134,9 @@ export async function authRoutes(fastify) {
     const token = generateToken({ ...user, email: decryptedEmail });
 
     // Set cookies - actual cookies for downloads
-    reply.setCookie('espress0_token', token, sessionCookieOptions());
-    reply.setCookie('espress0_auth', '1', sessionCookieOptions({ httpOnly: false }));
-    const csrfToken = issueCsrfCookie(reply);
+    reply.setCookie('espress0_token', token, sessionCookieOptions(request));
+    reply.setCookie('espress0_auth', '1', sessionCookieOptions(request, { httpOnly: false }));
+    const csrfToken = issueCsrfCookie(request, reply);
 
     request.log.info({ userId: user.id, username: user.username }, 'User logged in with cookies');
     return { token, csrfToken, user: { id: user.id, username: user.username, email: decryptedEmail, role: user.role, avatar_url: decAvatar, bio: decBio, theme: user.theme || 'dark' } };
@@ -149,9 +180,9 @@ export async function authRoutes(fastify) {
       let decEmail = newUser.email; try { decEmail = encryptionService.decrypt(newUser.email); } catch {}
       const token = generateToken({ ...newUser, email: decEmail }, { passwordHash: hash });
 
-      reply.setCookie('espress0_token', token, sessionCookieOptions());
-      reply.setCookie('espress0_auth', '1', sessionCookieOptions({ httpOnly: false }));
-      const csrfToken = issueCsrfCookie(reply);
+      reply.setCookie('espress0_token', token, sessionCookieOptions(request));
+      reply.setCookie('espress0_auth', '1', sessionCookieOptions(request, { httpOnly: false }));
+      const csrfToken = issueCsrfCookie(request, reply);
 
       request.log.info({ userId: newUser.id, username: newUser.username, role }, 'New user registered with cookies');
       return reply.code(201).send({
@@ -306,7 +337,7 @@ export async function authRoutes(fastify) {
   fastify.get('/auth/csrf', async (request, reply) => {
     const existing = request.cookies?.espress0_csrf;
     if (existing && existing.length >= 16) return { csrfToken: existing };
-    return { csrfToken: issueCsrfCookie(reply) };
+    return { csrfToken: issueCsrfCookie(request, reply) };
   });
 
   fastify.post('/auth/logout', { preHandler: [authenticate] }, async (request, reply) => {
