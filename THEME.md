@@ -14,12 +14,12 @@ per-component conditionals.
 | Active scheme, `auto`, motion rules | `frontend/src/context/ThemeContext.jsx` |
 | Picker (navbar dropdown + gallery) | `frontend/src/components/ThemePicker.jsx` |
 | Variable defaults, glass, gradients | `frontend/src/index.css` |
-| Tailwind → variable mapping | `frontend/tailwind.config.js` |
+| Tailwind -> variable mapping | `frontend/tailwind.config.js` |
 | Themed starfield | `frontend/src/components/StarryBackground.jsx` |
 | Pre-mount flash guard | `frontend/index.html` |
 
-**Precedence:** the visitor's choice (localStorage) → the admin's site default
-(`theme_default` / `theme_light_default`) → built-in Midnight.
+**Precedence:** the visitor's choice (localStorage) -> the admin's site default
+(`theme_default` / `theme_light_default`) -> built-in Midnight.
 `auto` is not a palette, it is a rule: follow the OS light/dark preference and
 use the admin's dark or light default accordingly.
 
@@ -49,18 +49,18 @@ That is the whole job. The navbar picker, the account gallery and the admin
 default-scheme dropdowns are generated from the registry.
 
 Keep `primary` dark/saturated enough for white text — gradient buttons render
-white labels on `primary → secondary`.
+white labels on `primary -> secondary`.
 
 ## Schemes
 
 | id | Name | Mode | Character |
 | --- | --- | --- | --- |
-| `midnight` | Midnight | dark | House style: violet → blue on near-black (default) |
+| `midnight` | Midnight | dark | House style: violet -> blue on near-black (default) |
 | `starrynight` | Starry Night | dark | Deep navy sky, cream starlight |
 | `galaxy` | Galaxy | dark | Magenta nebula over deep space |
-| `cotton-candy` | Cotton Candy | dark | Pink → blue dusk |
+| `cotton-candy` | Cotton Candy | dark | Pink -> blue dusk |
 | `forest` | Forest | dark | Pine dark with mint starlight |
-| `sunrise` | Sunrise | dark | Red → amber horizon |
+| `sunrise` | Sunrise | dark | Red -> amber horizon |
 | `amber` | Amber | dark | Golden stars, warm horizon |
 | `sky` | Sky | light | Bright daytime blue |
 | `daybreak` | Daybreak | light | House palette inverted for daylight |
@@ -75,7 +75,7 @@ staying violet forever.
 
 ## Admin controls
 
-Admin → Site Settings → **Theme & effects** (`group_name: 'theme'`):
+Admin -> Site Settings -> **Theme & effects** (`group_name: 'theme'`):
 
 | Setting | Meaning |
 | --- | --- |
@@ -104,7 +104,7 @@ on `/account`. The choice is per browser (localStorage), never a server write.
 
 ## Brand defaults (Midnight)
 
-**Brand identity:** dark futuristic UI with a violet → blue gradient.
+**Brand identity:** dark futuristic UI with a violet -> blue gradient.
 
 1. **Purple — `#8b5cf6`** — logo, gradient start, active states, featured
    badges, primary buttons, focus rings. `primaryHover: #7c3aed`.
@@ -133,7 +133,7 @@ secondary: '#3b82f6', accent: '#a855f7',
 
 ### Logo
 
-- Gradient follows `--c-primary → --c-secondary`, so it recolours per scheme.
+- Gradient follows `--c-primary -> --c-secondary`, so it recolours per scheme.
 - Stylised `e` with coffee bean / repo layers (3 stacked ellipses), SVG, offline.
 - See `frontend/src/components/Logo.jsx`.
 

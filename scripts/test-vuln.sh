@@ -5,7 +5,7 @@
 BASE_URL="${BASE_URL:-http://localhost:3000}"
 API="$BASE_URL/api"
 
-echo "🔒 Testing espress0's repo security at $BASE_URL"
+echo "[lock] Testing espress0's repo security at $BASE_URL"
 echo "================================================"
 
 # Colors
@@ -14,8 +14,8 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-pass() { echo -e "${GREEN}✓ PASS${NC}: $1"; }
-fail() { echo -e "${RED}✗ FAIL${NC}: $1"; }
+pass() { echo -e "${GREEN}[ok] PASS${NC}: $1"; }
+fail() { echo -e "${RED}[x] FAIL${NC}: $1"; }
 info() { echo -e "${YELLOW}ℹ INFO${NC}: $1"; }
 
 # Test 1: Health check

@@ -212,7 +212,7 @@ export default function Register() {
             <p className="text-sm text-textMuted">
               Already have an account? <Link to="/login" className="text-primary hover:text-primaryHover font-medium">Sign in</Link>
             </p>
-            <Link to="/" className="text-xs text-textMuted hover:text-primary inline-block">← Back to repository</Link>
+            <Link to="/" className="text-xs text-textMuted hover:text-primary inline-block">Back to repository</Link>
           </div>
         </div>
       </div>

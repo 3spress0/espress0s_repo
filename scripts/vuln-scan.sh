@@ -17,15 +17,15 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-pass() { echo -e "${GREEN}✓ PASS${NC}: $1"; }
-fail() { echo -e "${RED}✗ FAIL${NC}: $1"; }
+pass() { echo -e "${GREEN}[ok] PASS${NC}: $1"; }
+fail() { echo -e "${RED}[x] FAIL${NC}: $1"; }
 info() { echo -e "${YELLOW}ℹ INFO${NC}: $1"; }
 section() { echo -e "\n${BLUE}=== $1 ===${NC}"; }
 
 REPORT_FILE="./vuln-report-$(date +%Y%m%d_%H%M%S).txt"
 exec > >(tee -a "$REPORT_FILE") 2>&1
 
-echo "🔒 espress0's repo - Comprehensive Vulnerability Scan"
+echo "[lock] espress0's repo - Comprehensive Vulnerability Scan"
 echo "Date: $(date)"
 echo "Target: $BASE_URL"
 echo "Report: $REPORT_FILE"

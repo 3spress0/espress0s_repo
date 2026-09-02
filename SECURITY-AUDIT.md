@@ -170,7 +170,7 @@ characters and 12 tokens, Levenshtein short-circuits above 64 characters, and
   path); it now logs the detail and returns `Database unreachable`. Same for
   download-URL resolution failures and the AI route.
 * `/api/search/suggestions` called `.toLowerCase()` on `request.query.q`, which
-  is an array when the parameter is repeated (`?q=a&q=b`) → 500. Coerced.
+  is an array when the parameter is repeated (`?q=a&q=b`) -> 500. Coerced.
 * Missing `rel="noopener noreferrer"` added to the remaining `target="_blank"`
   links.
 

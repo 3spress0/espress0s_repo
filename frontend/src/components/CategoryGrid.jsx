@@ -54,7 +54,7 @@ export default function CategoryGrid({ categories }) {
                   {cat.count || 0} files
                 </span>
                 <span className="text-xs text-textMuted group-hover:text-primary group-hover:translate-x-1 transition-all">
-                  →
+                 
                 </span>
               </div>
             </div>

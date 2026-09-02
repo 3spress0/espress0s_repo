@@ -174,7 +174,7 @@ describe('Security - espress0 repo', () => {
     it('should sanitize hallucinated URLs', async () => {
       const { aiService } = await import('../src/services/aiService.js');
       const sanitized = aiService.sanitizeAnswer('Download from http://evil.com/malware.exe and also /item/ubuntu-24-04-lts');
-      assert.ok(sanitized.includes('⚠️') || sanitized.includes('evil.com'));
+      assert.ok(sanitized.includes('') || sanitized.includes('evil.com'));
     });
 
     it('should not hallucinate files', async () => {

@@ -201,20 +201,7 @@ export class AIService {
     if (tgptAvailable) {
       try {
         const answer = await this.askWithTgpt(question, context);
-        return {
-          answer,
-          sources: searchResults.results.slice(0, 3).map(item => ({
-            id: item.id,
-            name: item.name,
-            slug: item.slug,
-            category: item.category_slug,
-          })),
-          relatedItems: searchResults.results,
-          usedTgpt: true,
-          metadata: {
-            totalFound: searchResults.total,
-          }
-        };
+        return this.askResponse(answer, searchResults, true);
       } catch (e) {
         console.warn('tgpt failed, falling back to rule-based:', e.message);
         // Fall through to rule-based
@@ -222,8 +209,13 @@ export class AIService {
     }
 
     // 3. Fallback: rule-based answering using only metadata
-    const answer = this.ruleBasedAnswer(question, searchResults.results, faqResults);
+    return this.askResponse(
+      this.ruleBasedAnswer(question, searchResults.results, faqResults),
+      searchResults, false);
+  }
 
+  /** Uniform ask() payload: answer + the verified items backing it. */
+  askResponse(answer, searchResults, usedTgpt) {
     return {
       answer,
       sources: searchResults.results.slice(0, 3).map(item => ({
@@ -233,10 +225,8 @@ export class AIService {
         category: item.category_slug,
       })),
       relatedItems: searchResults.results,
-      usedTgpt: false,
-      metadata: {
-        totalFound: searchResults.total,
-      }
+      usedTgpt,
+      metadata: { totalFound: searchResults.total },
     };
   }
 
@@ -387,7 +377,7 @@ STRICT RULES:
       const suspicious = urls.filter(url => !allowedDomains.some(d => url.includes(d)));
       
       if (suspicious.length > 0) {
-        answer += `\n\n⚠️ Note: Some links in this answer may not be verified. Always download from the official item page at /file/{slug} to ensure integrity.`;
+        answer += `\n\nNote: Some links in this answer may not be verified. Always download from the official item page at /file/{slug} to ensure integrity.`;
       }
     }
 

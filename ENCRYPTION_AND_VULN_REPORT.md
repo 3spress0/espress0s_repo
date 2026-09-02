@@ -4,9 +4,9 @@
 ## 1. Password Storage — Encrypted Way
 
 ### Before (insecure)
-- Plain bcrypt: `bcrypt(password, 12)` → `$2b$12$...`
+- Plain bcrypt: `bcrypt(password, 12)` -> `$2b$12$...`
 - No pepper, no versioning
-- Vulnerable to: DB leak → offline brute force with rainbow tables
+- Vulnerable to: DB leak -> offline brute force with rainbow tables
 
 ### Now (secure) — Pepper + bcryptjs
 **Implementation:** `backend/src/services/encryptionService.js`
@@ -34,13 +34,13 @@ $ sqlite3 data/repo.db "SELECT substr(password_hash,1,50) FROM users;"
 pepper_v1:$2b$12$iktVHzFvfiku/fBs3MvgRuvT0o8Pre0N6AAovtCuHDz...
 
 $ npm test
-✓ should hash with pepper + bcrypt
-✓ should have deterministic HMAC for email
+ should hash with pepper + bcrypt
+ should have deterministic HMAC for email
 ```
 
 **Env generation:**
 ```bash
-openssl rand -hex 32    # PASSWORD_PEPPER (64 hex chars)
+openssl rand -hex 32# PASSWORD_PEPPER (64 hex chars)
 openssl rand -base64 32 # JWT_SECRET, ENCRYPTION_KEY
 chmod 600 .env
 ```
@@ -83,14 +83,14 @@ Encrypted: enc_v1:FtbW9Y7lheWtUVrL:N0EPK3TbGatKJKA5qcOnPw==:gBV0Y84AFyp...
 ```
 
 **Security properties:**
-- Random IV per encryption → same plaintext encrypts to different ciphertext (prevents pattern analysis)
-- Auth tag → tamper detection, prevents padding oracle
+- Random IV per encryption -> same plaintext encrypts to different ciphertext (prevents pattern analysis)
+- Auth tag -> tamper detection, prevents padding oracle
 - Key: 32 bytes from ENCRYPTION_KEY env (base64 or hex, hashed via SHA256 if needed)
 - Decrypt only in memory, never logged
 
 ### Deterministic HMAC for Email Lookup
 
-Problem: Need to find user by email for login, but email encrypted with random IV → can't search.
+Problem: Need to find user by email for login, but email encrypted with random IV -> can't search.
 
 Solution: Store **two** values:
 - `email` = AES-256-GCM(email) with random IV (for display, secure)
@@ -110,15 +110,15 @@ No need to decrypt all users to find one.
 ```
 USERS (encrypted at rest):
 - id=1 username=admin
-  email (encrypted): enc_v1:0N+Izp3XMKgFM0pA:DS9gAb1kt6BqgUNlIOwqoA==:XQlagidpX8O
-  email_hash (HMAC): db87533c1ce57dbd14b149b08c1a44328a08eef36891468114c747b2f9402059
-  password_hash: pepper_v1:$2b$12$iktVHzFvfiku/fBs3MvgRuvT0o8Pre0N6AAovtCuHDz...
-  decrypted email: admin@espress0.local
+email (encrypted): enc_v1:0N+Izp3XMKgFM0pA:DS9gAb1kt6BqgUNlIOwqoA==:XQlagidpX8O
+email_hash (HMAC): db87533c1ce57dbd14b149b08c1a44328a08eef36891468114c747b2f9402059
+password_hash: pepper_v1:$2b$12$iktVHzFvfiku/fBs3MvgRuvT0o8Pre0N6AAovtCuHDz...
+decrypted email: admin@espress0.local
 
 ITEMS (encrypted at rest):
 - id=1 name=Ubuntu 24.04 LTS
-  storage_path (encrypted): enc_v1:FtbW9Y7lheWtUVrL:N0EPK3TbGatKJKA5qcOnPw==:gBV0Y84AFyp
-  decrypted storage_path: 1Ubuntu2404ExampleFileId
+storage_path (encrypted): enc_v1:FtbW9Y7lheWtUVrL:N0EPK3TbGatKJKA5qcOnPw==:gBV0Y84AFyp
+decrypted storage_path: 1Ubuntu2404ExampleFileId
 ```
 
 **Even if attacker gets `repo.db` file, without `ENCRYPTION_KEY` and `PASSWORD_PEPPER` from `.env`, they cannot decrypt emails or storage paths, and passwords need pepper + bcrypt cracking.**
@@ -126,7 +126,7 @@ ITEMS (encrypted at rest):
 ### Backup Encryption
 
 `scripts/backup.sh` now supports:
-- `BACKUP_ENCRYPT=true` + `ENCRYPTION_KEY` set → creates `repo_*.db.enc.gz` (AES-256-GCM encrypted file: iv + authTag + ciphertext)
+- `BACKUP_ENCRYPT=true` + `ENCRYPTION_KEY` set -> creates `repo_*.db.enc.gz` (AES-256-GCM encrypted file: iv + authTag + ciphertext)
 - JSON exports contain encrypted values (no plaintext leak)
 - `.env` redacted (no secrets in backup logs)
 - Retention: 7 days, old backups deleted
@@ -140,20 +140,20 @@ ITEMS (encrypted at rest):
 **Backend:**
 ```
 Before: 6 vulnerabilities (5 high, 1 critical) - tar via bcrypt, fastify 4 DoS
-After:  0 vulnerabilities
+After:0 vulnerabilities
 Fix: 
-  - bcrypt (native, tar vuln GHSA-34x7-hfp2-rc4v etc) → bcryptjs (pure JS)
-  - fastify 4.28 → fastify 5.12.1 (fixes GHSA-mrq3-vjjr-p77c, GHSA-jx2c-rxcm-jvmq, GHSA-444r-cwp2-x5xf, GHSA-c96f-x56v-gq3h)
-  - @fastify/* updated to latest for fastify 5
+- bcrypt (native, tar vuln GHSA-34x7-hfp2-rc4v etc) -> bcryptjs (pure JS)
+- fastify 4.28 -> fastify 5.12.1 (fixes GHSA-mrq3-vjjr-p77c, GHSA-jx2c-rxcm-jvmq, GHSA-444r-cwp2-x5xf, GHSA-c96f-x56v-gq3h)
+- @fastify/* updated to latest for fastify 5
 ```
 
 **Frontend:**
 ```
 Before: 4 vulnerabilities (3 moderate, 1 high) - esbuild RCE GHSA-67mh-4wv8-2f99, react-router open redirect GHSA-wrjc-x8rr-h8h6
-After:  0 vulnerabilities
+After:0 vulnerabilities
 Fix:
-  - vite 5.4.21 → vite latest (6.x)
-  - react-router-dom 6.23 → 7.x (fixes open redirect CVE-2025-68470 bypass)
+- vite 5.4.21 -> vite latest (6.x)
+- react-router-dom 6.23 -> 7.x (fixes open redirect CVE-2025-68470 bypass)
 ```
 
 **Command:**
@@ -165,10 +165,10 @@ cd frontend && npm audit
 
 ### B. Secret Scanning
 
-- `.env` is in `.gitignore`, not tracked by git ✓
-- No hardcoded secrets in source (excluding `.env.example` and test dummy hashes) ✓
-- `.env` permissions 600 (owner only) ✓
-- Secrets from env, never exposed to browser ✓
+- `.env` is in `.gitignore`, not tracked by git 
+- No hardcoded secrets in source (excluding `.env.example` and test dummy hashes) 
+- `.env` permissions 600 (owner only) 
+- Secrets from env, never exposed to browser 
 
 ### C. Backend Security Unit Tests (19 tests, all PASS)
 
@@ -178,29 +178,29 @@ cd frontend && npm audit
 # fail 0
 
 - Password Hashing
-  ✓ bcrypt cost 12
-  ✓ pepper + bcrypt
-  ✓ AES-256-GCM encrypt/decrypt
-  ✓ deterministic HMAC for email
+ bcrypt cost 12
+ pepper + bcrypt
+ AES-256-GCM encrypt/decrypt
+ deterministic HMAC for email
 - SQL Injection Protection
-  ✓ parameterized queries
-  ✓ login bypass blocked
+ parameterized queries
+ login bypass blocked
 - Input Validation
-  ✓ item creation Zod
-  ✓ invalid storage provider rejected
-  ✓ tags sanitization
+ item creation Zod
+ invalid storage provider rejected
+ tags sanitization
 - Storage Path Traversal
-  ✓ prevents ../../../etc/passwd in LocalProvider
-  ✓ allows http URLs
+ prevents ../../../etc/passwd in LocalProvider
+ allows http URLs
 - JWT Security
-  ✓ valid JWT with expiry
-  ✓ rejects invalid JWT
+ valid JWT with expiry
+ rejects invalid JWT
 - Search Security
-  ✓ XSS payload without execution
-  ✓ SQLi payload in search
+ XSS payload without execution
+ SQLi payload in search
 - AI Security
-  ✓ sanitizes hallucinated URLs
-  ✓ no hallucination for random string
+ sanitizes hallucinated URLs
+ no hallucination for random string
 ```
 
 Run: `cd backend && npm test`
@@ -210,23 +210,23 @@ Run: `cd backend && npm test`
 `scripts/test-vuln.sh` — safe dummy payloads:
 
 ```
-✓ Health endpoint accessible
-✓ SQLi login bypass blocked (401) — payload: ' OR '1'='1
-✓ Search SQLi blocked (0 items, not full dump) — payload: ' OR 1=1 --
-✓ XSS protected (React auto-escapes) — payload: <script>alert('XSS')</script>
-✓ Admin protected (401 without token)
-✓ Invalid JWT rejected (401)
-✓ Path traversal blocked (400 for encoded ../) — payload: ..%2F..%2Fetc%2Fpasswd
-✓ Weak password rejected (400) — payload: 123
-✓ Valid registration works (201) — returns pepper+bcrypt info
-✓ Rate limiting active (429 after 10 brute force)
-✓ CORS allowlist configured
-✓ Helmet headers present (nosniff, SAMEORIGIN, HSTS max-age=31536000)
+ Health endpoint accessible
+ SQLi login bypass blocked (401) — payload: ' OR '1'='1
+ Search SQLi blocked (0 items, not full dump) — payload: ' OR 1=1 --
+ XSS protected (React auto-escapes) — payload: <script>alert('XSS')</script>
+ Admin protected (401 without token)
+ Invalid JWT rejected (401)
+ Path traversal blocked (400 for encoded ../) — payload: ..%2F..%2Fetc%2Fpasswd
+ Weak password rejected (400) — payload: 123
+ Valid registration works (201) — returns pepper+bcrypt info
+ Rate limiting active (429 after 10 brute force)
+ CORS allowlist configured
+ Helmet headers present (nosniff, SAMEORIGIN, HSTS max-age=31536000)
 ```
 
 **Path traversal detail:**
-- Plain `/api/download/../../../etc/passwd` normalizes to `/etc/passwd` → serves `index.html` (SPA fallback), NOT file system — safe, not vulnerable
-- Encoded `/api/download/..%2F..%2Fetc%2Fpasswd` → blocked by onRequest hook → 400 `path traversal detected` — protected
+- Plain `/api/download/../../../etc/passwd` normalizes to `/etc/passwd` -> serves `index.html` (SPA fallback), NOT file system — safe, not vulnerable
+- Encoded `/api/download/..%2F..%2Fetc%2Fpasswd` -> blocked by onRequest hook -> 400 `path traversal detected` — protected
 
 ### E. Comprehensive Scan
 

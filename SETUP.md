@@ -67,7 +67,7 @@ echo 'espress0 ALL=(root) NOPASSWD: /bin/systemctl restart espress0-repo' \
 Behaviour notes: fast-forward pulls only (local commits are never reset away),
 a dirty working tree postpones updates, and `touch data/.auto-update-disabled`
 pauses everything. The current status is visible in the admin UI under
-**Admin → Settings → Auto-update** and in `data/.auto-update-status`.
+**Admin -> Settings -> Auto-update** and in `data/.auto-update-status`.
 
 Other flags: `--port <n>` (default 80), `--user <name>`, `--with-tgpt` (AI
 backend), `--skip-firewall`. Run `sudo ./espress0 deploy --help` for the
@@ -132,7 +132,7 @@ reinstalls what changed, rebuilds the frontend and restarts the app. To bike
 the updater into cron or systemd instead, see
 `systemd/espress0-repo-updater.service` and `./espress0 update --help`.
 Live status is written to `data/.auto-update-status` and shows up in the admin
-UI (Settings → Auto-update). `touch data/.auto-update-disabled` pauses it.
+UI (Settings -> Auto-update). `touch data/.auto-update-disabled` pauses it.
 
 Checks Node/npm, creates `.env` from `.env.example` with freshly generated
 `JWT_SECRET`, `ENCRYPTION_KEY` and `PASSWORD_PEPPER`, creates `data/`,

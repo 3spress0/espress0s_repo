@@ -121,7 +121,7 @@ export async function foldersRoutes(fastify) {
     return db.prepare('SELECT * FROM folders WHERE id = ?').get(id);
   });
 
-  // DELETE /api/folders/:id - remove folder, items stay (folder_id → NULL)
+  // DELETE /api/folders/:id - remove folder, items stay (folder_id -> NULL)
   fastify.delete('/folders/:id', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
     const { id } = request.params;
     const db = getDb();

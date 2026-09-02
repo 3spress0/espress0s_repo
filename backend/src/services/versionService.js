@@ -44,7 +44,7 @@ export function diffSnapshots(prev, next) {
   const nextLinks = (next.download_links || []).map(l => [l.label, l.download_url, l.storage_path, l.storage_provider, !!l.is_primary, !!l.is_down]);
   if (JSON.stringify(prevLinks) !== JSON.stringify(nextLinks)) {
     const pn = prevLinks.length; const nn = nextLinks.length;
-    changed.push(pn !== nn ? `download links (${pn} → ${nn})` : 'download links');
+    changed.push(pn !== nn ? `download links (${pn} -> ${nn})` : 'download links');
   }
   return changed;
 }

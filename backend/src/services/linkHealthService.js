@@ -13,11 +13,11 @@ import { safeProbeUrl } from '../lib/safeFetch.js';
  *
  * Verdict policy - deliberately conservative so a flaky VM or a bot-wall
  * never takes a mirror offline by itself:
- *  - 2xx/3xx          → up
- *  - 404 / 410        → down (the host is alive and says the file is gone)
- *  - 401 / 403        → unknown (access denied - could be an expired share
+ *  - 2xx/3xx          -> up
+ *  - 404 / 410        -> down (the host is alive and says the file is gone)
+ *  - 401 / 403        -> unknown (access denied - could be an expired share
  *                        or simple bot protection; needs a human glance)
- *  - DNS/timeout/5xx  → unknown with the error text recorded
+ *  - DNS/timeout/5xx  -> unknown with the error text recorded
  * The manual `is_down` flag stays the only authoritative "block downloads"
  * switch apart from an explicit 404/410.
  *
@@ -57,7 +57,7 @@ export class LinkHealthService {
 
   /**
    * Work out the URL to probe for a link row. Mirrors that only have a
-   * storage path get their URL built by the provider (Drive file-id → uc?...
+   * storage path get their URL built by the provider (Drive file-id -> uc?...
    * etc). Local provider rows have no URL - those are skipped.
    */
   async resolveUrl(link) {

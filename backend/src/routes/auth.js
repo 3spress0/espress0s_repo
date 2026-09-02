@@ -65,6 +65,13 @@ function issueCsrfCookie(request, reply) {
   return token;
 }
 
+/** Issue the full cookie set (session + auth-present flag + CSRF) at once. */
+function issueSessionCookies(request, reply, token) {
+  reply.setCookie('espress0_token', token, sessionCookieOptions(request));
+  reply.setCookie('espress0_auth', '1', sessionCookieOptions(request, { httpOnly: false }));
+  return issueCsrfCookie(request, reply);
+}
+
 const profileSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_-]+$/, 'Invalid username').optional(),
   email: z.string().email().max(100).optional(),
@@ -133,10 +140,7 @@ export async function authRoutes(fastify) {
     let decBio = null; try { decBio = user.bio ? encryptionService.decrypt(user.bio) : null; } catch {}
     const token = generateToken({ ...user, email: decryptedEmail });
 
-    // Set cookies - actual cookies for downloads
-    reply.setCookie('espress0_token', token, sessionCookieOptions(request));
-    reply.setCookie('espress0_auth', '1', sessionCookieOptions(request, { httpOnly: false }));
-    const csrfToken = issueCsrfCookie(request, reply);
+    const csrfToken = issueSessionCookies(request, reply, token);
 
     request.log.info({ userId: user.id, username: user.username }, 'User logged in with cookies');
     return { token, csrfToken, user: { id: user.id, username: user.username, email: decryptedEmail, role: user.role, avatar_url: decAvatar, bio: decBio, theme: user.theme || 'dark' } };
@@ -180,9 +184,7 @@ export async function authRoutes(fastify) {
       let decEmail = newUser.email; try { decEmail = encryptionService.decrypt(newUser.email); } catch {}
       const token = generateToken({ ...newUser, email: decEmail }, { passwordHash: hash });
 
-      reply.setCookie('espress0_token', token, sessionCookieOptions(request));
-      reply.setCookie('espress0_auth', '1', sessionCookieOptions(request, { httpOnly: false }));
-      const csrfToken = issueCsrfCookie(request, reply);
+      const csrfToken = issueSessionCookies(request, reply, token);
 
       request.log.info({ userId: newUser.id, username: newUser.username, role }, 'New user registered with cookies');
       return reply.code(201).send({

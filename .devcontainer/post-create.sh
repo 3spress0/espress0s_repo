@@ -84,7 +84,7 @@ fi
 
 echo ""
 echo "=== Setup complete ==="
-echo "Theme colors: Primary #8b5cf6 (purple) → #3b82f6 (blue) gradient"
+echo "Theme colors: Primary #8b5cf6 (purple) -> #3b82f6 (blue) gradient"
 echo "AI Name: Barista — purpose: easily find files"
 echo "tgpt: $(tgpt --version 2>&1 || echo 'fallback mode')"
 echo "To run prod (backend serves frontend on 3000):"

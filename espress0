@@ -86,7 +86,7 @@ case "$CMD" in
     git log --oneline -1 2>/dev/null || echo "not a git checkout?"
     git status --short --branch 2>/dev/null | grep -E "^##" || true
     DIRTY=$(git status --porcelain --untracked-files=no 2>/dev/null | wc -l)
-    [ "$DIRTY" -gt 0 ] && echo "  ⚠ $DIRTY tracked file(s) with local edits"
+    [ "$DIRTY" -gt 0 ] && echo "  [!] $DIRTY tracked file(s) with local edits"
     echo "── ports ─────────────────────────────────────────"
     ST_PORT="$(awk -F= '/^PORT=/{print $2}' .env 2>/dev/null)"; ST_PORT="${ST_PORT:-3000}"
     ss -ltn 2>/dev/null | awk 'NR>1 {print $4}' | grep -oE ":(80|443|5173|$ST_PORT)$" | sort -u \

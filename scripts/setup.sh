@@ -57,9 +57,9 @@ else
   C_RESET=""; C_BOLD=""; C_RED=""; C_GREEN=""; C_YELLOW=""; C_BLUE=""
 fi
 step() { printf '\n%s==> %s%s\n' "$C_BLUE$C_BOLD" "$1" "$C_RESET"; }
-ok()   { printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$1"; }
+ok()   { printf '  %s[ok]%s %s\n' "$C_GREEN" "$C_RESET" "$1"; }
 warn() { printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$1"; }
-err()  { printf '  %s✗%s %s\n' "$C_RED" "$C_RESET" "$1" >&2; }
+err()  { printf '  %s[x]%s %s\n' "$C_RED" "$C_RESET" "$1" >&2; }
 die()  { err "$1"; exit 1; }
 
 # --- parse arguments ---------------------------------------------------------

@@ -69,9 +69,9 @@ else
   R=""; B=""; RED=""; GRN=""; YEL=""; BLU=""
 fi
 step() { printf '\n%s==> %s%s\n' "${BLU}${B}" "$1" "$R"; }
-ok()   { printf '  %s✓%s %s\n' "$GRN" "$R" "$1"; }
+ok()   { printf '  %s[ok]%s %s\n' "$GRN" "$R" "$1"; }
 warn() { printf '  %s!%s %s\n' "$YEL" "$R" "$1"; }
-err()  { printf '  %s✗%s %s\n' "$RED" "$R" "$1" >&2; }
+err()  { printf '  %s[x]%s %s\n' "$RED" "$R" "$1" >&2; }
 die()  { err "$1"; exit 1; }
 
 usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; }
