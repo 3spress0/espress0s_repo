@@ -6,10 +6,34 @@ import { monitoringService } from '../services/monitoringService.js';
 import { getItemLinksForMany, serializeItem } from '../services/itemSerializer.js';
 import { recordItemVersion, listVersions, getVersion, restoreItemVersion } from '../services/versionService.js';
 import { makeSlug } from '../utils/slug.js';
+import { readFileSync, existsSync } from 'fs';
+import { execFileSync } from 'child_process';
+import path from 'path';
+
+// backend/src/routes/admin.js -> ../../../ = repo root, matching where
+// scripts/auto-update.sh drops its state file.
+const AUTO_UPDATE_STATE = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname), '..', '..', '..', 'data', '.auto-update-status');
 
 export async function adminRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
   fastify.addHook('preHandler', requireAdmin);
+
+  // Auto-update status: what scripts/auto-update.sh last wrote to its state
+  // file, plus where the checkout currently sits. Read-only - enabling or
+  // running the updater always happens on the host (tmux/systemd).
+  fastify.get('/admin/auto-update', async () => {
+    let state = null;
+    try {
+      if (existsSync(AUTO_UPDATE_STATE)) state = JSON.parse(readFileSync(AUTO_UPDATE_STATE, 'utf8'));
+    } catch { /* unreadable/corrupt state file -> state stays null */ }
+    let branch = null, commit = null;
+    try {
+      branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: path.dirname(AUTO_UPDATE_STATE), timeout: 5000 }).toString().trim();
+      commit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: path.dirname(AUTO_UPDATE_STATE), timeout: 5000 }).toString().trim();
+    } catch { /* git absent or not a repo */ }
+    return { state, branch, commit };
+  });
 
   fastify.get('/admin/overview', async (request, reply) => {
     const db = getDb();

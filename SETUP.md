@@ -47,6 +47,28 @@ sudo ./scripts/deploy-ubuntu.sh --update --branch staging   # one-off, not stick
 sudo ./scripts/deploy-ubuntu.sh --update --repo <other-url> # switch source
 ```
 
+#### Hands-free: the auto-updater
+
+On a **systemd deployment** (what deploy-ubuntu.sh sets up), run the updater
+next to the app and it pulls, rebuilds and restarts on every new commit:
+
+```bash
+# once (e.g. from cron): checks and updates a single time
+sudo -u espress0 /opt/espress0s-repo/scripts/auto-update.sh --once --service espress0-repo
+
+# or permanent, as a service (unit ships in systemd/):
+sudo cp systemd/espress0-repo-updater.service /etc/systemd/system/
+sudo systemctl enable --now espress0-repo-updater
+# let the (unprivileged) updater restart the app:
+echo 'espress0 ALL=(root) NOPASSWD: /bin/systemctl restart espress0-repo' \
+  | sudo tee /etc/sudoers.d/espress0-updater
+```
+
+Behaviour notes: fast-forward pulls only (local commits are never reset away),
+a dirty working tree postpones updates, and `touch data/.auto-update-disabled`
+pauses everything. The current status is visible in the admin UI under
+**Admin → Settings → Auto-update** and in `data/.auto-update-status`.
+
 Other flags: `--port <n>` (default 80), `--user <name>`, `--with-tgpt` (AI
 backend), `--skip-firewall`. Run `./scripts/deploy-ubuntu.sh --help` for the
 list. Set `APP_CONFIG_DIR` to keep several deployments on one host.
@@ -75,6 +97,28 @@ rather keep nginx as the only thing on 80.
 ```bash
 ./scripts/setup.sh
 ```
+
+### Keep it running in the background (tmux)
+
+`dev.sh` dies with your terminal. For a PC or box you SSH into, use the tmux
+runner instead — the app (and the auto-updater) keeps running after you close
+the laptop/SSH session:
+
+```bash
+./scripts/start-tmux.sh            # built UI on :3000 + auto-updater window
+./scripts/start-tmux.sh dev        # Vite dev mode instead (:5173 + :3000)
+./scripts/start-tmux.sh status     # show health of the session
+tmux attach -t espress0            # watch live logs (Ctrl-B D detaches)
+./scripts/start-tmux.sh stop
+```
+
+The updater window runs `scripts/auto-update.sh`: every 5 minutes it fetches
+the tracked branch, and if there is a new commit it pulls (fast-forward only),
+reinstalls what changed, rebuilds the frontend and restarts the app. To bike
+the updater into cron or systemd instead, see
+`systemd/espress0-repo-updater.service` and `./scripts/auto-update.sh --help`.
+Live status is written to `data/.auto-update-status` and shows up in the admin
+UI (Settings → Auto-update). `touch data/.auto-update-disabled` pauses it.
 
 Checks Node/npm, creates `.env` from `.env.example` with freshly generated
 `JWT_SECRET`, `ENCRYPTION_KEY` and `PASSWORD_PEPPER`, creates `data/`,

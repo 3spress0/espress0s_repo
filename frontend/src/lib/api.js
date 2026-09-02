@@ -145,6 +145,10 @@ export const linkHealthApi = {
   checkLink: (linkId) => api.post(`/admin/link-health/links/${linkId}/check`).then(r => r.data),
 };
 
+export const autoUpdateApi = {
+  status: () => api.get('/admin/auto-update').then(r => r.data),
+};
+
 export const backupApi = {
   /** Triggers a file download of the full JSON export. */
   export: () => api.get('/admin/export', { responseType: 'blob' }).then(r => r.data),

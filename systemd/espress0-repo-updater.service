@@ -1,0 +1,21 @@
+[Unit]
+Description=espress0's repo - git auto-updater (pull + rebuild + restart)
+After=network-online.target espress0-repo.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as the app user; it cannot restart the systemd service itself without
+# one sudoers line (optional):   espress0 ALL=(root) NOPASSWD: /bin/systemctl restart espress0-repo
+User=espress0
+Group=espress0
+WorkingDirectory=/opt/espress0s-repo
+ExecStart=/opt/espress0s-repo/scripts/auto-update.sh --interval 300 --service espress0-repo
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=espress0-repo-updater
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Save, RotateCcw, Loader2, Check, AlertCircle } from 'lucide-react';
-import { adminApi } from '../../lib/api';
+import { Save, RotateCcw, Loader2, Check, AlertCircle, RefreshCw } from 'lucide-react';
+import { adminApi, autoUpdateApi } from '../../lib/api';
 import { useSettings } from '../../context/SettingsContext';
 import { DARK_THEMES, LIGHT_THEMES, getTheme } from '../../themes';
 import { ThemeSwatch } from '../../components/ThemePicker';
@@ -186,6 +186,61 @@ export default function AdminSettings() {
           </div>
         </div>
       ))}
+
+      <AutoUpdateCard />
+    </div>
+  );
+}
+
+const STATE_STYLES = {
+  updated: 'bg-green-500/10 border-green-500/20 text-green-400',
+  idle:    'bg-blue-500/10 border-blue-500/20 text-blue-400',
+  paused:  'bg-amber-500/10 border-amber-500/20 text-amber-400',
+  skipped: 'bg-amber-500/10 border-amber-500/20 text-amber-400',
+  error:   'bg-red-500/10 border-red-500/20 text-red-400',
+};
+
+/**
+ * Read-only view of the host-side auto-updater (scripts/auto-update.sh).
+ * The updater always runs on the machine, never from the browser - this card
+ * just shows the state file the updater writes after every check.
+ */
+function AutoUpdateCard() {
+  const [info, setInfo] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => autoUpdateApi.status().then(d => { if (alive) setInfo(d); }).catch(() => { if (alive) setInfo({ state: null }); });
+    load();
+    const t = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  const s = info?.state;
+  return (
+    <div className="glass rounded-2xl border border-white/5 p-6">
+      <div className="flex items-center gap-2 mb-3">
+        <RefreshCw className={`w-4 h-4 text-primary ${s ? '' : 'opacity-40'}`} />
+        <h3 className="font-semibold text-textPrimary">Auto-update</h3>
+        {info?.commit && (
+          <span className="ml-auto text-xs text-textMuted font-mono">
+            {info.branch}@{info.commit}
+          </span>
+        )}
+      </div>
+      {s ? (
+        <div className={`p-3 rounded-xl border text-sm ${STATE_STYLES[s.state] || 'bg-surfaceHover border-border text-textSecondary'}`}>
+          <div className="font-medium capitalize">{s.state}</div>
+          <div className="mt-0.5 opacity-90">{s.message}</div>
+          {s.at && <div className="mt-1 text-xs opacity-70">Last check: {new Date(s.at).toLocaleString()}</div>}
+        </div>
+      ) : (
+        <div className="p-3 rounded-xl border border-border bg-surfaceHover text-sm text-textSecondary">
+          Not running on this host. Keep the site current from the shell:
+          <pre className="mt-2 p-2 rounded-lg bg-background border border-border text-xs font-mono overflow-x-auto">./scripts/start-tmux.sh          # app + updater in tmux
+./scripts/auto-update.sh         # or standalone (adds --once, --service)</pre>
+          <span className="text-xs text-textMuted">Pause anytime with <code className="font-mono">touch data/.auto-update-disabled</code>.</span>
+        </div>
+      )}
     </div>
   );
 }

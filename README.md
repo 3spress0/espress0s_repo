@@ -121,6 +121,24 @@ npm run dev  # :5173
 
 </details>
 
+### Run in the background (tmux) + auto-update
+
+```bash
+./scripts/start-tmux.sh            # app on :3000 + auto-updater, survives logout
+./scripts/start-tmux.sh dev        # backend :3000 + Vite dev server :5173
+./scripts/start-tmux.sh status     # is it up?
+tmux attach -t espress0            # live logs (Ctrl-B D to detach)
+./scripts/start-tmux.sh stop
+```
+
+The auto-updater window watches `origin/<current-branch>` (every 5 min):
+fast-forward pull → `npm ci` where `package(-lock).json` changed → frontend
+rebuild → app restart. It never resets local commits away and skips update
+cycles while the working tree is dirty. Pause with
+`touch data/.auto-update-disabled`; status shows up under
+**Admin → Settings → Auto-update**. Standalone/cron/systemd use:
+`./scripts/auto-update.sh --once` (see `systemd/espress0-repo-updater.service`).
+
 ## 🐳 Docker (Production)
 
 ```bash
