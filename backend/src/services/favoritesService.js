@@ -283,6 +283,90 @@ export function getPublicProfile(username) {
   };
 }
 
+/**
+ * Public people directory ("find people").
+ *
+ * A visitor can browse and search the accounts on this instance the same way
+ * they browse files. Everything returned here is already public on each
+ * account's own `/u/:username` page — this endpoint just makes those pages
+ * discoverable instead of guessable.
+ *
+ *   - never selects `email` (encrypted at rest; a directory must not leak it);
+ *   - `avatar_url` / `bio` are decrypted profile content, and the bio is
+ *     trimmed to a short teaser so the directory stays card-shaped;
+ *   - `favorites_count` counts only shared, published favourites — the same
+ *     number a stranger already sees on the profile;
+ *   - search matches usernames only, case-insensitively, so a bio can never
+ *     surface an account that did not put a term in its public handle.
+ *
+ * @param {{ q?: string, page?: number, limit?: number, sort?: 'shared'|'newest'|'name' }} options
+ */
+export function listPublicUsers({ q = '', page = 1, limit = 24, sort = 'shared' } = {}) {
+  const db = getDb();
+  const pageSize = toInt(limit, 24, 1, 60);
+  const pageNum = toInt(page, 1, 1, 10000);
+  const offset = (pageNum - 1) * pageSize;
+
+  const term = String(q ?? '').trim().slice(0, 100);
+  const params = { limit: pageSize, offset };
+  let where = '';
+  if (term) {
+    // Escape LIKE wildcards so a literal % or _ in a search box is not treated
+    // as a pattern, then match anywhere in the username.
+    const escaped = term.replace(/[\\%_]/g, (c) => `\\${c}`);
+    params.q = `%${escaped}%`;
+    where = "WHERE users.username LIKE @q ESCAPE '\\'";
+  }
+
+  const orderBy = {
+    newest: 'users.created_at DESC, users.id DESC',
+    name: 'users.username COLLATE NOCASE ASC',
+    shared: 'favorites_count DESC, users.created_at DESC',
+  }[sort] || 'favorites_count DESC, users.created_at DESC';
+
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM users ${where}`).get(params).c;
+
+  const rows = db.prepare(`
+    SELECT
+      users.id, users.username, users.role, users.avatar_url, users.bio, users.created_at,
+      COUNT(CASE WHEN favorites.is_public = 1 AND items.published = 1 THEN 1 END) AS favorites_count
+    FROM users
+    LEFT JOIN favorites ON favorites.user_id = users.id
+    LEFT JOIN items ON items.id = favorites.item_id
+    ${where}
+    GROUP BY users.id
+    ORDER BY ${orderBy}
+    LIMIT @limit OFFSET @offset
+  `).all(params);
+
+  const users = rows.map((row) => {
+    let avatar = null;
+    try { avatar = row.avatar_url ? encryptionService.decrypt(row.avatar_url) : null; } catch { avatar = row.avatar_url || null; }
+    let bio = null;
+    try { bio = row.bio ? encryptionService.decrypt(row.bio) : null; } catch { bio = row.bio || null; }
+    if (bio && bio.length > 160) bio = `${bio.slice(0, 157).trimEnd()}…`;
+    return {
+      id: row.id,
+      username: row.username,
+      role: row.role,
+      avatar_url: avatar,
+      bio,
+      created_at: row.created_at,
+      favorites_count: row.favorites_count,
+    };
+  });
+
+  return {
+    users,
+    pagination: {
+      page: pageNum,
+      limit: pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    },
+  };
+}
+
 /** Same list as listFavorites(publicOnly), keyed off a username. */
 export function listPublicFavorites(username, { page = 1, limit = 24 } = {}) {
   const db = getDb();

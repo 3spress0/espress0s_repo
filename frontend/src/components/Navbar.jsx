@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Search, Package, Shield, LogOut, Menu, X, User, Settings, Coffee } from 'lucide-react';
+import { Search, Package, Shield, LogOut, Menu, X, User, Settings, Coffee, Users } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -32,6 +32,7 @@ export default function Navbar({ onAskOpen }) {
 
   const navLinks = [
     { path: '/browse', label: 'Browse', icon: Package },
+    { path: '/people', label: 'People', icon: Users },
   ];
 
   if (isAdmin) {

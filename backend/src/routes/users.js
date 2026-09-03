@@ -1,8 +1,9 @@
-import { getPublicProfile, listPublicFavorites } from '../services/favoritesService.js';
+import { getPublicProfile, listPublicFavorites, listPublicUsers } from '../services/favoritesService.js';
 
 /**
  * Public account pages ("accounts viewing").
  *
+ *   GET /api/users                           anyone: searchable directory of accounts
  *   GET /api/users/:username                 anyone: profile + shared-favourite count
  *   GET /api/users/:username/favorites       anyone: the favourites they chose to share
  *
@@ -33,7 +34,19 @@ function clampLimit(value, fallback = 24) {
   return Math.min(Math.max(n, 1), 100);
 }
 
+const ALLOWED_SORTS = new Set(['shared', 'newest', 'name']);
+
 export async function usersRoutes(fastify) {
+  fastify.get('/users', async (request) => {
+    const sort = ALLOWED_SORTS.has(request.query.sort) ? request.query.sort : 'shared';
+    return listPublicUsers({
+      q: typeof request.query.q === 'string' ? request.query.q : '',
+      page: clampPage(request.query.page),
+      limit: clampLimit(request.query.limit),
+      sort,
+    });
+  });
+
   fastify.get('/users/:username', async (request, reply) => {
     const profile = getPublicProfile(request.params.username);
     if (!profile) return reply.code(404).send({ error: 'User not found' });

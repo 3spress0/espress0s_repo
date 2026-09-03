@@ -3,8 +3,11 @@ export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE NOT NULL,
-  email TEXT UNIQUE NOT NULL, -- encrypted at rest with AES-256-GCM
-  email_hash TEXT UNIQUE, -- deterministic HMAC for lookup
+  -- Email is OPTIONAL: an account can register without one. Encrypted at rest
+  -- with AES-256-GCM when present. UNIQUE still holds because SQLite treats
+  -- every NULL as distinct, so any number of accounts may have no email.
+  email TEXT UNIQUE, -- encrypted at rest with AES-256-GCM (nullable)
+  email_hash TEXT UNIQUE, -- deterministic HMAC for lookup (nullable)
   password_hash TEXT NOT NULL, -- pepper + bcrypt
   role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin', 'editor', 'viewer')),
   auth_version INTEGER DEFAULT 0, -- bump to invalidate every issued token ("log out all devices")

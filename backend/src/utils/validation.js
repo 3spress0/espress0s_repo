@@ -115,7 +115,9 @@ export const loginSchema = z.object({
 
 export const registerSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_-]+$/, 'Username can only contain letters, numbers, underscore and hyphen'),
-  email: z.string().email().max(100),
+  // Email is optional: you can add one, but it is not required to register.
+  // An empty string is treated the same as omitting it.
+  email: z.string().email().max(100).optional().or(z.literal('')),
   password: z.string().min(8).max(128)
     .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')

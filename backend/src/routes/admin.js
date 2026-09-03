@@ -687,6 +687,35 @@ export async function adminRoutes(fastify) {
     }
   });
 
+  /**
+   * POST /admin/ai/fill-gaps
+   * Look at the metadata the admin has entered so far and suggest values for
+   * the fields that are still empty (version, platform, architecture, file
+   * type, license, tags, and both description fields). Admin-only for the same
+   * reason as /describe: it spends the operator's AI budget.
+   *
+   * The response is a map of field -> suggested value; the client applies only
+   * the ones the admin keeps and never overwrites a field already filled in.
+   */
+  fastify.post('/admin/ai/fill-gaps', {
+    config: { rateLimit: { max: 20, timeWindow: '5 minutes' } },
+  }, async (request, reply) => {
+    const body = request.body || {};
+    if (!body.name || String(body.name).trim().length < 2) {
+      return reply.code(400).send({ error: 'Enter a name first — the suggestions are generated from it' });
+    }
+
+    const want = Array.isArray(body.fields) ? body.fields : null;
+
+    try {
+      const { aiService } = await import('../services/aiService.js');
+      return await aiService.suggestFields(body, want);
+    } catch (e) {
+      request.log.error(e);
+      return reply.code(500).send({ error: 'Could not generate suggestions', message: e.message });
+    }
+  });
+
   fastify.get('/admin/backup-info', async (request, reply) => {
     const db = getDb();
     const info = {

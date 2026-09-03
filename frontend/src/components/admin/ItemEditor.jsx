@@ -150,6 +150,11 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
   const [autofill, setAutofill] = useState(null);
   const [autofillBusy, setAutofillBusy] = useState(false);
   const [autofillError, setAutofillError] = useState('');
+  // "Fill in the gaps": AI suggestions for the fields left empty so far.
+  const [gapBusy, setGapBusy] = useState(false);
+  const [gapSuggestions, setGapSuggestions] = useState(null); // { field: value }
+  const [gapNotice, setGapNotice] = useState('');
+  const [gapError, setGapError] = useState('');
   const [relations, setRelations] = useState([]);
   const [relatedSlug, setRelatedSlug] = useState('');
   const [relatedType, setRelatedType] = useState('related');
@@ -433,6 +438,108 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
       : `Outline only — no model answered (${draft.aiError || 'configure one in Settings → AI, or run ./espress0 ai for the free CLI'}). Replace the [bracketed] parts.`);
   };
 
+  /** Which gap-fillable fields are currently empty, for the button's label/count. */
+  const GAP_FIELDS = useMemo(() => [
+    { key: 'version', label: 'Version' },
+    { key: 'platform', label: 'Platform' },
+    { key: 'architecture', label: 'Architecture' },
+    { key: 'file_type', label: 'File type' },
+    { key: 'license_status', label: 'License' },
+    { key: 'tags', label: 'Tags' },
+    { key: 'description', label: 'Short description' },
+    { key: 'long_description', label: 'Description body' },
+  ], []);
+
+  const isGapEmpty = useCallback((key) => {
+    if (key === 'license_status') return !form.license_status || form.license_status === 'check-license';
+    return !String(form[key] ?? '').trim();
+  }, [form]);
+
+  const emptyGapFields = useMemo(
+    () => GAP_FIELDS.filter(f => isGapEmpty(f.key)),
+    [GAP_FIELDS, isGapEmpty]
+  );
+
+  /**
+   * Ask the model to fill every field left blank, from the name (and whatever
+   * else is typed). Nothing is written yet: the suggestions land in a panel and
+   * the admin applies the ones they want, or applies all at once.
+   */
+  const fillGaps = async () => {
+    setGapError('');
+    setGapNotice('');
+    setGapSuggestions(null);
+    const category = categories.find(c => String(c.id) === String(form.category_id));
+    setGapBusy(true);
+    try {
+      const res = await catalogAdminApi.fillGaps({
+        name: form.name,
+        version: form.version,
+        category: category?.name || '',
+        platform: form.platform,
+        architecture: form.architecture,
+        file_type: form.file_type,
+        license_status: form.license_status,
+        tags: splitList(form.tags),
+        description: form.description,
+        long_description: form.long_description,
+        notes: form.description,
+        fields: emptyGapFields.map(f => f.key),
+      });
+
+      const suggestions = res.suggestions || {};
+      const count = Object.keys(suggestions).length;
+      if (res.nothingToFill) {
+        setGapNotice('Every field is already filled in — nothing to suggest.');
+      } else if (count === 0) {
+        setGapNotice('');
+        setGapError(res.usedAI === false
+          ? `No suggestions — ${res.aiError || 'no AI model is configured. Set one up in Settings → AI, or run ./espress0 ai for the free CLI.'}`
+          : 'The model did not return anything usable. Try again, or add a bit more detail first.');
+      } else {
+        setGapSuggestions(suggestions);
+        setGapNotice(`${count} suggestion${count === 1 ? '' : 's'} from ${res.provider || 'the model'} — review and apply. The AI does not know your files, so double-check versions.`);
+      }
+    } catch (err) {
+      setGapError(err.response?.data?.error || 'Could not generate suggestions');
+    } finally {
+      setGapBusy(false);
+    }
+  };
+
+  /** Apply one AI-suggested field into the form. */
+  const applyGapField = (key, value) => {
+    if (key === 'tags') {
+      setForm(f => ({ ...f, tags: Array.isArray(value) ? value.join(', ') : String(value) }));
+    } else {
+      setForm(f => ({ ...f, [key]: value }));
+    }
+    setGapSuggestions(prev => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return Object.keys(next).length ? next : null;
+    });
+  };
+
+  /** Apply every remaining suggestion at once. */
+  const applyAllGaps = () => {
+    if (!gapSuggestions) return;
+    setForm(f => {
+      const next = { ...f };
+      for (const [key, value] of Object.entries(gapSuggestions)) {
+        next[key] = key === 'tags'
+          ? (Array.isArray(value) ? value.join(', ') : String(value))
+          : value;
+      }
+      return next;
+    });
+    setGapSuggestions(null);
+    setGapNotice('Applied all suggestions — review each field before saving.');
+  };
+
+  const gapLabel = (key) => GAP_FIELDS.find(f => f.key === key)?.label || key;
+
   const field = (label, key, opts = {}) => (
     <div className={opts.wide ? 'sm:col-span-2' : ''}>
       <span className="text-[11px] text-textMuted block mb-1">{label}</span>
@@ -485,6 +592,25 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
           </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            type="button"
+            onClick={fillGaps}
+            disabled={gapBusy || form.name.trim().length < 2 || emptyGapFields.length === 0}
+            title={
+              form.name.trim().length < 2
+                ? 'Enter a name first'
+                : emptyGapFields.length === 0
+                  ? 'Every field is already filled in'
+                  : `Let AI suggest values for ${emptyGapFields.length} empty field${emptyGapFields.length === 1 ? '' : 's'}`
+            }
+            className="px-3 py-2 bg-gradient-primary text-white rounded-xl text-xs font-medium flex items-center gap-1.5 disabled:opacity-40"
+          >
+            {gapBusy ? <LoadingDots size={14} /> : <Wand2 className="w-3.5 h-3.5" />}
+            {gapBusy ? 'Filling…' : 'Fill gaps with AI'}
+            {!gapBusy && emptyGapFields.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px] leading-none">{emptyGapFields.length}</span>
+            )}
+          </button>
           {isEdit && item.slug && (
             <a
               href={`/file/${item.slug}`}
@@ -524,6 +650,70 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
           </button>
         ))}
       </div>
+
+      {/* AI "fill in the gaps" — suggestions for the empty fields. Nothing is
+          written until the admin applies a suggestion. */}
+      {(gapNotice || gapError || gapSuggestions) && (
+        <div className="mb-5 rounded-xl border border-primary/20 bg-primary/5 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2 min-w-0">
+              <Wand2 className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
+              <div className="min-w-0">
+                <h4 className="text-sm font-bold text-textPrimary">AI suggestions</h4>
+                {gapNotice && <p className="text-xs text-textSecondary mt-0.5">{gapNotice}</p>}
+                {gapError && (
+                  <p className="text-xs text-red-400 mt-0.5 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {gapError}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {gapSuggestions && Object.keys(gapSuggestions).length > 1 && (
+                <button
+                  type="button"
+                  onClick={applyAllGaps}
+                  className="px-3 py-1.5 bg-gradient-primary text-white rounded-lg text-xs font-medium flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" /> Apply all
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { setGapSuggestions(null); setGapNotice(''); setGapError(''); }}
+                title="Dismiss"
+                className="p-1.5 text-textMuted hover:text-textPrimary rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {gapSuggestions && (
+            <div className="mt-3 space-y-2">
+              {Object.entries(gapSuggestions).map(([key, value]) => {
+                const text = Array.isArray(value) ? value.join(', ') : String(value);
+                return (
+                  <div key={key} className="flex items-start gap-2 text-xs rounded-lg border border-border bg-surface/50 p-2.5">
+                    <button
+                      type="button"
+                      onClick={() => applyGapField(key, value)}
+                      className="mt-0.5 px-2 py-1 rounded-md bg-surface border border-border text-textMuted hover:text-primary hover:border-primary/40 flex-shrink-0"
+                      title={`Use this ${gapLabel(key)}`}
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-textMuted block mb-0.5">{gapLabel(key)}</span>
+                      <span className="text-textSecondary break-words block max-h-24 overflow-hidden whitespace-pre-wrap">{text.slice(0, 400)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {section === 'start' && (
         <div className="space-y-4">
