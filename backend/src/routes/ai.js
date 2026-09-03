@@ -18,7 +18,7 @@ export async function aiRoutes(fastify) {
     }
 
     try {
-      const result = await aiService.ask(query, { limit: 5, messages: parsed.data.messages || [] });
+      const result = await aiService.ask(query, { limit: 5 });
       return result;
     } catch (e) {
       request.log.error(e);
@@ -37,7 +37,7 @@ export async function aiRoutes(fastify) {
     if (!query) return reply.code(400).send({ error: 'Missing question' });
 
     try {
-      const result = await aiService.ask(query, { limit: 5, messages: parsed.data.messages || [] });
+      const result = await aiService.ask(query, { limit: 5 });
       return result;
     } catch (e) {
       request.log.error(e);
@@ -100,3 +100,4 @@ export async function aiRoutes(fastify) {
     return reply.code(201).send(newFaq);
   });
 }
+
