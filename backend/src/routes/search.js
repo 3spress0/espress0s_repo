@@ -47,6 +47,11 @@ export async function searchRoutes(fastify) {
 
     return {
       query: safeQ,
+      // Set only when nothing matched as typed and a close catalogue word did,
+      // so the UI can say "showing results for ..." instead of silently
+      // answering a different question.
+      correctedQuery: result.correctedQuery || null,
+      corrections: result.corrections || [],
       results: result.results,
       pagination: {
         page: result.page,

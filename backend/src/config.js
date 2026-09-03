@@ -166,7 +166,9 @@ export const config = {
     // and must not talk `auto` into sending it to Google.
     apiKeySource: envFirst(['AI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'TGPT_API_KEY'])?.name || '',
     temperature: floatFromEnv('AI_TEMPERATURE', 0.2, 0, 2),
-    maxTokens: intFromEnv(['AI_MAX_TOKENS'], 1024, 64, 32768, 'tokens'),
+    // 1024 tokens cut normal Barista answers off mid-sentence once the reply
+    // included a few links and a list; 2048 finishes them with room to spare.
+    maxTokens: intFromEnv(['AI_MAX_TOKENS'], 2048, 256, 32768, 'tokens'),
     // Per-run budgets; see AI_ASK_TIMEOUT_MS above for why they must be
     // smaller than the client's AI_TIMEOUT.
     timeoutMs: AI_ASK_TIMEOUT_MS,

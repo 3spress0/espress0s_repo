@@ -41,9 +41,121 @@ BODY:
 <markdown body, 120-250 words, using "## " headings such as Overview, What's included, Requirements, Notes, plus bullet lists>`;
 
 /** Appended to the catalogue data instead of the system prompt: it is per-question. */
-const ANSWER_TAIL = `Answer helpfully based ONLY on the repository data above. If no relevant items, say so clearly and suggest how to browse categories. Keep it under 300 words and link to relevant items as /file/{slug} where they apply.`;
+const ANSWER_TAIL = `Answer helpfully based ONLY on the repository data above. If no relevant items, say so clearly and suggest how to browse categories. Aim for under 300 words, link to relevant items as /file/{slug} where they apply, and always finish your final sentence rather than stopping mid-thought.`;
+
+/**
+ * Sent instead of ANSWER_TAIL when a first attempt was cut off by the token
+ * ceiling: the retry gets a larger budget *and* is told to be shorter, so the
+ * second answer fits even if the model ignores the extra room.
+ */
+const RETRY_TAIL = `Answer helpfully based ONLY on the repository data above. Be brief: at most 150 words. Finish every sentence. Link to relevant items as /file/{slug}.`;
+
+/** Extra room for the retry, capped so a huge configured ceiling is not doubled. */
+const RETRY_MAX_TOKENS_CEILING = 8192;
 
 export const BARISTA_SYSTEM_PROMPT = SYSTEM_PROMPT;
+
+/** How much conversation is replayed to the model, and how much of each turn. */
+export const MAX_CONTEXT_MESSAGES = 10;
+const MAX_CONTEXT_CHARS = 2000;
+
+/** Words that carry no search signal, so a question made only of them is a follow-up. */
+const FOLLOW_UP_STOPWORDS = new Set([
+  'a', 'about', 'all', 'also', 'am', 'an', 'and', 'any', 'anything', 'are', 'as', 'at',
+  'be', 'both', 'but', 'by', 'can', 'could', 'did', 'do', 'does', 'doing', 'done',
+  'for', 'from', 'get', 'give', 'good', 'has', 'have', 'how', 'i', 'if', 'in', 'is',
+  'it', 'its', 'just', 'know', 'like', 'machine', 'make', 'me', 'more', 'my', 'need',
+  'new', 'no', 'not', 'of', 'off', 'ok', 'on', 'one', 'only', 'or', 'other', 'our',
+  'out', 'pc', 'please', 'run', 'runs', 'same', 'say', 'should', 'so', 'some', 'still',
+  'such', 'sure', 'system', 'tell', 'than', 'that', 'the', 'their', 'them', 'then',
+  'there', 'these', 'they', 'thing', 'this', 'those', 'to', 'too', 'us', 'use', 'used',
+  'want', 'was', 'we', 'well', 'what', 'when', 'where', 'which', 'while', 'who', 'why',
+  'will', 'with', 'work', 'works', 'would', 'you', 'your',
+]);
+
+/** Keep only well-formed chat turns, in order, with bounded content. */
+export function normalizeMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .filter(m => m && (m.role === 'user' || m.role === 'assistant'))
+    .map(m => ({ role: m.role, content: String(m.content ?? '').slice(0, MAX_CONTEXT_CHARS) }))
+    .filter(m => m.content.trim().length > 0)
+    .slice(-MAX_CONTEXT_MESSAGES);
+}
+
+/** The words in a question that could plausibly match a catalogue row. */
+function contentWords(text) {
+  return String(text || '')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}.+-]+/u)
+    .filter(w => w.length > 1 && !FOLLOW_UP_STOPWORDS.has(w));
+}
+
+/**
+ * "does that work on my pc?" has nothing to search for; "do you have Debian?"
+ * does. Only the former should inherit the previous turns' search terms -
+ * otherwise every question in a session drifts towards the first topic.
+ */
+export function isFollowUp(question) {
+  return contentWords(question).length === 0;
+}
+
+/**
+ * The query the catalogue search actually runs for one turn.
+ *
+ * A self-contained question is searched as typed. A follow-up is searched with
+ * the search terms of the most recent turns that had any, so "does that work
+ * on my pc?" still resolves to the item the user was just asking about.
+ */
+export function buildSearchQuery(question, messages = []) {
+  const q = String(question || '').trim();
+  if (!isFollowUp(q)) return q;
+
+  const prior = [];
+  for (const m of [...normalizeMessages(messages)].reverse()) {
+    if (m.role !== 'user') continue;
+    if (m.content.trim() === q) continue;
+    const words = contentWords(m.content);
+    if (words.length === 0) continue;
+    prior.unshift(m.content.trim());
+    if (prior.length >= 2) break;
+  }
+  return [...prior, q].join(' ').trim() || q;
+}
+
+/**
+ * A one-line reminder of what "that" refers to, so the model resolves the
+ * reference the same way the search did. Uses the last user turn with real
+ * search terms, and names the top catalogue match when there is one.
+ */
+export function conversationSubject(messages = [], items = []) {
+  const lastTopical = [...normalizeMessages(messages)]
+    .reverse()
+    .find(m => m.role === 'user' && contentWords(m.content).length > 0);
+  const parts = [];
+  if (lastTopical) parts.push(`the user's earlier question "${lastTopical.content.trim().slice(0, 200)}"`);
+  if (items.length > 0) parts.push(`the repository item "${items[0].name}" (/file/${items[0].slug})`);
+  return parts.join(', most likely ');
+}
+
+/**
+ * Last resort when even the retry came back cut off: trim the dangling partial
+ * sentence and say plainly that the answer was shortened. Never fabricates an
+ * ending, and never leaves the visitor staring at half a word.
+ */
+export function completeCutOffAnswer(text) {
+  const answer = String(text || '').trim();
+  if (!answer) return answer;
+  const lastStop = Math.max(answer.lastIndexOf('. '), answer.lastIndexOf('.\n'),
+    answer.lastIndexOf('!'), answer.lastIndexOf('?'), answer.lastIndexOf('\n'));
+  // Only trim when a clean break exists and is not throwing most of it away.
+  const trimmed = lastStop > answer.length * 0.5
+    ? answer.slice(0, lastStop + 1).trim()
+    : answer;
+  return `${trimmed}\n\n_(This answer was shortened because it reached the configured output limit. Ask a narrower question, or raise Max output tokens in Settings -> AI.)_`;
+}
+
+
 
 /**
  * Barista: repository search first, an AI answer second, metadata-only as the
@@ -196,12 +308,18 @@ export class AIService {
    * Main ask method
    */
   async ask(question, options = {}) {
-    const { limit = 5, messages = [] } = options;
+    const { limit = 5 } = options;
+    const messages = normalizeMessages(options.messages);
 
     // 1. Search repository metadata first - this is mandatory, and it is what
     //    the answer is checked against.
+    // A follow-up like "does that work on my pc?" carries no searchable words
+    // of its own, so the earlier turns supply them. Only follow-ups borrow
+    // context: a fresh, self-contained question must not be dragged back to
+    // the previous topic.
+    const searchQuery = buildSearchQuery(question, messages);
     const searchResults = searchService.search({
-      q: [question, ...messages.filter(m => m.role === 'user').slice(-3).map(m => m.content)].join(' '),
+      q: searchQuery,
       published: 1,
       limit,
       page: 1,
@@ -242,14 +360,55 @@ export class AIService {
     return fallback;
   }
 
+  /**
+   * One provider round-trip, plus a single retry when the answer was cut off.
+   *
+   * A reply that stops mid-sentence is worse than a short one, and the
+   * provider tells us when its token ceiling caused that (finish_reason
+   * "length" / "MAX_TOKENS"). Retrying once with more room and a tighter word
+   * budget is bounded work and fixes the case that actually happens; if the
+   * retry is cut off too, the longer of the two answers is returned with an
+   * honest note rather than a dangling sentence.
+   */
   async askWithProvider(question, items, faqs, cfg, messages = []) {
-    const out = await generate({
+    const first = await generate({
       system: SYSTEM_PROMPT,
       prompt: this.buildContext(items, faqs, question, messages),
       cfg,
       kind: 'ask',
     });
-    const answer = this.sanitizeAnswer(String(out.text || '').trim());
+
+    if (!first.truncated) {
+      const answer = this.sanitizeAnswer(String(first.text || '').trim());
+      return answer || this.ruleBasedAnswer(question, items, faqs);
+    }
+
+    const retryCfg = {
+      ...cfg,
+      maxTokens: Math.min(RETRY_MAX_TOKENS_CEILING, Math.max(cfg.maxTokens * 2, 2048)),
+    };
+    let second = null;
+    try {
+      second = await generate({
+        system: SYSTEM_PROMPT,
+        prompt: this.buildContext(items, faqs, question, messages, { tail: RETRY_TAIL }),
+        cfg: retryCfg,
+        kind: 'ask',
+      });
+    } catch (e) {
+      // A failed retry must not lose the (partial) answer we already have.
+      console.warn('[ai] retry after truncation failed:', redact(e.message, cfg.apiKey));
+    }
+
+    if (second && !second.truncated && String(second.text || '').trim()) {
+      const answer = this.sanitizeAnswer(String(second.text).trim());
+      if (answer) return answer;
+    }
+
+    const firstText = String(first.text || '').trim();
+    const secondText = String(second?.text || '').trim();
+    const best = secondText.length > firstText.length ? secondText : firstText;
+    const answer = this.sanitizeAnswer(completeCutOffAnswer(best));
     return answer || this.ruleBasedAnswer(question, items, faqs);
   }
 
@@ -274,22 +433,23 @@ export class AIService {
   }
 
   /** The per-question message: catalogue data the model is allowed to mention. */
-  buildContext(items, faqs, question, messages = []) {
+  buildContext(items, faqs, question, messages = [], { tail = ANSWER_TAIL } = {}) {
     let ctx = '';
 
-    const recentMessages = messages
-      .filter(m => m && ['user', 'assistant'].includes(m.role))
-      .slice(-8);
+    const recentMessages = normalizeMessages(messages).slice(-MAX_CONTEXT_MESSAGES);
 
     if (recentMessages.length > 0) {
-      ctx += `\nRECENT CONVERSATION CONTEXT:
+      const subject = conversationSubject(recentMessages, items);
+      ctx += `\nRECENT CONVERSATION CONTEXT (oldest first):
 Use this only to understand references and conversational context.
+Pronouns and short follow-ups such as "that", "it", "this one" or "does that work on my pc?"
+refer to the most recent file or topic discussed below.
 Repository facts must still come from the REPOSITORY ITEMS section below.
 
 ${recentMessages.map(m =>
-  `${m.role === 'user' ? 'User' : 'Barista'}: ${String(m.content || '').slice(0, 2000)}`
+  `${m.role === 'user' ? 'User' : 'Barista'}: ${String(m.content || '').slice(0, MAX_CONTEXT_CHARS)}`
 ).join('\n')}
-
+${subject ? `\nCurrent subject of the conversation: ${subject}\n` : ''}
 `;
     }
 
@@ -320,7 +480,7 @@ ${recentMessages.map(m =>
       ctx += `\nNo matching items found in repository for query "${question}".`;
     }
 
-    ctx += `\nCURRENT USER QUESTION: ${question}\n\n${ANSWER_TAIL}`;
+    ctx += `\nCURRENT USER QUESTION: ${question}\n\n${tail}`;
 
     return ctx;
   }

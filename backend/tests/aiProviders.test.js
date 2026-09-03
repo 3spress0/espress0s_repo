@@ -148,7 +148,15 @@ describe('openai-compatible transport', () => {
       }),
     });
 
-    assert.deepEqual(out, { text: 'OK', provider: 'openai', model: 'openai/gpt-oss-120b' });
+    assert.deepEqual(out, {
+      text: 'OK',
+      provider: 'openai',
+      model: 'openai/gpt-oss-120b',
+      // Every transport reports how the model stopped, so a cut-off answer can
+      // be retried instead of shipped half-written.
+      finishReason: 'stop',
+      truncated: false,
+    });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, 'https://api.groq.com/openai/v1/chat/completions');
     assert.equal(calls[0].init.headers.authorization, 'Bearer gsk_test_key_not_real_0123456789');

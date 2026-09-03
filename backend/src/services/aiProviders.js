@@ -221,7 +221,17 @@ export async function callGemini({ system, prompt, cfg }) {
     const why = candidate?.finishReason ? ` (finishReason: ${candidate.finishReason})` : '';
     throw Object.assign(new Error(`empty answer from ${model}${why}`), { code: 'empty' });
   }
-  return { text: text.trim(), provider: 'gemini', model };
+  // The token ceiling stopping the model mid-sentence is a normal outcome, not
+  // an error - but the caller has to know, or the visitor silently gets half an
+  // answer. See aiService.askWithProvider, which retries with more room.
+  const finishReason = String(candidate?.finishReason || '');
+  return {
+    text: text.trim(),
+    provider: 'gemini',
+    model,
+    finishReason,
+    truncated: finishReason.toUpperCase() === 'MAX_TOKENS',
+  };
 }
 
 // ---------------------------------------------------------------- openai-compat
@@ -281,7 +291,14 @@ export async function callOpenai({ system, prompt, cfg }) {
     const why = data?.choices?.[0]?.finish_reason ? ` (finish_reason: ${data.choices[0].finish_reason})` : '';
     throw Object.assign(new Error(`empty answer from ${model}${why}`), { code: 'empty' });
   }
-  return { text: text.trim(), provider: 'openai', model };
+  const finishReason = String(data.choices[0]?.finish_reason || '');
+  return {
+    text: text.trim(),
+    provider: 'openai',
+    model,
+    finishReason,
+    truncated: finishReason === 'length',
+  };
 }
 
 // ----------------------------------------------------------------------- tgpt
@@ -350,6 +367,7 @@ export async function callTgpt({ system, prompt, cfg }) {
     const child = spawn(binary, args, { stdio: ['pipe', 'pipe', 'pipe'], shell: false, env });
     let out = '';
     let err = '';
+    let capped = false;
     let settled = false;
     const finish = (fn, value) => { if (!settled) { settled = true; clearTimeout(timer); fn(value); } };
 
@@ -360,7 +378,7 @@ export async function callTgpt({ system, prompt, cfg }) {
 
     child.stdout.on('data', (chunk) => {
       out += chunk;
-      if (out.length > MAX_RESPONSE_BYTES) { child.kill('SIGKILL'); out = out.slice(0, MAX_RESPONSE_BYTES); }
+      if (out.length > MAX_RESPONSE_BYTES) { capped = true; child.kill('SIGKILL'); out = out.slice(0, MAX_RESPONSE_BYTES); }
     });
     child.stderr.on('data', (chunk) => { if (err.length < 8192) err += chunk; });
     child.on('error', (e) => finish(reject, Object.assign(new Error(redact(e.message, cfg.apiKey)), { code: 'unavailable' })));
@@ -369,7 +387,15 @@ export async function callTgpt({ system, prompt, cfg }) {
         return finish(reject, Object.assign(new Error(redact(err.trim().slice(0, 300), cfg.apiKey)), { code: 'http' }));
       }
       if (!out.trim()) return finish(reject, Object.assign(new Error('tgpt returned nothing'), { code: 'empty' }));
-      finish(resolve, { text: out.trim(), provider: 'tgpt', model: subModel || sub || 'tgpt default' });
+      // The CLI has no token ceiling to report; the only cutoff it can suffer
+      // is our own byte cap, so report that as truncation.
+      finish(resolve, {
+        text: out.trim(),
+        provider: 'tgpt',
+        model: subModel || sub || 'tgpt default',
+        finishReason: capped ? 'byte-cap' : 'stop',
+        truncated: capped,
+      });
     });
 
     child.stdin.on('error', () => {}); // tgpt may exit before we finish writing

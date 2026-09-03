@@ -171,7 +171,18 @@ export const statsApi = {
 
 export const aiApi = {
   ask: (q) => api.get('/ai/ask', { params: { q }, timeout: AI_TIMEOUT }).then(r => r.data),
-  askPost: (question, messages = []) => api.post('/ai/ask', { question, messages: messages.slice(-8).map(m => ({ role: m.role, content: String(m.content || '').slice(0, 2000) })) }, { timeout: AI_TIMEOUT }).then(r => r.data),
+  /**
+   * The conversational entry point. `messages` is the transcript so far; the
+   * server needs it to resolve follow-ups ("does that work on my pc?"). Ten
+   * turns matches MAX_CONTEXT_MESSAGES in backend/src/services/aiService.js.
+   */
+  askPost: (question, messages = []) => api.post('/ai/ask', {
+    question,
+    messages: messages
+      .filter(m => m && (m.role === 'user' || m.role === 'assistant') && !m.error)
+      .slice(-10)
+      .map(m => ({ role: m.role, content: String(m.content || '').slice(0, 2000) })),
+  }, { timeout: AI_TIMEOUT }).then(r => r.data),
   suggestions: () => api.get('/ai/suggestions').then(r => r.data),
   status: () => api.get('/ai/status').then(r => r.data),
   faq: () => api.get('/faq').then(r => r.data),

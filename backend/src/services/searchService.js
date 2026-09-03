@@ -66,8 +66,135 @@ export function buildFtsQuery(query) {
   return tokens.map(t => `"${t}"*`).join(' OR ');
 }
 
+/**
+ * How far a typed token may be from a catalogue word before the correction is
+ * refused. Short tokens get no slack at all ("iso" must not become "isa"), and
+ * nothing is ever corrected across more than two edits, so "ubunut" -> "ubuntu"
+ * works while "quantumfoo" cannot be talked into matching anything.
+ */
+export function maxTypoDistance(token) {
+  if (token.length <= 3) return 0;
+  if (token.length <= 5) return 1;
+  return 2;
+}
+
+/**
+ * Correct query tokens against words that actually appear in the catalogue.
+ *
+ * Grounding matters more than recall here: the vocabulary is built from real
+ * rows, so a correction can only ever point at a word this repository already
+ * uses. Nothing is invented, and a token with no close catalogue word is left
+ * exactly as typed.
+ *
+ * @param {string[]} tokens     lower-cased query tokens
+ * @param {Iterable<string>} vocabulary  words taken from catalogue rows
+ * @returns {{tokens: string[], corrections: Array<{from: string, to: string}>}}
+ */
+export function correctTokens(tokens, vocabulary) {
+  const words = [...new Set([...vocabulary].filter(w => w && w.length > 1))];
+  const corrections = [];
+  const out = tokens.map(token => {
+    if (words.includes(token)) return token;
+    const budget = maxTypoDistance(token);
+    if (budget === 0) return token;
+
+    let best = null;
+    let bestDist = budget + 1;
+    for (const word of words) {
+      // A correction that changes the length a lot is not a typo.
+      if (Math.abs(word.length - token.length) > budget) continue;
+      const dist = levenshtein(token, word);
+      if (dist < bestDist) { bestDist = dist; best = word; }
+      if (bestDist === 1) break; // close enough; no better candidate matters
+    }
+    if (best && bestDist <= budget) {
+      corrections.push({ from: token, to: best });
+      return best;
+    }
+    return token;
+  });
+  return { tokens: out, corrections };
+}
+
 export class SearchService {
-  search({
+  constructor() {
+    /** @type {{words: Set<string>, at: number} | null} */
+    this._vocabCache = null;
+  }
+
+  /**
+   * Every word that occurs in a published catalogue row's name, file name,
+   * version or tags. This is the only source a typo correction may draw on,
+   * which is what keeps "ubunut" from turning into a product this repository
+   * does not actually have.
+   *
+   * Cached for a few seconds: a search request may correct several tokens, and
+   * a small archive's vocabulary is a single cheap scan.
+   */
+  vocabulary(ttlMs = 5000) {
+    if (this._vocabCache && Date.now() - this._vocabCache.at < ttlMs) {
+      return this._vocabCache.words;
+    }
+    const db = getDb();
+    const words = new Set();
+    let rows = [];
+    try {
+      rows = db.prepare(`
+        SELECT name, file_name, version, tags FROM items
+        WHERE published = 1
+        LIMIT 5000
+      `).all();
+    } catch {
+      return new Set();
+    }
+    for (const row of rows) {
+      for (const field of [row.name, row.file_name, row.version, row.tags]) {
+        if (!field) continue;
+        for (const word of String(field).toLowerCase().split(/[^\p{L}\p{N}.]+/u)) {
+          if (word.length > 1 && word.length <= MAX_TERM_LENGTH) words.add(word);
+        }
+      }
+    }
+    this._vocabCache = { words, at: Date.now() };
+    return words;
+  }
+
+  /** Drop the cached vocabulary; called after catalogue writes. */
+  invalidateVocabulary() {
+    this._vocabCache = null;
+  }
+
+  /**
+   * Rewrite a query so obvious typos hit real catalogue words.
+   * Returns the original query untouched when nothing is close enough.
+   */
+  correctQuery(q) {
+    const tokens = tokenize(q).map(sanitizeFtsToken).filter(t => t.length > 1);
+    if (tokens.length === 0) return { query: q, corrections: [] };
+    const { tokens: fixed, corrections } = correctTokens(tokens, this.vocabulary());
+    if (corrections.length === 0) return { query: q, corrections: [] };
+    return { query: fixed.join(' '), corrections };
+  }
+
+  /**
+   * Search, retrying once against typo-corrected tokens when the query as
+   * typed finds nothing. The retry only ever uses words that exist in the
+   * catalogue, so a miss stays a miss instead of becoming an invented hit.
+   */
+  search(opts = {}) {
+    const first = this._searchExact(opts);
+    const q = String(opts.q || '');
+    if (first.total > 0 || first.results.length > 0 || !q.trim()) return first;
+
+    const { query, corrections } = this.correctQuery(q);
+    if (corrections.length === 0) return first;
+
+    const retry = this._searchExact({ ...opts, q: query });
+    if (retry.total === 0 && retry.results.length === 0) return first;
+    return { ...retry, correctedQuery: query, corrections };
+  }
+
+  _searchExact({
     q = '',
     category = null,
     folder = null,
