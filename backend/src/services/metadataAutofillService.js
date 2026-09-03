@@ -95,7 +95,7 @@ function firstPattern(haystack, patterns) {
 /** Version-looking substrings, best candidate first. */
 function findVersion(text) {
   const candidates = [
-    ...text.matchAll(/\b(?:version|release|v)\s*:?\s*(\d+(?:\.\d+){1,3}[a-z0-9.\-]*)/gi),
+    ...text.matchAll(/\b(?:version|release|v)\s*:?\s*(\d+(?:\.\d+){1,3}[a-z0-9.-]*)/gi),
     ...text.matchAll(/\b(\d+\.\d+(?:\.\d+){0,2})\b/g),
   ].map((m) => m[1]);
   return candidates.find((c) => c && c.length <= 30) || null;

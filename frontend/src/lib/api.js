@@ -243,6 +243,14 @@ export const catalogApi = {
   }).then(r => r.data),
 };
 
+export const snapshotApi = {
+  /** Database snapshots taken before risky changes. */
+  list: () => api.get('/admin/snapshots').then(r => r.data),
+  /** Roll the catalogue (or everything) back to one. dryRun previews the counts. */
+  restore: (path, { scope = 'catalogue', dryRun = false } = {}) =>
+    api.post('/admin/snapshots/restore', { path, scope, dryRun }, { timeout: AI_TIMEOUT }).then(r => r.data),
+};
+
 export const settingsApi = {
   get: () => api.get('/settings').then(r => r.data),
 };

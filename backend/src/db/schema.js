@@ -157,6 +157,15 @@ CREATE INDEX IF NOT EXISTS idx_items_platform ON items(platform);
 CREATE INDEX IF NOT EXISTS idx_items_arch ON items(architecture);
 CREATE INDEX IF NOT EXISTS idx_items_file_type ON items(file_type);
 CREATE INDEX IF NOT EXISTS idx_items_created ON items(created_at DESC);
+-- Admin catalogue filters. platform / architecture / file_type / category_id /
+-- folder_id / published were already indexed; these are the columns the admin
+-- filter set added.
+CREATE INDEX IF NOT EXISTS idx_items_version ON items(version);
+CREATE INDEX IF NOT EXISTS idx_items_release_date ON items(release_date);
+CREATE INDEX IF NOT EXISTS idx_items_storage_provider ON items(storage_provider);
+-- The admin sort defaults to "recently updated"; without this it is a full scan
+-- plus a sort on every page of results.
+CREATE INDEX IF NOT EXISTS idx_items_updated ON items(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_users_email_hash ON users(email_hash);
 
 -- Unlimited download links per item
@@ -185,6 +194,9 @@ CREATE TABLE IF NOT EXISTS item_download_links (
 CREATE INDEX IF NOT EXISTS idx_download_links_item ON item_download_links(item_id);
 CREATE INDEX IF NOT EXISTS idx_download_links_primary ON item_download_links(item_id, is_primary);
 CREATE INDEX IF NOT EXISTS idx_download_links_down ON item_download_links(is_down);
+-- (idx_items_status and idx_download_links_item_status index columns that are
+-- added by ALTER on older databases, so they are created in the guarded
+-- migration block in db/index.js rather than here.)
 
 -- Item version history - a full decrypted snapshot after every create/edit,
 -- so admins can inspect what changed and roll a page back.

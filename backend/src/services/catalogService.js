@@ -977,19 +977,27 @@ export function buildTemplateZip() {
 export function listImports(limit = 50) {
   const db = getDb();
   const capped = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  // Join the admin who ran it: the history is meant to answer "who imported
+  // what, when", and a bare user id answers none of that.
   return db.prepare(`
-    SELECT id, filename, sha256, size_bytes, mode, status, dry_run,
-           items_created, items_updated, items_unchanged, items_skipped,
-           relations_created, error_count, backup_path, catalog_format, catalog_version,
-           imported_by, started_at, finished_at
-    FROM catalog_imports ORDER BY id DESC LIMIT ?
+    SELECT i.id, i.filename, i.sha256, i.size_bytes, i.mode, i.status, i.dry_run,
+           i.items_created, i.items_updated, i.items_unchanged, i.items_skipped,
+           i.relations_created, i.error_count, i.backup_path, i.catalog_format, i.catalog_version,
+           i.imported_by, i.started_at, i.finished_at,
+           u.username AS imported_by_name
+    FROM catalog_imports i LEFT JOIN users u ON u.id = i.imported_by
+    ORDER BY i.id DESC LIMIT ?
   `).all(capped);
 }
 
 /** One import including its stored errors. */
 export function getImport(id) {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM catalog_imports WHERE id = ?').get(Number(id));
+  const row = db.prepare(`
+    SELECT i.*, u.username AS imported_by_name
+    FROM catalog_imports i LEFT JOIN users u ON u.id = i.imported_by
+    WHERE i.id = ?
+  `).get(Number(id));
   if (!row) return null;
   let errors = [];
   try { errors = row.errors_json ? JSON.parse(row.errors_json) : []; } catch { errors = []; }

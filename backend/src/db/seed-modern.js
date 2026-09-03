@@ -316,7 +316,7 @@ export function seedModern(db) {
       { url: 'https://download.blender.org/release/', category: 'applications', folder: 'media-tools', tags: ['3d'] });
     matrix('Krita', 'krita', 'Digital painting that powers professional studios.', ['5.2.2', '5.2.6', '5.2.9', '5.2.11'],
       [WIN_X64, ['Linux AppImage', 'linux', 'appimage', 'x64', 180, 220], MAC_ARM],
-      { url: gh('KDE/krita', '', ''), url: 'https://download.kde.org/stable/krita/', category: 'applications', folder: 'media-tools', tags: ['art', 'paint'] });
+      { url: 'https://download.kde.org/stable/krita/', category: 'applications', folder: 'media-tools', tags: ['art', 'paint'] });
     matrix('Godot Engine', 'godot', 'The open game engine (standard + .NET builds).', ['4.2.2-stable', '4.3-stable', '4.4.1-stable', '4.5-stable'],
       [ ['Windows x64', 'windows', 'zip', 'x64', 65, 95], ['Linux x64', 'linux', 'zip', 'x64', 65, 95], ['Windows .NET x64', 'windows', 'zip', 'x64', 130, 170], ['Linux .NET x64', 'linux', 'tar.gz', 'x64', 130, 170] ],
       { url: gh('godotengine/godot'), category: 'games', folder: 'open-games', tags: ['game-engine'] });
@@ -328,7 +328,7 @@ export function seedModern(db) {
       { url: gh('mltframework/shotcut'), category: 'applications', folder: 'media-tools', tags: ['video'] });
     matrix('Kdenlive', 'kdenlive', 'KDE non-linear video editor.', ['24.02.2', '24.08.3', '24.12.3', '25.04.3', '25.08.0'],
       [WIN_X64, ['Linux AppImage', 'linux', 'appimage', 'x64', 110, 150]],
-      { url: gh('KDE/kdenlive', '', ''), url: 'https://kdenlive.org/download/', category: 'applications', folder: 'media-tools', tags: ['video'] });
+      { url: 'https://kdenlive.org/download/', category: 'applications', folder: 'media-tools', tags: ['video'] });
     matrix('GIMP 3', 'gimp3', 'GIMP 3.0 -- GTK3, non-destructive editing, CMYK groundwork.', ['3.0.0', '3.0.2', '3.0.4'],
       [WIN_X64, ['Linux AppImage', 'linux', 'appimage', 'x64', 250, 320], MAC_ARM],
       { url: 'https://download.gimp.org/gimp/v3.0/', category: 'applications', folder: 'media-tools', tags: ['image-editing'] });

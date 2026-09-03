@@ -137,12 +137,56 @@ damage, and a catalogue of repetitive Markdown legitimately reaches ~120:1.
 
 ## Transactions and backups
 
-An applied import runs inside a single SQLite transaction, so a failure part way
-through a 2 000-entry archive leaves the database exactly as it was. Before
-writing, the service takes an online snapshot into `BACKUP_DIR`
+Two layers of protection, because they answer different questions.
+
+**Transactions** answer "what if it fails halfway". An applied import runs inside
+a single SQLite transaction, so a failure part way through a 2 000-entry archive
+leaves the database exactly as it was. Every bulk edit does the same.
+
+**Snapshots** answer "what if it succeeds and I was wrong". Before writing, the
+service takes an online snapshot into `BACKUP_DIR`
 (`pre-catalog-import-<id>-<timestamp>.db`) and records its path in the history
-row. If the snapshot cannot be made, the import refuses to run. Set
+row. If the snapshot cannot be made, the import refuses to run — a change with
+nothing to roll back to is a change not worth making. Set
 `CATALOG_BACKUP=false` to skip snapshots (not recommended).
+
+### Snapshots before bulk edits
+
+`POST /api/admin/items/bulk` snapshots the database before any action that
+rewrites rows (`delete`, `archive`, `tags`, `category`, `folder`, and the
+single-field edits) and returns the path as `backupPath`. Publish/unpublish/
+feature are one click to reverse, so they do not pay for a snapshot; `?backup=0`
+opts out explicitly.
+
+### Rolling back
+
+```
+GET  /api/admin/snapshots
+POST /api/admin/snapshots/restore   { path, scope?, dryRun? }
+```
+
+`scope` is `catalogue` (default: categories, folders, tags, items, download
+links, item_tags, relations) or `all` (adds FAQ, site settings, users, uploads).
+
+A restore ATTACHes the snapshot and copies rows back inside one transaction
+rather than swapping the file out from under an open connection, so a failure
+leaves the database untouched instead of half-restored. Foreign keys are dropped
+for the copy and re-enabled after; the FTS index is rebuilt so search matches the
+restored rows. The path must resolve inside `BACKUP_DIR` and end in `.db`, and
+the file must actually be an espress0 snapshot (it is checked for an `items`
+table before anything is written).
+
+Send `dryRun: true` to see the row counts first — **Admin → Backup** always does.
+
+### Import history
+
+`GET /api/admin/catalog/imports` lists one row per import, dry runs included,
+with the admin who ran it (`imported_by_name`), when it started and finished, the
+file name, size and SHA-256, the mode, per-bucket counts
+(`items_created` / `updated` / `unchanged` / `skipped`, `relations_created`),
+the error count, the result (`ok` / `failed` / `rejected`) and the snapshot path.
+`GET /api/admin/catalog/imports/:id/errors?format=json|csv` downloads the stored
+per-row errors. All of it is in **Admin → Catalogue**.
 
 ## Data model additions
 
@@ -153,7 +197,32 @@ row. If the snapshot cannot be made, the import refuses to run. Set
 
 Both new item columns are added by `ALTER TABLE` in `backend/src/db/index.js`,
 so existing databases are migrated in place and every existing row is backfilled
-to `status = 'current'`.
+to `status = 'current'`. Nothing is dropped and no existing row is rewritten.
+
+### Indexes
+
+Added for the admin filter and sort set:
+
+| Index | Serves |
+| --- | --- |
+| `idx_items_status` | `?status=` |
+| `idx_items_version` | `?version=` |
+| `idx_items_release_date` | `?release_from` / `?release_to` |
+| `idx_items_storage_provider` | `?storage_provider=` |
+| `idx_items_updated` | the default sort (recently updated) |
+| `idx_download_links_item_status` | `?link_health=` |
+
+`platform`, `architecture`, `file_type`, `category_id`, `folder_id` and
+`published` were already indexed.
+
+**Ordering matters.** `SCHEMA_SQL` runs *before* the `ALTER TABLE` guards in
+`db/index.js`, so an index on a column that only an ALTER adds (`status`, and
+`item_download_links.status`) cannot live in `SCHEMA_SQL` — on a database that
+predates the column it would fail with `no such column`. Those two are created
+in the guarded block instead. `tests/migration.test.js` builds a genuine
+pre-catalogue database from the original schema and asserts the upgrade
+preserves its rows, so a regression here fails the suite rather than a
+deployment.
 
 ## Managing the catalogue in the admin
 
@@ -260,6 +329,49 @@ drives `loading_dots_white.gif`). Long operations — bulk edits, autofill,
 imports — report progress through `frontend/src/components/Progress.jsx`, which
 shows a determinate bar when the caller knows the percentage and the standard
 dots plus a pulsing track when it only knows that work is still running.
+
+## Quality checks
+
+Run from `backend/` and `frontend/` respectively:
+
+```sh
+npm test          # backend unit tests (node:test)
+npm run lint      # ESLint, both packages
+npm run build     # frontend production build
+npm run audit     # npm audit, production dependencies
+node tests/e2e-catalog.mjs   # end-to-end HTTP checks (needs a running server)
+```
+
+CI runs all of them: `test-backend` (lint then tests), `build-frontend` (lint
+then build) and a `security` job that audits production dependencies in both
+packages at `--audit-level=high`. `docker-build` waits on all three.
+
+**On type checks:** this repository is plain JavaScript with no TypeScript and
+no `tsconfig.json`, so there is no type checker to run. ESLint's `no-undef` and
+`no-dupe-keys` catch the closest class of bug — identifiers that do not exist
+and object literals where one key silently shadows another. Adding TypeScript is
+a separate, much larger change; it was not folded into this work.
+
+The ESLint configs are deliberately narrow (`eslint:recommended` plus a few
+bug-finding rules). Both packages currently report zero errors and a few hundred
+warnings, all of them unused variables in pre-existing code — they are left as
+warnings so the linter can be introduced without rewriting working files.
+
+### End-to-end setup
+
+`tests/e2e-catalog.mjs` needs a server with a seeded database and the login
+captcha off:
+
+```sh
+DATABASE_PATH=./data/e2e.db node src/db/migrate.js
+DATABASE_PATH=./data/e2e.db node src/db/seed.js
+DATABASE_PATH=./data/e2e.db PORT=3200 CAPTCHA_TYPE=disabled node src/index.js
+```
+
+The captcha gate is `CAPTCHA_TYPE=disabled`, not the `require_captcha` site
+setting. The import endpoint is rate-limited to 10 requests per 5 minutes, and
+the script makes 10 — so a second run against the same server fails with 429
+until the window resets. Restart the server to clear it.
 
 ## Known issue in the seed data
 

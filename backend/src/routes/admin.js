@@ -11,6 +11,8 @@ import {
   searchCatalog, catalogFacets, catalogStats, ITEM_STATUSES,
 } from '../services/catalogQueryService.js';
 import { autofillFromUrl } from '../services/metadataAutofillService.js';
+import { snapshotDatabase } from '../services/catalogService.js';
+import { listSnapshots, restoreFromSnapshot } from '../services/restoreService.js';
 import { UnsafeUrlError } from '../lib/safeFetch.js';
 import { readFileSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
@@ -433,6 +435,30 @@ export async function adminRoutes(fastify) {
       summary = { [column]: !!flagValue };
     }
 
+    // --- snapshot first ----------------------------------------------------
+    // Deleting or rewriting rows across many pages is not something an admin
+    // can undo by hand, so take a database snapshot before touching anything
+    // and hand the path back with the response. Publish/unpublish/feature are
+    // one click to reverse, so they do not pay for a snapshot. `?backup=0`
+    // opts out; CATALOG_BACKUP=false disables snapshots entirely.
+    const DESTRUCTIVE = ['delete', 'archive'];
+    const wantsBackup = String(request.query?.backup ?? '1') !== '0';
+    const shouldBackup = wantsBackup && (DESTRUCTIVE.includes(action) || !!FIELD_ACTIONS[action] || action === 'tags' || action === 'category' || action === 'folder');
+    let backupPath = null;
+    if (shouldBackup) {
+      try {
+        backupPath = await snapshotDatabase(`pre-bulk-${action}`);
+      } catch (e) {
+        // A snapshot we cannot take is a change we should not make: without it
+        // there is nothing to roll back to.
+        request.log.error(e, 'Backup before bulk change failed');
+        return reply.code(500).send({
+          error: 'Could not take a backup before this change, so it was not applied',
+          detail: e.message,
+        });
+      }
+    }
+
     // --- apply in one transaction ------------------------------------------
     let affected = 0;
     try {
@@ -465,7 +491,35 @@ export async function adminRoutes(fastify) {
       return reply.code(500).send({ error: `Bulk action failed, nothing was changed: ${e.message}` });
     }
 
-    return { success: true, action, affected, ids: cleanIds, ...(summary || {}) };
+    // The snapshot path travels with the response so the UI can offer an undo
+    // straight away, and so the admin can find the file if they close the tab.
+    return { success: true, action, affected, ids: cleanIds, backupPath, ...(summary || {}) };
+  });
+
+  // --- snapshots and rollback ---------------------------------------------
+
+  /** GET /admin/snapshots - database snapshots taken before risky changes. */
+  fastify.get('/admin/snapshots', async () => listSnapshots());
+
+  /**
+   * POST /admin/snapshots/restore  { path, scope?, dryRun? }
+   * Roll the catalogue (or everything) back to a snapshot. The copy runs in one
+   * transaction, so a failure leaves the database untouched. Send dryRun to see
+   * the row counts without writing.
+   */
+  fastify.post('/admin/snapshots/restore', async (request, reply) => {
+    const { path: snapshotPath, scope = 'catalogue', dryRun = false } = request.body || {};
+    if (scope !== 'catalogue' && scope !== 'all') {
+      return reply.code(400).send({ error: "scope must be 'catalogue' or 'all'" });
+    }
+    try {
+      const result = restoreFromSnapshot(snapshotPath, { scope, dryRun: !!dryRun });
+      request.log.warn({ snapshot: result.path, scope, dryRun: result.dryRun, restored: result.restored },
+        'Database rolled back to a snapshot');
+      return result;
+    } catch (e) {
+      return reply.code(400).send({ error: e.message });
+    }
   });
 
   /**

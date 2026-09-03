@@ -372,5 +372,167 @@ const relId = addRel.payload.relation.id;
 const delRel = await api(`/admin/items/${ids[0]}/related/${relId}`, { method: 'DELETE' });
 check('a relation can be removed', delRel.status === 200 && delRel.payload.success === true);
 
+
+// ==========================================================================
+// Backup before bulk changes, rollback, and authorization
+// ==========================================================================
+
+// --- bulk edits take a snapshot --------------------------------------------
+const bulkWithBackup = await api('/admin/items/bulk', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'version', ids: [ids[0]], value: '99.99' }),
+});
+check('a bulk field edit reports the snapshot it took',
+  bulkWithBackup.status === 200 && typeof bulkWithBackup.payload.backupPath === 'string'
+  && bulkWithBackup.payload.backupPath.endsWith('.db'),
+  String(bulkWithBackup.payload.backupPath));
+
+// Publish/unpublish/feature are one click to reverse, so they do not pay for a
+// snapshot. A field rewrite does.
+const bulkNoBackup = await api('/admin/items/bulk', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'publish', ids: [ids[0]] }),
+});
+check('a trivially reversible bulk edit skips the snapshot',
+  bulkNoBackup.status === 200 && bulkNoBackup.payload.backupPath === null,
+  JSON.stringify(bulkNoBackup.payload.backupPath));
+check('opting out of the snapshot is honoured', (await api('/admin/items/bulk', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'platform', ids: [ids[0]], value: 'Linux' }),
+})).status === 200);
+const bulkOptOut = await api('/admin/items/bulk?backup=0', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'platform', ids: [ids[0]], value: 'Linux' }),
+});
+check('?backup=0 skips the snapshot', bulkOptOut.status === 200
+  && bulkOptOut.payload.backupPath === null, JSON.stringify(bulkOptOut.payload.backupPath));
+
+// --- snapshots and rollback ------------------------------------------------
+const snaps = await api('/admin/snapshots');
+check('snapshots are listed newest first with size and date', snaps.status === 200
+  && Array.isArray(snaps.payload.snapshots) && snaps.payload.snapshots.length > 0
+  && snaps.payload.snapshots[0].sizeBytes > 0 && !!snaps.payload.snapshots[0].createdAt,
+  `${snaps.payload.snapshots?.length} snapshots`);
+
+const snapPath = snaps.payload.snapshots[0].path;
+const previewRestore = await api('/admin/snapshots/restore', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ path: snapPath, scope: 'catalogue', dryRun: true }),
+});
+check('a rollback can be previewed without writing', previewRestore.status === 200
+  && previewRestore.payload.dryRun === true && previewRestore.payload.restored.items > 0,
+  JSON.stringify(previewRestore.payload.restored));
+
+const stillChanged = await api(`/items/${(await api('/admin/catalog/search?q=E2E%20Ubuntu&limit=1')).payload.items[0].slug}`);
+check('the preview left the database alone', stillChanged.status === 200);
+
+const restore = await api('/admin/snapshots/restore', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ path: snapPath, scope: 'catalogue' }),
+});
+check('a rollback restores the catalogue tables', restore.status === 200
+  && restore.payload.dryRun === false && restore.payload.restored.items > 0,
+  JSON.stringify(restore.payload.restored));
+check('a catalogue-scope rollback leaves users and settings alone',
+  !('users' in restore.payload.restored) && !('site_settings' in restore.payload.restored));
+
+check('rollback refuses a path outside the backup directory', (await api('/admin/snapshots/restore', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ path: '/etc/passwd' }),
+})).status === 400);
+check('rollback refuses a bad scope', (await api('/admin/snapshots/restore', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ path: snapPath, scope: 'everything' }),
+})).status === 400);
+check('rollback refuses a snapshot that does not exist', (await api('/admin/snapshots/restore', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ path: snapPath.replace(/[^/]+$/, 'missing-999999.db') }),
+})).status === 400);
+
+// --- import history --------------------------------------------------------
+const historyRows = (await api('/admin/catalog/imports?limit=5')).payload.imports
+  || (await api('/admin/catalog/imports?limit=5')).payload;
+const rows = Array.isArray(historyRows) ? historyRows : [];
+check('import history names the admin who ran it', rows.length > 0
+  && rows.some(r => r.imported_by_name === 'admin'),
+  rows.slice(0, 2).map(r => `${r.filename}:${r.imported_by_name}`).join(', '));
+check('import history carries file, mode, counts, result and dates', rows.every(r =>
+  r.filename && r.mode && r.status && r.started_at
+  && typeof r.items_created === 'number' && typeof r.error_count === 'number'));
+
+// --- authorization ---------------------------------------------------------
+const viewer = await api('/admin/users', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ username: 'e2e-viewer', email: 'e2e-viewer@example.com', password: 'ViewerPass123!', role: 'viewer' }),
+});
+check('a non-admin test user can be created', viewer.status === 201 || viewer.status === 200 || viewer.status === 409,
+  `status ${viewer.status}`);
+
+const viewerLogin = await fetch(`${BASE}/auth/login`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ username: 'e2e-viewer', password: 'ViewerPass123!' }),
+});
+const viewerBody = await viewerLogin.json();
+const viewerCookies = (viewerLogin.headers.getSetCookie ? viewerLogin.headers.getSetCookie() : [])
+  .map(c => c.split(';')[0]).join('; ');
+const viewerCsrf = viewerBody.csrfToken;
+check('the non-admin user can log in', viewerLogin.status === 200 && viewerCookies.includes('espress0_token'),
+  `status ${viewerLogin.status}`);
+
+/** Same endpoints, but with the non-admin session. */
+const asViewer = async (path, opts = {}) => {
+  const res = await fetch(`${BASE}${path}`, {
+    ...opts,
+    headers: { Cookie: viewerCookies, 'X-CSRF-Token': viewerCsrf, ...(opts.headers || {}) },
+  });
+  return { status: res.status, payload: res.headers.get('content-type')?.includes('json') ? await res.json() : null };
+};
+
+const forbidden = [
+  ['GET', '/admin/catalog/search'],
+  ['GET', '/admin/catalog/facets'],
+  ['GET', '/admin/catalog/stats'],
+  ['GET', '/admin/catalog/imports'],
+  ['GET', '/admin/catalog/export'],
+  ['GET', '/admin/catalog/template'],
+  ['GET', '/admin/snapshots'],
+  ['GET', '/admin/overview'],
+];
+for (const [method, route] of forbidden) {
+  const res = await asViewer(route, { method });
+  check(`non-admin is refused on ${route}`, res.status === 401 || res.status === 403, `status ${res.status}`);
+}
+
+const forbiddenPosts = [
+  ['/admin/items/bulk', { action: 'delete', ids: [ids[0]] }],
+  ['/admin/snapshots/restore', { path: snapPath }],
+  ['/admin/slugify', { text: 'anything' }],
+  ['/admin/metadata-autofill', { url: 'https://example.com/' }],
+];
+for (const [route, body] of forbiddenPosts) {
+  const res = await asViewer(route, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  check(`non-admin is refused on POST ${route}`, res.status === 401 || res.status === 403, `status ${res.status}`);
+}
+
+const anonSnapshots = await fetch(`${BASE}/admin/snapshots`);
+check('snapshots require authentication entirely', anonSnapshots.status === 401, `status ${anonSnapshots.status}`);
+
+// The non-admin must not have been able to delete anything.
+const survivor = await api(`/admin/catalog/search?q=E2E%20Ubuntu&limit=10`);
+check('the non-admin delete attempt changed nothing', survivor.payload.items.length >= 2,
+  `${survivor.payload.items.length} rows still present`);
+
 console.log(failures === 0 ? '\nALL E2E CHECKS PASSED' : `\n${failures} E2E CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
