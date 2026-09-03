@@ -111,14 +111,26 @@ export function decide({ env, settings = () => null, tgptAvailable = false, tgpt
   let provider = requested || 'auto';
 
   const apiKey = env.apiKey || '';
+  // A key only implies "Gemini is intended" if it was set under one of the
+  // names that mean that. An existing deployment's TGPT_API_KEY is the key for
+  // TGPT_PROVIDER's service, not a Google key, and treating it as one would
+  // retarget every AI call at Google with an sk- credential on the next
+  // restart - a silent break on upgrade for exactly that box.
+  const source = env.apiKeySource || (apiKey ? 'AI_API_KEY' : '');
+  const geminiKey = !!apiKey && source !== 'TGPT_API_KEY';
   let autoPicked = null;
   if (provider === 'auto') {
     // A key present means a key-backed provider was clearly intended; without
     // one, keep the free tgpt CLI working if it is installed (that is how every
     // existing deployment runs today), else metadata-only.
-    if (apiKey) { provider = 'gemini'; autoPicked = 'a Gemini API key is configured'; }
+    if (geminiKey) { provider = 'gemini'; autoPicked = `a Gemini API key is configured (${source})`; }
     else if (tgptAvailable) { provider = 'tgpt'; autoPicked = 'tgpt is installed and no API key is set'; }
     else provider = 'none';
+  }
+
+  if (provider === 'gemini' && apiKey && source === 'TGPT_API_KEY') {
+    notes.push(`AI_PROVIDER=gemini but the only key found is TGPT_API_KEY, which is the `
+      + `key for tgpt's provider. Set AI_API_KEY (or GEMINI_API_KEY) for the Gemini backend.`);
   }
 
   const needsKey = provider === 'gemini';
@@ -153,6 +165,7 @@ export function decide({ env, settings = () => null, tgptAvailable = false, tgpt
     baseUrlIsDefault: !baseUrlRaw,
     apiKey,
     keyConfigured: !!apiKey,
+    keySource: apiKey ? source : '',
     temperature: number(pick(settings('ai_temperature'), env.temperature), 0.2, 0, 2, 'ai_temperature'),
     maxTokens: number(pick(settings('ai_max_tokens'), env.maxTokens), 1024, 64, 32768, 'ai_max_tokens'),
     timeoutMs: clampBudget(number(pick(settings('ai_timeout_ms'), env.timeoutMs), env.timeoutMs, 2000, 600000, 'ai_timeout_ms'), 'ai_timeout_ms', notes),
@@ -216,7 +229,7 @@ export function describeAiForAdmin(resolved, lastError = null) {
     baseUrlIsDefault: resolved.baseUrlIsDefault,
     keyConfigured: resolved.keyConfigured,
     keyHint: resolved.keyConfigured
-      ? 'set (from .env; never stored in the database)'
+      ? `set from ${resolved.keySource} in .env; never stored in the database`
       : 'not set - add AI_API_KEY or GEMINI_API_KEY to .env and restart',
     temperature: resolved.temperature,
     maxTokens: resolved.maxTokens,

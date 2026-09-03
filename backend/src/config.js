@@ -161,6 +161,10 @@ export const config = {
     // Google's SDKs read these two names, so a box that already exports one
     // needs no .env edit. TGPT_API_KEY stays as the historical spelling.
     apiKey: envFirst(['AI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'TGPT_API_KEY'])?.value || '',
+    // Which name supplied it, because the name carries meaning: a key found in
+    // TGPT_API_KEY belongs to whatever TGPT_PROVIDER points at (OpenAI, say),
+    // and must not talk `auto` into sending it to Google.
+    apiKeySource: envFirst(['AI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'TGPT_API_KEY'])?.name || '',
     temperature: floatFromEnv('AI_TEMPERATURE', 0.2, 0, 2),
     maxTokens: intFromEnv(['AI_MAX_TOKENS'], 1024, 64, 32768, 'tokens'),
     // Per-run budgets; see AI_ASK_TIMEOUT_MS above for why they must be
