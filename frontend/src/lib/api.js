@@ -107,6 +107,14 @@ export function describeApiError(error) {
 
 api.interceptors.request.use((config) => {
   if (!SAFE_METHODS.has((config.method || 'get').toLowerCase())) {
+    // The client declares `Content-Type: application/json` for everything, so a
+    // POST that carries no body at all arrived as an empty JSON body and
+    // Fastify rejected it with FST_ERR_CTP_EMPTY_JSON_BODY. Every bodyless
+    // mutation failed with a 400: logging out, duplicating a page, rebuilding
+    // the search index, restoring a version, running a link check, resetting a
+    // setting. Sending `{}` keeps the declared type honest and fixes all of
+    // them in one place, including calls added later.
+    if (config.data === undefined) config.data = {};
     const csrf = readCookie('espress0_csrf');
     if (csrf) config.headers['X-CSRF-Token'] = csrf;
   }
