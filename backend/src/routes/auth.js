@@ -4,6 +4,7 @@ import { generateToken, authenticate } from '../middleware/auth.js';
 import { config } from '../config.js';
 import { encryptionService } from '../services/encryptionService.js';
 import { captchaService } from '../services/captchaService.js';
+import { getSetting } from '../services/settingsService.js';
 import crypto from 'crypto';
 import { z } from 'zod';
 
@@ -101,6 +102,22 @@ const profileSchema = z.object({
   return true;
 }, { message: "New passwords don't match", path: ["confirmNewPassword"] });
 
+/**
+ * Whether login/register should demand a CAPTCHA.
+ *
+ * Two switches, and both have to say yes: the deployment-level `CAPTCHA_TYPE`
+ * (an operator can turn the whole thing off without touching the database) and
+ * the "Require CAPTCHA on login" setting in Admin -> Site settings.
+ *
+ * The setting was never read. Env-only meant the toggle sat in the admin UI
+ * doing nothing: switching it off left the CAPTCHA in place, and switching it
+ * on changed nothing either, because the env default already asked for one.
+ */
+function captchaRequired() {
+  if (process.env.CAPTCHA_TYPE === 'disabled') return false;
+  return getSetting('require_captcha', true) !== false;
+}
+
 export async function authRoutes(fastify) {
   fastify.post('/auth/login', {
     config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }
@@ -109,8 +126,7 @@ export async function authRoutes(fastify) {
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid input', details: parsed.error.errors });
 
     const { username, password, captchaId, captchaAnswer, captchaToken } = request.body;
-    const captchaType = process.env.CAPTCHA_TYPE || 'math';
-    if (captchaType !== 'disabled') {
+    if (captchaRequired()) {
       const captchaResult = await captchaService.verifyWithType({ id: captchaId, answer: captchaAnswer, token: captchaToken }, request.ip);
       if (!captchaResult.success) {
         return reply.code(400).send({ error: 'CAPTCHA verification failed', details: captchaResult.message, captchaRequired: true, newCaptcha: captchaService.generate() });
@@ -168,8 +184,7 @@ export async function authRoutes(fastify) {
     }
 
     const { username, email, password, captchaId, captchaAnswer, captchaToken } = request.body;
-    const captchaType = process.env.CAPTCHA_TYPE || 'math';
-    if (captchaType !== 'disabled') {
+    if (captchaRequired()) {
       const captchaResult = await captchaService.verifyWithType({ id: captchaId, answer: captchaAnswer, token: captchaToken }, request.ip);
       if (!captchaResult.success) {
         return reply.code(400).send({ error: 'CAPTCHA verification failed', details: captchaResult.message, captchaRequired: true, newCaptcha: captchaService.generate() });
