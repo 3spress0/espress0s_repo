@@ -136,7 +136,10 @@ AI_MODEL=gemini-2.5-flash        # optional; this is the default
 ```
 
 `AI_API_KEY`, `GEMINI_API_KEY` and `GOOGLE_API_KEY` are all read, in that order,
-so a box that already exports one of Google's names needs no edit. Note that
+so a box that already exports one of Google's names needs no edit. `TGPT_API_KEY`
+is read too — but only as *tgpt's* key: because it belongs to whatever
+`TGPT_PROVIDER` points at, it never makes `auto` choose the Gemini backend, so
+an existing deployment keeps calling the service it was already calling. Note that
 Google now rejects *unrestricted* legacy API keys (auth keys are what AI Studio
 issues), so a key that returns 403 was probably created before that change and
 needs a restriction or a replacement.
