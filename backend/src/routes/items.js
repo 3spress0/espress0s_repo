@@ -26,6 +26,119 @@ function isAdmin(request) {
 }
 
 /**
+ * Validate the `download_links` array of a create or update body.
+ *
+ * Every link has to be usable. The old code skipped the ones that failed
+ * validation, so one typo in one mirror's URL silently deleted that mirror
+ * the next time the page was saved - the save reported success and the mirror
+ * was simply gone.
+ *
+ * `{ links: null }` means "not part of this request", which is different from
+ * `{ links: [] }`, meaning "this page should have no mirrors".
+ */
+function parseDownloadLinks(raw) {
+  if (raw === undefined) return { links: null };
+  if (!Array.isArray(raw)) {
+    return { errors: [{ index: 0, message: 'download_links must be an array' }] };
+  }
+  const links = [];
+  const errors = [];
+  raw.forEach((entry, index) => {
+    const parsed = downloadLinkSchema.safeParse(entry);
+    if (parsed.success) {
+      links.push(parsed.data);
+      return;
+    }
+    errors.push({
+      index,
+      label: typeof entry?.label === 'string' ? entry.label : null,
+      issues: parsed.error.issues.map(i => `${i.path?.join('.') || 'value'}: ${i.message}`),
+    });
+  });
+  return errors.length ? { errors } : { links };
+}
+
+/** Bind parameters for one mirror row, encrypting the fields at rest. */
+function linkRow(itemId, link, fallbackSort) {
+  const enc = encryptLinkFields({
+    storage_path: link.storage_path || null,
+    download_url: link.download_url || null,
+    down_reason: link.down_reason || null,
+  });
+  return {
+    item_id: itemId,
+    label: link.label,
+    storage_provider: link.storage_provider,
+    storage_path: enc.storage_path,
+    download_url: enc.download_url,
+    file_size: link.file_size || null,
+    is_primary: link.is_primary ? 1 : 0,
+    is_down: link.is_down ? 1 : 0,
+    down_reason: enc.down_reason,
+    status: link.status || (link.is_down ? 'down' : 'up'),
+    sort_order: link.sort_order !== undefined ? link.sort_order : fallbackSort,
+  };
+}
+
+const INSERT_LINK_SQL = `
+  INSERT INTO item_download_links (item_id, label, storage_provider, storage_path, download_url,
+                                   file_size, is_primary, is_down, down_reason, status, sort_order)
+  VALUES (@item_id, @label, @storage_provider, @storage_path, @download_url,
+          @file_size, @is_primary, @is_down, @down_reason, @status, @sort_order)
+`;
+
+// Everything a save is allowed to change. download_count, the health-check
+// columns, created_at and the row id are deliberately absent: they are the
+// mirror's history, not its definition.
+const UPDATE_LINK_SQL = `
+  UPDATE item_download_links
+     SET label = @label, storage_provider = @storage_provider, storage_path = @storage_path,
+         download_url = @download_url, file_size = @file_size, is_primary = @is_primary,
+         is_down = @is_down, down_reason = @down_reason, status = @status,
+         sort_order = @sort_order, updated_at = CURRENT_TIMESTAMP
+   WHERE id = @id AND item_id = @item_id
+`;
+
+/**
+ * Apply a wanted set of mirrors to an item, in place.
+ *
+ * Deleting every row and re-inserting them - what this used to do - reset each
+ * mirror's `download_count` to 0 and threw away `status`, `last_checked`,
+ * `http_status` and `check_error`, so saving a page from the admin editor
+ * quietly destroyed its link-health history and its download numbers. Rows the
+ * client knows about are updated; the rest are inserted; the ones missing from
+ * the payload were removed by the admin and are deleted.
+ */
+function syncDownloadLinks(db, itemId, wanted) {
+  const existingIds = db
+    .prepare('SELECT id FROM item_download_links WHERE item_id = ? ORDER BY sort_order, id')
+    .all(itemId)
+    .map(r => Number(r.id));
+
+  const insert = db.prepare(INSERT_LINK_SQL);
+  const update = db.prepare(UPDATE_LINK_SQL);
+  const kept = new Set();
+
+  wanted.forEach((link, index) => {
+    const row = linkRow(itemId, link, index);
+    const linkId = Number(link.id);
+    if (linkId && existingIds.includes(linkId)) {
+      update.run({ ...row, id: linkId });
+      kept.add(linkId);
+    } else {
+      kept.add(Number(insert.run(row).lastInsertRowid));
+    }
+  });
+
+  const stale = existingIds.filter(rid => !kept.has(rid));
+  if (stale.length) {
+    db.prepare(
+      `DELETE FROM item_download_links WHERE item_id = ? AND id IN (${stale.map(() => '?').join(',')})`
+    ).run(itemId, ...stale);
+  }
+}
+
+/**
  * Outbound download URLs come from the database. Refuse to hand a
  * `javascript:`/`data:` URL back to the browser or put one in a Location
  * header, whatever an admin (or an imported feed) may have stored.
@@ -220,6 +333,12 @@ export async function itemsRoutes(fastify) {
 
   // POST /api/items - create (admin)
   fastify.post('/items', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+    const links = parseDownloadLinks(request.body.download_links);
+    if (links.errors) {
+      // Refuse rather than drop: a page saved without the mirror it was
+      // supposed to have is worse than a save that fails.
+      return reply.code(400).send({ error: 'Invalid download link(s)', linkErrors: links.errors });
+    }
     const parsed = itemSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
 
@@ -301,27 +420,8 @@ export async function itemsRoutes(fastify) {
       changelog: data.changelog || null, created_at: now, updated_at: now, encryption_version: 'v1',
     });
 
-    const links = request.body.download_links || [];
-    if (Array.isArray(links) && links.length > 0) {
-      const insertLink = db.prepare(`
-        INSERT INTO item_download_links (item_id, label, storage_provider, storage_path, download_url, file_size, is_primary, is_down, down_reason, status, sort_order)
-        VALUES (@item_id, @label, @storage_provider, @storage_path, @download_url, @file_size, @is_primary, @is_down, @down_reason, @status, @sort_order)
-      `);
-      for (let i = 0; i < links.length; i++) {
-        const linkParsed = downloadLinkSchema.safeParse(links[i]);
-        if (linkParsed.success) {
-          const ld = linkParsed.data;
-          const encLink = encryptLinkFields({ storage_path: ld.storage_path || null, download_url: ld.download_url || null, down_reason: ld.down_reason || null });
-          insertLink.run({
-            item_id: result.lastInsertRowid, label: ld.label, storage_provider: ld.storage_provider,
-            storage_path: encLink.storage_path, download_url: encLink.download_url,
-            file_size: ld.file_size || null, is_primary: ld.is_primary ? 1 : 0,
-            is_down: ld.is_down ? 1 : 0, down_reason: encLink.down_reason,
-            status: ld.status || (ld.is_down ? 'down' : 'up'), sort_order: ld.sort_order !== undefined ? ld.sort_order : i,
-          });
-        }
-      }
-    }
+    const insertLink = db.prepare(INSERT_LINK_SQL);
+    (links.links || []).forEach((ld, i) => insertLink.run(linkRow(result.lastInsertRowid, ld, i)));
 
     recordItemVersion(result.lastInsertRowid, request.user?.id, 'Created');
 
@@ -337,6 +437,11 @@ export async function itemsRoutes(fastify) {
     const db = getDb();
     const existing = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
     if (!existing) return reply.code(404).send({ error: 'Item not found' });
+
+    const wantedLinks = parseDownloadLinks(request.body.download_links);
+    if (wantedLinks.errors) {
+      return reply.code(400).send({ error: 'Invalid download link(s)', linkErrors: wantedLinks.errors });
+    }
 
     const parsed = itemSchema.partial().safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
@@ -371,30 +476,8 @@ export async function itemsRoutes(fastify) {
       db.prepare(`UPDATE items SET ${updates.join(', ')} WHERE id = @id`).run(params);
     }
 
-    if (request.body.download_links !== undefined) {
-      const links = request.body.download_links;
-      if (Array.isArray(links)) {
-        db.prepare('DELETE FROM item_download_links WHERE item_id = ?').run(id);
-        const insertLink = db.prepare(`
-          INSERT INTO item_download_links (item_id, label, storage_provider, storage_path, download_url, file_size, is_primary, is_down, down_reason, status, sort_order)
-          VALUES (@item_id, @label, @storage_provider, @storage_path, @download_url, @file_size, @is_primary, @is_down, @down_reason, @status, @sort_order)
-        `);
-        for (let i = 0; i < links.length; i++) {
-          const linkParsed = downloadLinkSchema.safeParse(links[i]);
-          if (linkParsed.success) {
-            const ld = linkParsed.data;
-            const encLink = encryptLinkFields({ storage_path: ld.storage_path || null, download_url: ld.download_url || null, down_reason: ld.down_reason || null });
-            insertLink.run({
-              item_id: id, label: ld.label, storage_provider: ld.storage_provider,
-              storage_path: encLink.storage_path, download_url: encLink.download_url,
-              file_size: ld.file_size || null, is_primary: ld.is_primary ? 1 : 0,
-              is_down: ld.is_down ? 1 : 0, down_reason: encLink.down_reason,
-              status: ld.status || (ld.is_down ? 'down' : 'up'), sort_order: ld.sort_order !== undefined ? ld.sort_order : i,
-            });
-          }
-        }
-      }
-    }
+    // `null` means the request said nothing about mirrors, so leave them alone.
+    if (wantedLinks.links !== null) syncDownloadLinks(db, Number(id), wantedLinks.links);
 
     recordItemVersion(Number(id), request.user?.id);
 
