@@ -64,9 +64,21 @@ echo 'espress0 ALL=(root) NOPASSWD: /bin/systemctl restart espress0-repo' \
   | sudo tee /etc/sudoers.d/espress0-updater
 ```
 
-Behaviour notes: fast-forward pulls only (local commits are never reset away),
-a dirty working tree postpones updates, and `touch data/.auto-update-disabled`
-pauses everything. The current status is visible in the admin UI under
+Behaviour notes: by default the next commit is cloned and built in
+`.auto-update/next` while the site keeps running, its migrations are rehearsed
+against a *copy* of the database, and only once that is proven does the updater
+stop the app, swap the files, run the real migrations, restart and poll
+`/api/health`. If the site does not come back, the previous commit **and** the
+previous `frontend/dist` are restored and the app is started again — so a bad
+release costs seconds rather than uptime. `git reset` cannot undo a gitignored
+build directory, which is why the snapshot exists.
+
+`--mode pull` keeps the in-place fast-forward behaviour (local commits are never
+reset away, a dirty working tree postpones updates) with the same stop-first
+ordering and health check. `touch data/.auto-update-disabled` pauses everything.
+Restart target is explicit: `--service NAME` for systemd, `--tmux-session NAME`
+for the tmux runner, or `--stop-cmd`/`--start-cmd` for anything else (Docker, a
+custom supervisor). The current status is visible in the admin UI under
 **Admin -> Settings -> Auto-update** and in `data/.auto-update-status`.
 
 Other flags: `--port <n>` (default 80), `--user <name>`, `--with-tgpt` (AI

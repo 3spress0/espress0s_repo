@@ -18,9 +18,11 @@
 #   serve              Run in the background inside tmux (survives logout).
 #                      Serve flags: dev | --build | --no-updater |
 #                      stop | restart | status | logs
-#   update             Auto-updater: watches origin, pulls, rebuilds, restarts.
+#   update             Auto-updater: builds the next commit in .auto-update/next
+#                      while the site stays up, then stop -> swap -> migrate ->
+#                      restart -> health check, rolling back if it stays down.
 #                      (--once for cron/single-shot, --interval N, --service NAME,
-#                       --branch NAME — see ./espress0 update --help)
+#                       --branch NAME, --mode clone|pull — see ./espress0 update --help)
 #   deploy <args>      Full Ubuntu server deploy (root): systemd + nginx +
 #                      certbot. Needs sudo; same args as scripts/deploy-ubuntu.sh
 #                      (./espress0 deploy --repo <url> [--domain d] [--https] | --update)

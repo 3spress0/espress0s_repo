@@ -28,7 +28,7 @@ cd espress0s-repo
 | `config` | Re-run the same wizard on a configured machine (after its first run, `scripts/setup.sh` renames itself to `scripts/config.sh`). |
 | `dev` | Backend on :3000 + Vite dev server on :5173. `--build` serves the production build from :3000 only. |
 | `serve` | Keeps the app running in tmux (survives logout), with an auto-update window. Options: `dev`, `status`, `stop`, `logs`. |
-| `update` | Auto-updater: watches the git remote, pulls fast-forward only, rebuilds what changed, restarts. `--once` for cron. |
+| `update` | Auto-updater: builds the next commit off to the side, then stop → swap → migrate → restart → health check, rolling back if the site stays down. `--once` for cron. |
 | `deploy` | Full Ubuntu server install (root): systemd, nginx, certbot HTTPS. |
 | `backup`, `db`, `ai`, `scan`, `test`, `status` | Backup/seed/install tgpt/security probe/tests/dashboard. |
 

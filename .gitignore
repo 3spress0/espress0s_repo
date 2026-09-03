@@ -71,3 +71,7 @@ tgpt
 
 # Renamed by scripts/setup.sh after its first successful run
 scripts/config.sh
+
+# Staging area for scripts/auto-update.sh (--mode clone): the next build is
+# assembled here while the site keeps running, so it is scratch by definition.
+.auto-update/
