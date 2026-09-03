@@ -40,6 +40,18 @@ const PROVIDER_ALIASES = {
 // The browser gives an AI request AI_TIMEOUT (60s) and the server must answer
 // inside it so the metadata fallback still arrives; see backend/tests/ai.test.js.
 const CLIENT_BUDGET_MS = 60000;
+
+/**
+ * Output-token budget for one answer.
+ *
+ * The old 1024 default was enough for the 300-word answer the prompt asks for
+ * only when the reply carried no lists and no links; with either, the provider
+ * hit its ceiling and the visitor was shown a sentence that stopped mid-word.
+ * 2048 leaves headroom, and the floor keeps an admin from configuring a value
+ * that guarantees the same cutoff.
+ */
+export const DEFAULT_MAX_TOKENS = 2048;
+export const MIN_MAX_TOKENS = 256;
 const ASK_TIMEOUT_MAX = 55000;
 
 function str(v) {
@@ -175,7 +187,7 @@ export function decide({ env, settings = () => null, tgptAvailable = false, tgpt
     keyConfigured: !!apiKey,
     keySource: apiKey ? source : '',
     temperature: number(pick(settings('ai_temperature'), env.temperature), 0.2, 0, 2, 'ai_temperature'),
-    maxTokens: number(pick(settings('ai_max_tokens'), env.maxTokens), 1024, 64, 32768, 'ai_max_tokens'),
+    maxTokens: number(pick(settings('ai_max_tokens'), env.maxTokens), DEFAULT_MAX_TOKENS, MIN_MAX_TOKENS, 32768, 'ai_max_tokens'),
     timeoutMs: clampBudget(number(pick(settings('ai_timeout_ms'), env.timeoutMs), env.timeoutMs, 2000, 600000, 'ai_timeout_ms'), 'ai_timeout_ms', notes),
     draftTimeoutMs: clampBudget(number(pick(settings('ai_draft_timeout_ms'), env.draftTimeoutMs), env.draftTimeoutMs, 2000, 600000, 'ai_draft_timeout_ms'), 'ai_draft_timeout_ms', notes),
     allowPrivateBaseUrl: env.allowPrivateBaseUrl === true,

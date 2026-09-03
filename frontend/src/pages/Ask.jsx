@@ -32,7 +32,9 @@ export default function Ask() {
     setLoading(true);
 
     try {
-      const result = await aiApi.ask(question);
+      // Send the conversation, not just the latest line: a follow-up like
+      // "does that work on my pc?" is meaningless without the turns above it.
+      const result = await aiApi.askPost(question, [...messages, userMessage]);
       
       const aiMessage = {
         role: 'assistant',
@@ -259,7 +261,9 @@ export default function Ask() {
 }
 
 function renderWithLinks(text) {
-  const parts = text.split(/(\/item\/[a-z0-9-]+)/g);
+  // Barista links items as /file/{slug}; this used to split on /item/, so every
+  // link in an answer was rendered as plain text.
+  const parts = String(text ?? '').split(/(\/file\/[a-z0-9-]+)/g);
   return parts.map((part, i) => {
     if (part.startsWith('/file/')) {
       const slug = part.replace('/file/', '');

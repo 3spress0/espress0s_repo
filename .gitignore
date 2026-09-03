@@ -75,3 +75,7 @@ scripts/config.sh
 # Staging area for scripts/auto-update.sh (--mode clone): the next build is
 # assembled here while the site keeps running, so it is scratch by definition.
 .auto-update/
+
+# Scan reports
+reports/
+vuln-report-*.txt

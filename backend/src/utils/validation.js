@@ -142,7 +142,20 @@ export const downloadLinkSchema = z.object({
   sort_order: z.number().int().optional(),
 });
 
+/**
+ * One prior turn of a Barista conversation. Bounded on both ends: the role is
+ * an enum so nothing can inject a fake "system" instruction, and the content is
+ * capped so a client cannot push an unbounded prompt through the model.
+ */
+export const aiMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().max(2000),
+});
+
 export const aiQuerySchema = z.object({
   q: z.string().min(2).max(500).optional(),
   question: z.string().min(2).max(500).optional(),
+  // Follow-ups such as "does that work on my pc?" only make sense with the
+  // preceding turns; the route used to parse them and then throw them away.
+  messages: z.array(aiMessageSchema).max(20).optional(),
 });

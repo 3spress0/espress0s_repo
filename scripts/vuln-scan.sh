@@ -18,12 +18,20 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 pass() { echo -e "${GREEN}[ok] PASS${NC}: $1"; }
-fail() { echo -e "${RED}[x] FAIL${NC}: $1"; }
+fail() { echo -e "${RED}[x] FAIL${NC}: $1"; FAILURES=$((FAILURES + 1)); }
 info() { echo -e "${YELLOW}ℹ INFO${NC}: $1"; }
 section() { echo -e "\n${BLUE}=== $1 ===${NC}"; }
 
-REPORT_FILE="./vuln-report-$(date +%Y%m%d_%H%M%S).txt"
+# Reports go under ./reports/ (git-ignored), not the repo root, so a scan on a
+# live box cannot leave untracked files that a later `git pull`/update trips on.
+REPORT_DIR="${REPORT_DIR:-./reports}"
+mkdir -p "$REPORT_DIR"
+REPORT_FILE="$REPORT_DIR/vuln-report-$(date +%Y%m%d_%H%M%S).txt"
 exec > >(tee -a "$REPORT_FILE") 2>&1
+
+# Tracks whether any real problem was found, so the script can exit non-zero
+# and be usable from CI or a cron job instead of always "succeeding".
+FAILURES=0
 
 echo "[lock] espress0's repo - Comprehensive Vulnerability Scan"
 echo "Date: $(date)"
@@ -33,10 +41,35 @@ echo "====================================================="
 
 # 1. Secret scanning
 section "1. Secret Scanning (no secrets in repo)"
-if grep -r -i -E "(sk-|aws_|password\s*=\s*['\"][^'\"]{8,}|BEGIN PRIVATE KEY)" --include="*.js" --include="*.jsx" --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git . 2>/dev/null | grep -v ".env.example" | grep -v "dummy" | head -n 20; then
+# Only scan files git actually tracks. The previous version walked the working
+# tree, which on a deployed box meant it also scanned .auto-update/next/ (the
+# updater's staging clone) and reported every finding twice.
+#
+# The patterns below match credential *shapes* with enough entropy to be real,
+# rather than the substring "sk-" (which matched the word "disk", comments and
+# the redaction regexes) or "password =" (which matched DEV_ADMIN_PASSWORD, a
+# documented placeholder that config.js refuses to boot with in production).
+SECRET_HITS=$(git ls-files -z -- '*.js' '*.jsx' '*.mjs' '*.cjs' '*.ts' '*.tsx' '*.json' '*.sh' '*.yml' '*.yaml' 2>/dev/null \
+  | xargs -0 grep -n -E \
+      -e '\bsk-(proj-)?[0-9A-Za-z_-]{20,}' \
+      -e '\bAIza[0-9A-Za-z_-]{35}' \
+      -e '\bghp_[0-9A-Za-z]{36}' \
+      -e '\bxox[baprs]-[0-9A-Za-z-]{10,}' \
+      -e 'AKIA[0-9A-Z]{16}' \
+      -e 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' \
+      -e '(secret|token|passwd|password|api_?key)["'"'"']?\s*[:=]\s*["'"'"'][^"'"'"'$\{][^"'"'"']{15,}["'"'"']' \
+      2>/dev/null \
+  | grep -v -E '\.env\.example' \
+  | grep -v -E '/(tests?|__tests__)/' \
+  | grep -v -E 'dummy|example|placeholder|not-a-real|test-only|change-in-production|redacted|CHANGEME|ChangeMe' \
+  | grep -v -E '^\s*[^:]+:[0-9]+:\s*(//|\*|/\*|#)' \
+  || true)
+
+if [ -n "$SECRET_HITS" ]; then
+  echo "$SECRET_HITS" | head -n 20
   fail "Potential secrets found - review above"
 else
-  pass "No hardcoded secrets detected in source (excluding .env.example)"
+  pass "No hardcoded secrets detected in tracked source"
 fi
 
 # Check .env not committed
@@ -145,10 +178,18 @@ fi
 # 6. Backend security tests
 section "6. Backend Security Unit Tests"
 cd backend
-if npm test 2>&1 | tail -n 20; then
+# `npm test | tail` reports tail's exit status, not npm's, so a failing suite
+# was being reported as PASS. Capture output, then branch on the real code.
+# `set -e` would abort the whole scan on a failing suite before the FAIL line
+# is ever printed, so opt out for just this command.
+TEST_OUT=""
+TEST_EXIT=0
+TEST_OUT=$(npm test 2>&1) || TEST_EXIT=$?
+echo "$TEST_OUT" | tail -n 20
+if [ $TEST_EXIT -eq 0 ]; then
   pass "Backend security tests passed"
 else
-  fail "Backend security tests failed"
+  fail "Backend security tests failed (exit $TEST_EXIT)"
 fi
 cd ..
 
@@ -157,8 +198,14 @@ section "7. HTTP Security Tests (Live)"
 if curl -s "$API/health" | grep -q "ok"; then
   pass "Backend is running - running HTTP tests"
   
-  # Run test-vuln.sh
-  ./scripts/test-vuln.sh 2>&1 | tail -n 60
+  # Run test-vuln.sh. Its findings must count toward this scan's exit status,
+  # so capture the real exit code instead of letting the pipeline swallow it.
+  HTTP_EXIT=0
+  HTTP_OUT=$(./scripts/test-vuln.sh 2>&1) || HTTP_EXIT=$?
+  echo "$HTTP_OUT" | tail -n 60
+  if [ $HTTP_EXIT -ne 0 ]; then
+    fail "Live HTTP security tests reported findings (exit $HTTP_EXIT)"
+  fi
   
   # Additional: check encryption endpoints
   echo ""
@@ -167,10 +214,22 @@ if curl -s "$API/health" | grep -q "ok"; then
   
   echo ""
   echo "Testing encrypted data handling..."
-  # Get an item and check if sensitive fields are decrypted for authorized response
-  ITEM=$(curl -s "$API/items/ubuntu-24-04-lts" | python3 -c "import sys, json; data=json.load(sys.stdin); print('storage_path' in data and 'download_url' in data)" 2>/dev/null || echo "unknown")
-  echo "Item decryption works: $ITEM"
-  
+  # The old probe hardcoded the slug "ubuntu-24-04-lts" and printed
+  # "Item decryption works: False" when it 404'd - indistinguishable from a
+  # real decryption failure on an empty catalogue. Pick a slug that exists.
+  SLUG=$(curl -s "$API/items?limit=1" | python3 -c "import sys,json; d=json.load(sys.stdin); i=(d.get('items') or d if isinstance(d,list) else d.get('items') or []); print(i[0]['slug'] if i else '')" 2>/dev/null || echo "")
+  if [ -z "$SLUG" ]; then
+    info "Catalogue is empty - no item to spot-check decryption against (seed the DB to exercise this)"
+  else
+    ITEM=$(curl -s "$API/items/$SLUG" | python3 -c "import sys,json; d=json.load(sys.stdin); print('storage_path' in d and 'download_url' in d)" 2>/dev/null || echo "unknown")
+    echo "Item decryption works ($SLUG): $ITEM"
+    if [ "$ITEM" = "True" ]; then
+      pass "Item fields decrypt for an authorized response"
+    else
+      info "Item $SLUG did not expose decrypted fields (may require auth)"
+    fi
+  fi
+
 else
   info "Backend not running at $BASE_URL - skipping live HTTP tests"
   info "Start with: cd backend && npm run dev"
@@ -216,3 +275,11 @@ echo "  - Rotate: re-encrypt data with new key, update encryption_version"
 echo ""
 echo "Vuln scan completed. Review $REPORT_FILE for details."
 echo "For the security unit tests: cd backend && npm test"
+
+echo ""
+if [ "$FAILURES" -gt 0 ]; then
+  echo -e "${RED}Scan finished with $FAILURES failing check(s).${NC}"
+  exit 1
+fi
+echo -e "${GREEN}Scan finished: all checks passed.${NC}"
+exit 0

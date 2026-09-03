@@ -36,8 +36,13 @@ export async function aiRoutes(fastify) {
     const query = String(parsed.data.q || parsed.data.question || '').slice(0, MAX_QUESTION_LENGTH);
     if (!query) return reply.code(400).send({ error: 'Missing question' });
 
+    // Conversation history is what makes "does that work on my pc?" resolvable.
+    // It was validated and then dropped here, so every turn was answered as if
+    // it were the first one.
+    const messages = Array.isArray(parsed.data.messages) ? parsed.data.messages : [];
+
     try {
-      const result = await aiService.ask(query, { limit: 5 });
+      const result = await aiService.ask(query, { limit: 5, messages });
       return result;
     } catch (e) {
       request.log.error(e);

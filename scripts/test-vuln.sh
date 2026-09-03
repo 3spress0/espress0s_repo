@@ -15,8 +15,23 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 pass() { echo -e "${GREEN}[ok] PASS${NC}: $1"; }
-fail() { echo -e "${RED}[x] FAIL${NC}: $1"; }
+TV_FAILURES=0
+fail() { echo -e "${RED}[x] FAIL${NC}: $1"; TV_FAILURES=$((TV_FAILURES + 1)); }
 info() { echo -e "${YELLOW}ℹ INFO${NC}: $1"; }
+
+# A 429 means the rate limiter answered before the check reached the logic it
+# was probing. That is evidence the limiter works, never evidence of a
+# vulnerability - so treat it as inconclusive instead of FAIL. Without this the
+# scan reported phantom "may be vulnerable" findings on a correctly hardened
+# box simply because it was run twice inside the limiter window.
+fail_unless_ratelimited() {
+  local code="$1" msg="$2"
+  if [ "$code" = "429" ]; then
+    info "Rate limited (429) - inconclusive: $msg. Re-run after the limiter window."
+  else
+    fail "$msg - got $code"
+  fi
+}
 
 # Test 1: Health check
 echo ""
@@ -35,8 +50,8 @@ if echo "$RESP" | grep -q "401\|400"; then
   pass "SQLi login bypass blocked (401/400)"
   cat /tmp/resp.json
 else
-  fail "SQLi may be vulnerable - got $RESP"
-  cat /tmp/resp.json
+  fail_unless_ratelimited "$RESP" "SQLi login bypass may be possible"
+  [ "$RESP" != "429" ] && cat /tmp/resp.json
 fi
 
 # Test 3: SQLi search
@@ -69,7 +84,7 @@ CODE=$(curl -s -o /tmp/admin.json -w "%{http_code}" "$API/admin/overview")
 if [ "$CODE" = "401" ]; then
   pass "Admin endpoint protected - 401 without token"
 else
-  fail "Admin endpoint may be vulnerable - got $CODE"
+  fail_unless_ratelimited "$CODE" "Admin endpoint may be vulnerable"
   cat /tmp/admin.json
 fi
 
@@ -80,19 +95,32 @@ CODE=$(curl -s -o /tmp/jwt.json -w "%{http_code}" -H "Authorization: Bearer inva
 if [ "$CODE" = "401" ]; then
   pass "Invalid JWT rejected - 401"
 else
-  fail "Invalid JWT not rejected - got $CODE"
+  fail_unless_ratelimited "$CODE" "Invalid JWT not rejected"
   cat /tmp/jwt.json
 fi
 
 # Test 7: Path traversal
 echo ""
 echo "Test 7: Path Traversal"
-CODE=$(curl -s -o /tmp/traversal.json -w "%{http_code}" "$API/download/../../../etc/passwd")
-if [ "$CODE" = "404" ] || [ "$CODE" = "400" ]; then
-  pass "Path traversal blocked - $CODE"
-else
-  info "Path traversal test returned $CODE"
-  cat /tmp/traversal.json | head -c 500
+# curl collapses "../" in a URL before it ever hits the wire, so the old probe
+# actually requested /api/etc/passwd and got the SPA catch-all (HTTP 200 +
+# index.html) - which then looked like a possible finding. Use --path-as-is and
+# an encoded variant so the server really sees the traversal, and judge on
+# whether /etc/passwd contents came back, not on the status code alone.
+TRAVERSAL_LEAK=0
+for TARGET in \
+  "$API/download/../../../etc/passwd" \
+  "$API/download/%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd" \
+  "$BASE_URL/../../../etc/passwd"
+do
+  CODE=$(curl -s --path-as-is -o /tmp/traversal.out -w "%{http_code}" "$TARGET" || echo "000")
+  if grep -qE '^root:.*:0:0:' /tmp/traversal.out 2>/dev/null; then
+    fail "Path traversal LEAKED /etc/passwd via $TARGET (HTTP $CODE)"
+    TRAVERSAL_LEAK=1
+  fi
+done
+if [ "$TRAVERSAL_LEAK" = "0" ]; then
+  pass "Path traversal blocked - no file contents disclosed"
 fi
 
 # Test 8: Weak password registration
@@ -103,8 +131,8 @@ if echo "$RESP" | grep -q "400"; then
   pass "Weak password rejected - 400"
   cat /tmp/weak.json | python3 -m json.tool 2>/dev/null | head -n 20
 else
-  fail "Weak password may be accepted - got $RESP"
-  cat /tmp/weak.json
+  fail_unless_ratelimited "$RESP" "Weak password may be accepted"
+  [ "$RESP" != "429" ] && cat /tmp/weak.json
 fi
 
 # Test 9: Valid registration
@@ -160,3 +188,5 @@ echo "================================================"
 echo "Security testing complete!"
 echo "Visit http://localhost:3000/ for the site; run 'cd backend && npm test' for the security unit tests"
 echo "All tests use safe dummy payloads - no actual exploitation"
+
+exit $(( TV_FAILURES > 0 ? 1 : 0 ))
