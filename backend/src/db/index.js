@@ -46,6 +46,51 @@ export function getDb() {
     const hasFavDefault = userCols.some(c => c.name === 'favorites_default_public');
     if (!hasFavDefault) dbInstance.exec("ALTER TABLE users ADD COLUMN favorites_default_public INTEGER NOT NULL DEFAULT 0");
 
+    // Email became optional (you can register without one). Databases created
+    // before this had `email TEXT UNIQUE NOT NULL`, which rejects the NULL a
+    // no-email registration now inserts. SQLite cannot drop a NOT NULL in
+    // place, so rebuild the table once when the old constraint is still there.
+    // Detect via PRAGMA: `notnull` is 1 on the legacy column, 0 after the fix.
+    const emailCol = userCols.find(c => c.name === 'email');
+    if (emailCol && emailCol.notnull === 1) {
+      const rebuildUsers = dbInstance.transaction(() => {
+        // Column set must match the current schema (order is not important, we
+        // list columns explicitly on both sides of the copy).
+        dbInstance.exec(`
+          CREATE TABLE users_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE,
+            email_hash TEXT UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin', 'editor', 'viewer')),
+            auth_version INTEGER DEFAULT 0,
+            avatar_url TEXT,
+            bio TEXT,
+            theme TEXT DEFAULT 'dark' CHECK(theme IN ('dark', 'light', 'auto')),
+            favorites_default_public INTEGER NOT NULL DEFAULT 0,
+            encryption_version TEXT DEFAULT 'v1',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          INSERT INTO users_new
+            (id, username, email, email_hash, password_hash, role, auth_version,
+             avatar_url, bio, theme, favorites_default_public, encryption_version,
+             created_at, updated_at)
+          SELECT
+            id, username, email, email_hash, password_hash, role, auth_version,
+            avatar_url, bio, theme, favorites_default_public, encryption_version,
+            created_at, updated_at
+          FROM users;
+          DROP TABLE users;
+          ALTER TABLE users_new RENAME TO users;
+          CREATE INDEX IF NOT EXISTS idx_users_email_hash ON users(email_hash);
+        `);
+      });
+      rebuildUsers();
+      console.log('Migrated users table: email is now optional (nullable).');
+    }
+
     const itemCols = dbInstance.prepare("PRAGMA table_info(items)").all();
     const hasItemEncVersion = itemCols.some(c => c.name === 'encryption_version');
     if (!hasItemEncVersion) {

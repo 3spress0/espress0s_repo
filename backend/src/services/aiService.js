@@ -11,17 +11,16 @@ import { findTgpt, generate, redact, tgptRuns } from './aiProviders.js';
  */
 const SYSTEM_PROMPT = `You are Barista, the personal file finder for espress0's repo.
 
-Your purpose: easily find files in a personal software archive for the user.
-You are named Barista — like a coffee barista, but you serve ISOs, tools, and docs.
+Your purpose: help the user FIND files in a personal software archive. You are
+named Barista — like a coffee barista, but you serve ISOs, tools, and docs.
 
 STRICT RULES:
-- Only mention files that are listed in the repository data below
-- Never invent file names, versions, or download links
-- If information is not in repository data, say "I don't have that file in the repository"
-- Prefer repository metadata over general knowledge
-- You can link to items using their slug: /file/{slug}
-- Do not fabricate checksums or sizes
-- Your purpose is to easily find files — be helpful, concise, and accurate`;
+- Only mention files that appear in the REPOSITORY ITEMS section of this message. If that section is empty or has nothing relevant, say so plainly and suggest browsing categories — do NOT answer from general knowledge.
+- Describe a file using ONLY the fields given for it (name, description, version, platform, architecture, file type, size). Do NOT add facts that are not in that data: no release dates, no code names, no "supported until" timelines, no feature lists, no history — even if you happen to know them. If a detail is not in the data, omit it or say it is not recorded here.
+- Never invent or guess file names, versions, checksums, sizes, or download links.
+- A bare "this", "this tool", "these", "it" or "that" refers ONLY to a file named earlier in the conversation. If nothing has been named yet, do NOT assume it means the first search result — ask the user which file they mean.
+- Links: only ever write a relative /file/{slug} link using an exact slug from the data. Never write an absolute URL, never invent a domain, and never join several file names together into one link.
+- Keep answers concise and about finding files. Prefer listing matching files with their /file/{slug} links over long prose.`;
 
 /**
  * Rules for the admin drafting helper. Kept separate from SYSTEM_PROMPT: that
@@ -68,7 +67,7 @@ Reply with a single JSON object and nothing else. Example:
 {"version":"","platform":"windows","architecture":"x64","file_type":"exe","license_status":"proprietary","tags":["editor","developer-tools"],"description":"...","long_description":"## Overview\\n..."}`;
 
 /** Appended to the catalogue data instead of the system prompt: it is per-question. */
-const ANSWER_TAIL = `Answer helpfully based ONLY on the repository data above. If no relevant items, say so clearly and suggest how to browse categories. Aim for under 300 words, link to relevant items as /file/{slug} where they apply, and always finish your final sentence rather than stopping mid-thought.`;
+const ANSWER_TAIL = `Answer helpfully based ONLY on the repository data above. Do not add facts that are not in that data (no release dates, code names, support timelines or feature lists you were not given). If no relevant items are listed, say so clearly and suggest how to browse categories — do not answer from general knowledge. Aim for under 300 words, link to relevant items as relative /file/{slug} links using the exact slugs above, never as absolute URLs, and always finish your final sentence rather than stopping mid-thought.`;
 
 /**
  * Sent instead of ANSWER_TAIL when a first attempt was cut off by the token
@@ -664,23 +663,35 @@ ${subject ? `\nCurrent subject of the conversation: ${subject}\n` : ''}
   }
 
   sanitizeAnswer(answer) {
-    // Remove any URLs that look like direct downloads not from our domain or known providers
-    // We only allow links to /file/ paths and known safe domains
-    // This prevents hallucinated download links
+    if (!answer) return answer;
 
-    // Allow: /file/slug, https://drive.google.com, https://onedrive, https://github.com, relative links
-    // For safety, we won't strip too aggressively, but we will add disclaimer if answer contains http and no item link
-    
-    // If answer contains a download link not referencing our items, append warning
-    const hasHttp = answer.includes('http');
+    // 1. Collapse any ABSOLUTE url that points at one of our own file pages back
+    //    to a relative /file/{slug} link. The model was handed item names and
+    //    slugs and sometimes stitched them into a full URL on a guessed domain
+    //    (e.g. https://espress0.duckdns.org/file/... , or a markdown link whose
+    //    text mashed several file names together). A relative link is what the
+    //    frontend renders, and it can never point off-site.
+    //    First, markdown links [text](<abs>/file/slug) -> [text](/file/slug).
+    answer = answer.replace(
+      /\]\(\s*https?:\/\/[^\s)]*?\/file\/([a-z0-9-]+)\s*\)/gi,
+      '](/file/$1)'
+    );
+    //    Then any remaining bare absolute .../file/slug URL -> /file/slug.
+    answer = answer.replace(
+      /https?:\/\/[^\s)]*?\/file\/([a-z0-9-]+)/gi,
+      '/file/$1'
+    );
+
+    // 2. If the answer still carries an off-site http link and no repo file
+    //    link, warn: it is not something we can vouch for.
+    const hasHttp = /https?:\/\//i.test(answer);
     const hasItemLink = answer.includes('/file/');
-    
+
     if (hasHttp && !hasItemLink) {
-      // Check if http link is from allowed providers
       const allowedDomains = ['drive.google.com', 'onedrive.live.com', '1drv.ms', 'github.com', 'espress0'];
       const urls = answer.match(/https?:\/\/[^\s]+/g) || [];
       const suspicious = urls.filter(url => !allowedDomains.some(d => url.includes(d)));
-      
+
       if (suspicious.length > 0) {
         answer += `\n\nNote: Some links in this answer may not be verified. Always download from the official item page at /file/{slug} to ensure integrity.`;
       }
@@ -969,16 +980,80 @@ Write the page copy for this catalogue entry.`;
     return { description, long_description: lines.join('\n').slice(0, 5000) };
   }
 
+  /**
+   * Chat starters for the empty Barista panel.
+   *
+   * These used to be a fixed list full of demonstratives with no antecedent —
+   * "What does this tool do?", "What is the difference between these two
+   * releases?". Opened from a cold chat there is no "this tool", so the model
+   * would invent one (typically the first ISO it found) and answer about
+   * software the user never mentioned. That is the hallucination we are killing
+   * at the source: a starter must be answerable on its own.
+   *
+   * So they are built from the catalogue itself — real item names, real
+   * categories, the platforms that actually exist here — and every one is
+   * self-contained. On an empty catalogue we fall back to generic-but-still-
+   * self-contained prompts (no "this"/"these"/"that").
+   */
   async getSuggestions() {
+    try {
+      const db = getDb();
+
+      // A few real, published item names to seed concrete questions.
+      const items = db.prepare(`
+        SELECT name, platform, architecture, category_id
+        FROM items
+        WHERE published = 1 AND name IS NOT NULL AND TRIM(name) != ''
+        ORDER BY COALESCE(download_count, 0) DESC, id DESC
+        LIMIT 40
+      `).all();
+
+      const categories = db.prepare(`
+        SELECT c.name
+        FROM categories c
+        WHERE EXISTS (SELECT 1 FROM items i WHERE i.category_id = c.id AND i.published = 1)
+        ORDER BY c.sort_order, c.name
+        LIMIT 6
+      `).all().map(r => r.name).filter(Boolean);
+
+      const platforms = [...new Set(items.map(i => i.platform).filter(Boolean))];
+      const suggestions = [];
+
+      // Name a real file, so "what does X do?" resolves to something that exists.
+      if (items[0]) suggestions.push(`What is ${items[0].name}?`);
+      if (items[1]) suggestions.push(`Tell me about ${items[1].name}`);
+
+      // Category-scoped browsing prompts.
+      if (categories[0]) suggestions.push(`What do you have in ${categories[0]}?`);
+      if (categories[1]) suggestions.push(`Show me ${categories[1]}`);
+
+      // Platform/architecture prompts, only for platforms actually present.
+      if (platforms.includes('windows')) suggestions.push('Which files are for Windows?');
+      if (platforms.includes('linux')) suggestions.push('Which Linux files do you have?');
+      if (platforms.includes('macos')) suggestions.push('Do you have anything for macOS?');
+      if (items.some(i => /arm/i.test(i.architecture || ''))) {
+        suggestions.push('Do you have any ARM64 files?');
+      }
+
+      // Always-useful, self-contained catalogue questions.
+      suggestions.push('Which file is the smallest?');
+      suggestions.push('How do I verify a file with its checksum?');
+
+      // De-dupe, keep order, cap at 8.
+      const unique = [...new Set(suggestions)].slice(0, 8);
+      if (unique.length >= 4) return unique;
+    } catch (e) {
+      console.warn('[ai] suggestion build failed, using defaults:', e.message);
+    }
+
+    // Fallback: generic but still self-contained (no dangling "this"/"these").
     return [
-      "Which Ubuntu ISO should I download for an Intel PC?",
-      "What is the difference between these two releases?",
-      "Do you have an ARM64 version?",
-      "What does this tool do?",
-      "Which file is the smallest?",
-      "Where can I find Windows recovery media?",
-      "Which version should I use for development?",
-      "How do I verify file integrity?",
+      'What operating system ISOs do you have?',
+      'Which files are for Windows?',
+      'Do you have any Linux tools?',
+      'Which file is the smallest?',
+      'What categories can I browse?',
+      'How do I verify a file with its checksum?',
     ];
   }
 }

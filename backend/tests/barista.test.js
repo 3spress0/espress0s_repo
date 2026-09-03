@@ -378,3 +378,58 @@ describe('Barista: multi-turn conversation context', () => {
     }
   });
 });
+
+// -------------------------------------------------- 5. link sanitisation
+
+describe('Barista: link sanitisation', () => {
+  it('rewrites an absolute link to our own file page as a relative one', async () => {
+    // Exactly the shape of the reported bug: an absolute URL on a guessed
+    // domain pointing at a /file/ slug, inside a markdown link whose text has
+    // been mashed together from several file names.
+    stubProvider([{
+      content: 'Try [Ubuntu 26.04.1 LTSDLSS nvngx_dlssnr.dll](https://espress0.duckdns.org/file/nvngx-dlssnr-dll) for that.',
+      finish_reason: 'stop',
+    }]);
+    const result = await aiService.ask('dlss dll', { limit: 5 });
+    assert.ok(!/https?:\/\/[^\s)]*\/file\//i.test(result.answer),
+      `an absolute /file/ URL survived: ${result.answer}`);
+    assert.match(result.answer, /\]\(\/file\/nvngx-dlssnr-dll\)/,
+      'the link was not rewritten to a relative /file/ link');
+  });
+
+  it('collapses a bare absolute file URL to a relative path', () => {
+    const out = aiService.sanitizeAnswer('See https://espress0.duckdns.org/file/ubuntu-24-04 for the ISO.');
+    assert.match(out, /See \/file\/ubuntu-24-04 for the ISO\./);
+    assert.ok(!out.includes('duckdns'), 'the invented domain must be gone');
+  });
+
+  it('leaves an already-relative link untouched', () => {
+    const out = aiService.sanitizeAnswer('Grab /file/debian-12 here.');
+    assert.match(out, /Grab \/file\/debian-12 here\./);
+  });
+});
+
+// -------------------------------------------------- 6. chat starters
+
+describe('Barista: chat starters are self-contained', () => {
+  it('never suggests a demonstrative with no antecedent', async () => {
+    const suggestions = await aiService.getSuggestions();
+    assert.ok(Array.isArray(suggestions) && suggestions.length >= 4);
+    for (const s of suggestions) {
+      // "this tool", "these releases", "that version", bare "it" — all refer to
+      // something that does not exist in a fresh chat, which is what made
+      // Barista invent an Ubuntu answer. None may appear.
+      assert.ok(!/\bthis\b|\bthese\b|\bthat\b/i.test(s),
+        `starter is not self-contained: "${s}"`);
+    }
+  });
+
+  it('builds starters from real catalogue items when it can', async () => {
+    const suggestions = await aiService.getSuggestions();
+    // The barista fixtures include "Ubuntu 24.04.1 LTS Desktop"; a concrete
+    // starter should name a real item rather than "this tool".
+    const names = getDb().prepare('SELECT name FROM items WHERE published = 1').all().map(r => r.name);
+    const mentionsReal = suggestions.some(s => names.some(n => s.includes(n)));
+    assert.ok(mentionsReal, `no starter referenced a real item: ${JSON.stringify(suggestions)}`);
+  });
+});

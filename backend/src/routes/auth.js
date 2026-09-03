@@ -140,9 +140,10 @@ export async function authRoutes(fastify) {
       if (!user) {
         const allUsers = db.prepare('SELECT * FROM users').all();
         for (const u of allUsers) {
+          if (!u.email) continue; // accounts without an email can't match one
           try {
             const decryptedEmail = encryptionService.decrypt(u.email);
-            if (decryptedEmail.toLowerCase() === username.toLowerCase()) { user = u; break; }
+            if (decryptedEmail && decryptedEmail.toLowerCase() === username.toLowerCase()) { user = u; break; }
           } catch { if (u.email.toLowerCase() === username.toLowerCase()) { user = u; break; } }
         }
       }
@@ -183,7 +184,12 @@ export async function authRoutes(fastify) {
       return reply.code(403).send({ error: 'Registration is disabled. Contact admin.' });
     }
 
-    const { username, email, password, captchaId, captchaAnswer, captchaToken } = request.body;
+    const { username, password, captchaId, captchaAnswer, captchaToken } = request.body;
+    // Email is optional. Normalise "" / whitespace / missing to null so the
+    // uniqueness checks and storage all agree on "no email given".
+    const email = typeof request.body.email === 'string' && request.body.email.trim()
+      ? request.body.email.trim()
+      : null;
     if (captchaRequired()) {
       const captchaResult = await captchaService.verifyWithType({ id: captchaId, answer: captchaAnswer, token: captchaToken }, request.ip);
       if (!captchaResult.success) {
@@ -192,20 +198,24 @@ export async function authRoutes(fastify) {
     }
     const db = getDb();
     if (db.prepare('SELECT id FROM users WHERE username = ?').get(username)) return reply.code(409).send({ error: 'Username already exists' });
-    const emailHash = encryptionService.hashEmail(email);
-    if (db.prepare('SELECT id FROM users WHERE email_hash = ?').get(emailHash)) return reply.code(409).send({ error: 'Email already exists' });
-    const allUsers = db.prepare('SELECT id, email FROM users').all();
-    for (const u of allUsers) {
-      try { const dec = encryptionService.decrypt(u.email); if (dec.toLowerCase() === email.toLowerCase()) return reply.code(409).send({ error: 'Email already exists' }); } catch { if (u.email.toLowerCase() === email.toLowerCase()) return reply.code(409).send({ error: 'Email already exists' }); }
+    // Only enforce email uniqueness when one was actually provided — many
+    // accounts can share "no email" (stored as NULL).
+    const emailHash = email ? encryptionService.hashEmail(email) : null;
+    if (emailHash) {
+      if (db.prepare('SELECT id FROM users WHERE email_hash = ?').get(emailHash)) return reply.code(409).send({ error: 'Email already exists' });
+      const allUsers = db.prepare('SELECT id, email FROM users WHERE email IS NOT NULL').all();
+      for (const u of allUsers) {
+        try { const dec = encryptionService.decrypt(u.email); if (dec && dec.toLowerCase() === email.toLowerCase()) return reply.code(409).send({ error: 'Email already exists' }); } catch { if (u.email && u.email.toLowerCase() === email.toLowerCase()) return reply.code(409).send({ error: 'Email already exists' }); }
+      }
     }
-    const encryptedEmail = encryptionService.encrypt(email);
+    const encryptedEmail = email ? encryptionService.encrypt(email) : null;
     const hash = await encryptionService.hashPasswordWithPepper(password);
     const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
     const role = userCount === 0 ? 'admin' : 'viewer';
     try {
       const result = db.prepare(`INSERT INTO users (username, email, email_hash, password_hash, role, encryption_version) VALUES (?, ?, ?, ?, ?, ?)`).run(username, encryptedEmail, emailHash, hash, role, 'v1');
       const newUser = db.prepare('SELECT id, username, email, role FROM users WHERE id = ?').get(result.lastInsertRowid);
-      let decEmail = newUser.email; try { decEmail = encryptionService.decrypt(newUser.email); } catch {}
+      let decEmail = newUser.email; try { decEmail = newUser.email ? encryptionService.decrypt(newUser.email) : null; } catch {}
       const token = generateToken({ ...newUser, email: decEmail }, { passwordHash: hash });
 
       const csrfToken = issueSessionCookies(request, reply, token);

@@ -109,19 +109,18 @@ export default function Register() {
             </div>
 
             <div>
-              <label className="text-xs font-medium text-textMuted uppercase tracking-widest mb-2 block">Email *</label>
+              <label className="text-xs font-medium text-textMuted uppercase tracking-widest mb-2 block">Email <span className="text-textMuted/60 normal-case tracking-normal">(optional)</span></label>
               <div className="relative">
                 <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-textMuted" />
                 <input
                   type="email"
                   value={formData.email}
                   onChange={(e) => handleChange('email', e.target.value)}
-                  placeholder="you@example.com"
+                  placeholder="you@example.com (optional)"
                   className="w-full pl-10 pr-4 py-3 bg-surface border border-border rounded-xl focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 text-sm"
-                  required
                 />
               </div>
-              <p className="text-[11px] text-textMuted mt-1">Encrypted at rest with AES-256-GCM</p>
+              <p className="text-[11px] text-textMuted mt-1">Optional — add one for account recovery. Encrypted at rest with AES-256-GCM.</p>
             </div>
 
             <div>
