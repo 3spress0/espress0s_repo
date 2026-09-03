@@ -171,7 +171,7 @@ export const statsApi = {
 
 export const aiApi = {
   ask: (q) => api.get('/ai/ask', { params: { q }, timeout: AI_TIMEOUT }).then(r => r.data),
-  askPost: (question) => api.post('/ai/ask', { question }, { timeout: AI_TIMEOUT }).then(r => r.data),
+  askPost: (question, messages = []) => api.post('/ai/ask', { question, messages: messages.slice(-8).map(m => ({ role: m.role, content: String(m.content || '').slice(0, 2000) })) }, { timeout: AI_TIMEOUT }).then(r => r.data),
   suggestions: () => api.get('/ai/suggestions').then(r => r.data),
   status: () => api.get('/ai/status').then(r => r.data),
   faq: () => api.get('/faq').then(r => r.data),

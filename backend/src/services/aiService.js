@@ -196,12 +196,12 @@ export class AIService {
    * Main ask method
    */
   async ask(question, options = {}) {
-    const { limit = 5 } = options;
+    const { limit = 5, messages = [] } = options;
 
     // 1. Search repository metadata first - this is mandatory, and it is what
     //    the answer is checked against.
     const searchResults = searchService.search({
-      q: question,
+      q: [question, ...messages.filter(m => m.role === 'user').slice(-3).map(m => m.content)].join(' '),
       published: 1,
       limit,
       page: 1,
@@ -219,7 +219,7 @@ export class AIService {
     const cfg = await this.aiConfig();
     if (cfg.enabled && cfg.provider !== 'none') {
       try {
-        const answer = await this.askWithProvider(question, searchResults.results, faqResults, cfg);
+        const answer = await this.askWithProvider(question, searchResults.results, faqResults, cfg, messages);
         this.lastError = null;
         return this.askResponse(answer, searchResults, cfg.provider);
       } catch (e) {
@@ -242,10 +242,10 @@ export class AIService {
     return fallback;
   }
 
-  async askWithProvider(question, items, faqs, cfg) {
+  async askWithProvider(question, items, faqs, cfg, messages = []) {
     const out = await generate({
       system: SYSTEM_PROMPT,
-      prompt: this.buildContext(items, faqs, question),
+      prompt: this.buildContext(items, faqs, question, messages),
       cfg,
       kind: 'ask',
     });
@@ -274,8 +274,24 @@ export class AIService {
   }
 
   /** The per-question message: catalogue data the model is allowed to mention. */
-  buildContext(items, faqs, question) {
+  buildContext(items, faqs, question, messages = []) {
     let ctx = '';
+
+    const recentMessages = messages
+      .filter(m => m && ['user', 'assistant'].includes(m.role))
+      .slice(-8);
+
+    if (recentMessages.length > 0) {
+      ctx += `\nRECENT CONVERSATION CONTEXT:
+Use this only to understand references and conversational context.
+Repository facts must still come from the REPOSITORY ITEMS section below.
+
+${recentMessages.map(m =>
+  `${m.role === 'user' ? 'User' : 'Barista'}: ${String(m.content || '').slice(0, 2000)}`
+).join('\n')}
+
+`;
+    }
 
     if (faqs.length > 0) {
       ctx += `\nRELEVANT FAQ:\n`;
@@ -301,14 +317,13 @@ export class AIService {
 `;
       });
     } else {
-      ctx += `\nNo matching items found in repository for query "${question}". You should say you don't have that file.`;
+      ctx += `\nNo matching items found in repository for query "${question}".`;
     }
 
-    ctx += `\nUSER QUESTION: ${question}\n\n${ANSWER_TAIL}`;
+    ctx += `\nCURRENT USER QUESTION: ${question}\n\n${ANSWER_TAIL}`;
 
     return ctx;
   }
-
   ruleBasedAnswer(question, items, faqs) {
     const qLower = question.toLowerCase();
 

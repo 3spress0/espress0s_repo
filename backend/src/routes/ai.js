@@ -18,7 +18,7 @@ export async function aiRoutes(fastify) {
     }
 
     try {
-      const result = await aiService.ask(query, { limit: 5 });
+      const result = await aiService.ask(query, { limit: 5, messages: parsed.data.messages || [] });
       return result;
     } catch (e) {
       request.log.error(e);
@@ -37,7 +37,7 @@ export async function aiRoutes(fastify) {
     if (!query) return reply.code(400).send({ error: 'Missing question' });
 
     try {
-      const result = await aiService.ask(query, { limit: 5 });
+      const result = await aiService.ask(query, { limit: 5, messages: parsed.data.messages || [] });
       return result;
     } catch (e) {
       request.log.error(e);
