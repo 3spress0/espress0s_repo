@@ -81,7 +81,7 @@ export default function ImagePicker({ label, value, onChange, hint }) {
       <div className="flex items-start gap-3 mb-3">
         <div className="w-20 h-20 rounded-xl bg-surface border border-border flex items-center justify-center overflow-hidden flex-shrink-0">
           {value ? (
-            <img src={value} alt="" className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+            <img src={value} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
           ) : (
             <ImageIcon className="w-6 h-6 text-textMuted" />
           )}
@@ -186,7 +186,7 @@ export default function ImagePicker({ label, value, onChange, hint }) {
                     value === u.url ? 'border-primary ring-2 ring-primary/30' : 'border-border hover:border-primary/40'
                   }`}
                 >
-                  <img src={u.url} alt={u.original_name} className="w-full h-full object-cover" />
+                  <img src={u.url} alt={u.original_name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>
