@@ -63,7 +63,9 @@ function Field({ label, children }) {
 export default function CatalogFilters({ facets = {}, value, onChange, onReset, resultCount, loading }) {
   const [open, setOpen] = useState(false);
 
-  const set = (key, v) => onChange({ ...value, [key]: v || '' });
+  // Narrowing the result set can shrink it below the current page, which would
+  // leave the table on an empty page 9, so every filter change resets paging.
+  const set = (key, v) => onChange({ ...value, [key]: v || '', page: 1 });
   const activeCount = useMemo(
     () => Object.entries(value).filter(([k, v]) => v && k !== 'q' && k !== 'sort' && k !== 'order' && k !== 'page').length,
     [value]

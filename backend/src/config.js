@@ -185,7 +185,12 @@ export const config = {
   },
 
   rateLimit: {
+    // Anonymous traffic: every request from one IP, whatever it asks for.
     max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
+    // Signed-in traffic, counted per session instead of per IP. The live value
+    // is read in middleware/rateLimit.js; this documents the default next to
+    // the anonymous one and keeps RATE_LIMIT_AUTH_MAX discoverable.
+    authMax: parseInt(process.env.RATE_LIMIT_AUTH_MAX || '3000', 10),
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
   },
 

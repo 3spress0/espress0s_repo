@@ -15,6 +15,8 @@ espress0's repo gives you a searchable catalogue with:
 * Multiple download/mirror links per item
 * Checksums and file metadata
 * Version history with diffs and restore
+* Personal favourites, private by default and shareable per file
+* Public account profiles showing what someone chose to share
 * Link-health monitoring
 * Admin management and bulk operations
 * Backup, restore, import, and export
@@ -125,6 +127,39 @@ The health system supports:
 * Administrative "mark down" controls
 
 Health checks run separately from normal catalogue browsing so an unavailable external server does not unnecessarily block the application.
+
+## Accounts and favourites
+
+Every signed-in account can star a file from its page. Favourites are **private by default**: starring is a personal bookmark, not a publication.
+
+Sharing is a second, deliberate step, and it can be taken two ways:
+
+* per file — flip a single favourite to *Shared* in **Account → Favourites**
+* by default — tick *New favourites start shared* so future stars begin public
+
+Turning the default off never un-shares anything you already published; each favourite keeps the setting you gave it.
+
+Anything shared shows on a public profile at `/u/username`, which anyone can open without logging in. It lists the account's avatar, bio, role, join date and shared files — and nothing else:
+
+* no email address is ever returned by the profile endpoint
+* only favourites flagged shared by their owner appear
+* drafts never appear, so a shared favourite is not a back door into an unpublished file
+* only card-level data is returned, so no mirror URL or storage path leaves with it
+
+Admins can open any account's public profile straight from **Admin → Users**.
+
+The API:
+
+| Method   | Route                                | Purpose                                  |
+| -------- | ------------------------------------ | ---------------------------------------- |
+| `GET`    | `/api/favorites`                     | Your own list, private and shared         |
+| `POST`   | `/api/favorites`                     | Star a file (`item_id` or `slug`)         |
+| `PATCH`  | `/api/favorites/:itemId`             | Share or unshare one favourite            |
+| `DELETE` | `/api/favorites/:itemId`             | Unstar                                    |
+| `GET`    | `/api/users/:username`               | Public profile                            |
+| `GET`    | `/api/users/:username/favorites`     | The favourites that account shared        |
+
+Favourites belong to the database rather than the catalogue, so a full snapshot restore rolls them back with everything else, while a catalogue-only rollback keeps them — an undo after a bad bulk edit does not cost everyone their stars.
 
 ## Import and export
 

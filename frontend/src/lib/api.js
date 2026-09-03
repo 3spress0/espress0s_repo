@@ -107,6 +107,14 @@ export function describeApiError(error) {
 
 api.interceptors.request.use((config) => {
   if (!SAFE_METHODS.has((config.method || 'get').toLowerCase())) {
+    // The client declares `Content-Type: application/json` for everything, so a
+    // POST that carries no body at all arrived as an empty JSON body and
+    // Fastify rejected it with FST_ERR_CTP_EMPTY_JSON_BODY. Every bodyless
+    // mutation failed with a 400: logging out, duplicating a page, rebuilding
+    // the search index, restoring a version, running a link check, resetting a
+    // setting. Sending `{}` keeps the declared type honest and fixes all of
+    // them in one place, including calls added later.
+    if (config.data === undefined) config.data = {};
     const csrf = readCookie('espress0_csrf');
     if (csrf) config.headers['X-CSRF-Token'] = csrf;
   }
@@ -198,6 +206,31 @@ export const authApi = {
   csrf: () => api.get('/auth/csrf').then(r => r.data),
   securityInfo: () => api.get('/auth/security-info').then(r => r.data),
   encryptionStatus: () => api.get('/auth/encryption-status').then(r => r.data),
+};
+
+/**
+ * Personal favourites.
+ *
+ * `add` takes either an item id or a slug; `isPublic` is optional and omitted
+ * means "use the profile default". Everything here needs a session - the
+ * public, session-free view of someone's list is usersApi below.
+ */
+export const favoritesApi = {
+  list: (params) => api.get('/favorites', { params }).then(r => r.data),
+  add: ({ itemId, slug, isPublic }) => api.post('/favorites', {
+    ...(itemId ? { item_id: itemId } : { slug }),
+    ...(isPublic === undefined ? {} : { is_public: isPublic }),
+  }).then(r => r.data),
+  setVisibility: (itemId, isPublic) =>
+    api.patch(`/favorites/${encodeURIComponent(itemId)}`, { is_public: isPublic }).then(r => r.data),
+  remove: (itemId) => api.delete(`/favorites/${encodeURIComponent(itemId)}`).then(r => r.data),
+};
+
+/** Public account pages. No session required, and no email is ever returned. */
+export const usersApi = {
+  profile: (username) => api.get(`/users/${encodeURIComponent(username)}`).then(r => r.data),
+  favorites: (username, params) =>
+    api.get(`/users/${encodeURIComponent(username)}/favorites`, { params }).then(r => r.data),
 };
 
 export const captchaApi = {

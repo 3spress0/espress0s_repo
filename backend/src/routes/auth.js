@@ -4,6 +4,7 @@ import { generateToken, authenticate } from '../middleware/auth.js';
 import { config } from '../config.js';
 import { encryptionService } from '../services/encryptionService.js';
 import { captchaService } from '../services/captchaService.js';
+import { getSetting } from '../services/settingsService.js';
 import crypto from 'crypto';
 import { z } from 'zod';
 
@@ -87,10 +88,35 @@ const profileSchema = z.object({
     .optional().nullable(),
   bio: z.string().max(500).optional().nullable(),
   theme: z.enum(['dark', 'light', 'auto']).optional(),
+  // Where new favourites start. Existing favourites keep their own setting,
+  // so turning this off is never a silent mass-unpublish.
+  favorites_default_public: z.preprocess(
+    (v) => (typeof v === 'string'
+      ? (['1', 'true', 'yes', 'on'].includes(v.trim().toLowerCase()) ? true
+        : (['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase()) ? false : v))
+      : v),
+    z.boolean()
+  ).optional(),
 }).refine(data => {
   if (data.newPassword && data.newPassword !== data.confirmNewPassword) return false;
   return true;
 }, { message: "New passwords don't match", path: ["confirmNewPassword"] });
+
+/**
+ * Whether login/register should demand a CAPTCHA.
+ *
+ * Two switches, and both have to say yes: the deployment-level `CAPTCHA_TYPE`
+ * (an operator can turn the whole thing off without touching the database) and
+ * the "Require CAPTCHA on login" setting in Admin -> Site settings.
+ *
+ * The setting was never read. Env-only meant the toggle sat in the admin UI
+ * doing nothing: switching it off left the CAPTCHA in place, and switching it
+ * on changed nothing either, because the env default already asked for one.
+ */
+function captchaRequired() {
+  if (process.env.CAPTCHA_TYPE === 'disabled') return false;
+  return getSetting('require_captcha', true) !== false;
+}
 
 export async function authRoutes(fastify) {
   fastify.post('/auth/login', {
@@ -100,8 +126,7 @@ export async function authRoutes(fastify) {
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid input', details: parsed.error.errors });
 
     const { username, password, captchaId, captchaAnswer, captchaToken } = request.body;
-    const captchaType = process.env.CAPTCHA_TYPE || 'math';
-    if (captchaType !== 'disabled') {
+    if (captchaRequired()) {
       const captchaResult = await captchaService.verifyWithType({ id: captchaId, answer: captchaAnswer, token: captchaToken }, request.ip);
       if (!captchaResult.success) {
         return reply.code(400).send({ error: 'CAPTCHA verification failed', details: captchaResult.message, captchaRequired: true, newCaptcha: captchaService.generate() });
@@ -159,8 +184,7 @@ export async function authRoutes(fastify) {
     }
 
     const { username, email, password, captchaId, captchaAnswer, captchaToken } = request.body;
-    const captchaType = process.env.CAPTCHA_TYPE || 'math';
-    if (captchaType !== 'disabled') {
+    if (captchaRequired()) {
       const captchaResult = await captchaService.verifyWithType({ id: captchaId, answer: captchaAnswer, token: captchaToken }, request.ip);
       if (!captchaResult.success) {
         return reply.code(400).send({ error: 'CAPTCHA verification failed', details: captchaResult.message, captchaRequired: true, newCaptcha: captchaService.generate() });
@@ -218,7 +242,7 @@ export async function authRoutes(fastify) {
     const parsed = profileSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
 
-    const { username, email, currentPassword, newPassword, avatar_url, bio, theme } = parsed.data;
+    const { username, email, currentPassword, newPassword, avatar_url, bio, theme, favorites_default_public } = parsed.data;
     const db = getDb();
     const userId = request.user.id;
     const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
@@ -289,6 +313,11 @@ export async function authRoutes(fastify) {
       params.theme = theme;
     }
 
+    if (favorites_default_public !== undefined) {
+      updates.push('favorites_default_public = @favorites_default_public');
+      params.favorites_default_public = favorites_default_public ? 1 : 0;
+    }
+
     if (updates.length === 0) return reply.code(400).send({ error: 'No fields to update' });
 
     updates.push('updated_at = @updated_at');
@@ -298,20 +327,20 @@ export async function authRoutes(fastify) {
 
     db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = @id`).run(params);
 
-    const updatedRaw = db.prepare('SELECT id, username, email, role, avatar_url, bio, theme FROM users WHERE id = ?').get(userId);
+    const updatedRaw = db.prepare('SELECT id, username, email, role, avatar_url, bio, theme, favorites_default_public FROM users WHERE id = ?').get(userId);
     let decEmail = updatedRaw.email; try { decEmail = encryptionService.decrypt(updatedRaw.email); } catch {}
     let decAvatar = updatedRaw.avatar_url; try { decAvatar = updatedRaw.avatar_url ? encryptionService.decrypt(updatedRaw.avatar_url) : null; } catch {}
     let decBio = updatedRaw.bio; try { decBio = updatedRaw.bio ? encryptionService.decrypt(updatedRaw.bio) : null; } catch {}
 
     return {
-      user: { id: updatedRaw.id, username: updatedRaw.username, email: decEmail, role: updatedRaw.role, avatar_url: decAvatar, bio: decBio, theme: updatedRaw.theme || 'dark' },
+      user: { id: updatedRaw.id, username: updatedRaw.username, email: decEmail, role: updatedRaw.role, avatar_url: decAvatar, bio: decBio, theme: updatedRaw.theme || 'dark', favorites_default_public: Boolean(updatedRaw.favorites_default_public) },
       message: 'Profile updated',
     };
   });
 
   fastify.get('/auth/profile', { preHandler: [authenticate] }, async (request, reply) => {
     const db = getDb();
-    const userRaw = db.prepare('SELECT id, username, email, role, avatar_url, bio, theme, encryption_version, created_at FROM users WHERE id = ?').get(request.user.id);
+    const userRaw = db.prepare('SELECT id, username, email, role, avatar_url, bio, theme, favorites_default_public, encryption_version, created_at FROM users WHERE id = ?').get(request.user.id);
     if (!userRaw) return reply.code(404).send({ error: 'User not found' });
     
     let decEmail = userRaw.email; try { decEmail = encryptionService.decrypt(userRaw.email); } catch {}
@@ -326,6 +355,7 @@ export async function authRoutes(fastify) {
       avatar_url: decAvatar,
       bio: decBio,
       theme: userRaw.theme || 'dark',
+      favorites_default_public: Boolean(userRaw.favorites_default_public),
       encryption_version: userRaw.encryption_version,
       created_at: userRaw.created_at,
     };

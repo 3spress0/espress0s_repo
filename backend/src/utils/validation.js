@@ -130,6 +130,12 @@ export const registerSchema = z.object({
 });
 
 export const downloadLinkSchema = z.object({
+  // Row id of an existing mirror, when the client is updating one. Optional,
+  // and only ever honoured if the row already belongs to the item being
+  // written - see routes/items.js. Carrying it lets an update edit a mirror
+  // in place instead of deleting every row and re-inserting them, which used
+  // to reset each mirror's download counter and health-check results.
+  id: z.number().int().positive().optional(),
   label: z.string().min(2).max(100),
   storage_provider: z.enum(['local', 'gdrive', 'onedrive', 'github', 'external']).default('external'),
   storage_path: z.string().max(1000).optional().nullable(),

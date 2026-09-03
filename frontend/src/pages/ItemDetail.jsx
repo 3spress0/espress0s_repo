@@ -6,6 +6,7 @@ import { formatBytes, formatDate, startDownload } from '../lib/utils';
 import { ItemPlaceholder } from '../components/Logo';
 import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
+import FavoriteButton from '../components/FavoriteButton';
 import Loading, { LoadingDots } from '../components/Loading';
 
 // The editor is ~1k lines and only appears when an admin clicks "Edit this
@@ -23,6 +24,7 @@ export default function ItemDetail() {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewError, setPreviewError] = useState(null);
   const [editing, setEditing] = useState(false);
+  const [favoriteError, setFavoriteError] = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -149,17 +151,35 @@ export default function ItemDetail() {
           Back to browse
         </Link>
 
-        {/* Admins edit the page they are looking at - no detour through /admin. */}
-        {isAdmin && !editing && (
-          <button
-            onClick={() => setEditing(true)}
-            className="px-4 py-2 bg-gradient-primary text-white rounded-xl text-sm font-medium shadow-lg shadow-purple-500/20 flex items-center gap-2"
-          >
-            <Pencil className="w-4 h-4" />
-            Edit this page
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <FavoriteButton
+            itemId={item.id}
+            slug={item.slug}
+            isFavorite={item.is_favorite}
+            count={item.favorites_count}
+            onError={(message) => setFavoriteError(message)}
+          />
+
+          {/* Admins edit the page they are looking at - no detour through /admin. */}
+          {isAdmin && !editing && (
+            <button
+              onClick={() => setEditing(true)}
+              className="px-4 py-2 bg-gradient-primary text-white rounded-xl text-sm font-medium shadow-lg shadow-purple-500/20 flex items-center gap-2"
+            >
+              <Pencil className="w-4 h-4" />
+              Edit this page
+            </button>
+          )}
+        </div>
       </div>
+
+      {favoriteError && (
+        <div className="mb-6 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-400 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          <span>{favoriteError}</span>
+          <button onClick={() => setFavoriteError('')} className="ml-auto text-xs underline">Dismiss</button>
+        </div>
+      )}
 
       {editing && (
         <div className="mb-6">
@@ -409,6 +429,41 @@ export default function ItemDetail() {
               <div className="flex justify-between"><span className="text-textMuted">Mirrors</span><span className="font-medium text-textPrimary">{downloadLinks.length} ({availableLinks.length} up)</span></div>
               <div className="flex justify-between"><span className="text-textMuted">Login Required</span><span className="font-medium text-amber-400">Yes</span></div>
               <div className="flex justify-between"><span className="text-textMuted">Encrypted</span><span className="font-medium text-green-400">AES-256-GCM</span></div>
+              <div className="flex justify-between"><span className="text-textMuted">Favourited by</span><span className="font-medium text-textPrimary">{(item.favorites_count || 0).toLocaleString()}</span></div>
+              {isAuthenticated && item.favorite_is_public && (
+                <div className="flex justify-between"><span className="text-textMuted">On your profile</span><span className="font-medium text-amber-400">Shared</span></div>
+              )}
+
+              {/* Accounts that shared this file. Only public favourites appear,
+                  so every name here is a profile its owner chose to publish. */}
+              {item.shared_by?.length > 0 && (
+                <div className="pt-1">
+                  <div className="text-textMuted mb-2">Shared by</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {item.shared_by.map(account => (
+                      <Link
+                        key={account.id}
+                        to={`/u/${account.username}`}
+                        title={`${account.username}'s profile`}
+                        className="w-8 h-8 rounded-full bg-surfaceHover border border-border overflow-hidden hover:border-amber-500/40 transition-colors flex items-center justify-center text-[11px] font-bold text-textSecondary"
+                      >
+                        {account.avatar_url ? (
+                          <img
+                            src={account.avatar_url}
+                            alt={account.username}
+                            loading="lazy"
+                            decoding="async"
+                            className="w-full h-full object-cover"
+                            onError={(e) => { e.target.style.display = 'none'; }}
+                          />
+                        ) : (
+                          account.username[0]?.toUpperCase()
+                        )}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

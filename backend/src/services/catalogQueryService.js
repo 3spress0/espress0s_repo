@@ -99,7 +99,12 @@ export function buildCatalogFilters(query = {}) {
   const folder = str(query.folder, 120);
   if (folder === 'none') {
     conditions.push('items.folder_id IS NULL');
-  } else if (folder) {
+  } else if (folder && folder !== 'all') {
+    // "all" is the admin UI's sentinel for "every folder" (the default option
+    // of its folder select), not a slug. Taking it literally matched
+    // `folders.slug = 'all'` and returned an empty catalogue, so the File
+    // pages list looked empty on first load while the dashboard counted
+    // thousands of pages.
     if (/^\d+$/.test(folder)) { conditions.push('items.folder_id = @folder_id'); params.folder_id = Number(folder); }
     else { conditions.push('folders.slug = @folder_slug'); params.folder_slug = folder; }
   }

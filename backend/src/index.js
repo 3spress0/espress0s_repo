@@ -19,6 +19,8 @@ import { foldersRoutes } from './routes/folders.js';
 import { searchRoutes } from './routes/search.js';
 import { statsRoutes } from './routes/stats.js';
 import { authRoutes } from './routes/auth.js';
+import { usersRoutes } from './routes/users.js';
+import { favoritesRoutes } from './routes/favorites.js';
 import { aiRoutes } from './routes/ai.js';
 import { adminRoutes } from './routes/admin.js';
 import { captchaRoutes } from './routes/captcha.js';
@@ -32,6 +34,7 @@ import { catalogRoutes } from './routes/catalog.js';
 import multipart from '@fastify/multipart';
 import { monitoringService } from './services/monitoringService.js';
 import { linkHealthService } from './services/linkHealthService.js';
+import { rateLimitKey, rateLimitMax } from './middleware/rateLimit.js';
 
 // Boot-time configuration audit. In production this throws; in development it
 // prints the same list so the gap is visible before deploy day.
@@ -185,8 +188,11 @@ await fastify.register(multipart, {
 
 await fastify.register(rateLimit, {
   global: true,
-  max: config.rateLimit.max,
   timeWindow: config.rateLimit.windowMs,
+  // Two buckets, not one: see rateLimitKey() in middleware/rateLimit.js for
+  // why an admin session cannot share the anonymous allowance.
+  keyGenerator: rateLimitKey,
+  max: (request, key) => rateLimitMax(key),
 });
 
 // Security: Block path traversal
@@ -238,6 +244,8 @@ await fastify.register(async (api) => {
   await api.register(searchRoutes);
   await api.register(statsRoutes);
   await api.register(authRoutes);
+  await api.register(usersRoutes);
+  await api.register(favoritesRoutes);
   await api.register(aiRoutes);
   await api.register(adminRoutes);
   await api.register(captchaRoutes);

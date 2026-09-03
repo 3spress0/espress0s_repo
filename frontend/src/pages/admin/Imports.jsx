@@ -64,14 +64,21 @@ export default function AdminImports() {
   const fileRef = useRef(null);
 
   const load = useCallback(() => {
-    catalogApi.history(100).then(setHistory).catch(() => setHistory([]));
+    // The endpoint answers { imports: [...] }, not a bare array: reading it as
+    // one made `history.map` throw and took the whole page down.
+    catalogApi.history(100)
+      .then(data => setHistory(data.imports || []))
+      .catch(() => setHistory([]));
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   const notify = (kind, message) => {
-    if (kind === 'error') setError(message); else setNotice(message);
-    setTimeout(() => { setError(''); setNotice(''); }, 6000);
+    const clear = kind === 'error' ? () => setError('') : () => setNotice('');
+    (kind === 'error' ? setError : setNotice)(message);
+    // Each banner clears itself, so a success message about this import is not
+    // wiped out by the timer of an error from the one before.
+    setTimeout(clear, 6000);
   };
 
   /** Step one: upload and preview. Nothing is written. */
@@ -86,7 +93,12 @@ export default function AdminImports() {
     try {
       const res = await catalogApi.import(file, { apply: false, mode });
       setProgress({ label: 'Preview ready', value: 100, tone: 'success' });
-      setPreview({ ...res, file });
+      // The mode is frozen here: what you previewed is what Apply runs. Without
+      // it, changing the dropdown after previewing applied a different rule
+      // than the numbers on screen describe.
+      setPreview({ ...res, file, mode });
+      // Dry runs are recorded too, so the history answers "what did I look at".
+      load();
     } catch (e) {
       notify('error', e.response?.data?.error || 'Could not read that archive');
       setProgress(null);
@@ -103,7 +115,7 @@ export default function AdminImports() {
     setError('');
     setProgress({ label: 'Importing', value: 10, sublabel: 'taking a database snapshot first' });
     try {
-      const res = await catalogApi.import(preview.file, { apply: true, mode });
+      const res = await catalogApi.import(preview.file, { apply: true, mode: preview.mode || mode });
       setProgress({ label: 'Imported', value: 100, tone: 'success' });
       setPreview(null);
       notify('success', `Imported: ${res.items.created} created, ${res.items.updated} updated, ${res.errorCount} error${res.errorCount === 1 ? '' : 's'}`);
@@ -231,6 +243,13 @@ export default function AdminImports() {
               <History className="w-4 h-4 text-primary" />
               Preview — nothing has been written yet
             </h3>
+            <p className="text-xs text-textMuted">
+              {MODES.find(m => m.id === (preview.mode || mode))?.label || preview.mode} · {preview.file.name} ·{' '}
+              {formatBytes(preview.file.size)}
+              {preview.mode && preview.mode !== mode ? (
+                <span className="text-amber-400"> (the dropdown now says “{MODES.find(m => m.id === mode)?.label}” — apply re-uses the previewed mode)</span>
+              ) : null}
+            </p>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs">
               {[
                 ['Items created', preview.items?.created],

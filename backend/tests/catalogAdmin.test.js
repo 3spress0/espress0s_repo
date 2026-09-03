@@ -135,6 +135,20 @@ describe('Catalogue admin queries', () => {
       assert.equal(f.params.release_to, '2024-12-31');
     });
 
+    it('treats folder=all as "no folder filter", not as a slug', () => {
+      // "all" is the admin UI's sentinel for "every folder". Matching it as a
+      // slug returned an empty catalogue, which made Admin -> File pages look
+      // empty on first load.
+      const f = buildCatalogFilters({ folder: 'all' });
+      assert.deepEqual(f.conditions, []);
+      assert.deepEqual(f.params, {});
+    });
+
+    it('still treats folder=none as "unfiled"', () => {
+      const f = buildCatalogFilters({ folder: 'none' });
+      assert.deepEqual(f.conditions, ['items.folder_id IS NULL']);
+    });
+
     it('ignores a blank filter set entirely', () => {
       const f = buildCatalogFilters({});
       assert.deepEqual(f.conditions, []);

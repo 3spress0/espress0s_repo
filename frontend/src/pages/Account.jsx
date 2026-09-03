@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee, Palette } from 'lucide-react';
+import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee, Palette, Star, Globe } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import StarryBackground from '../components/StarryBackground';
@@ -8,6 +8,7 @@ import ThemePicker from '../components/ThemePicker';
 import { useTheme } from '../context/ThemeContext';
 import Logo from '../components/Logo';
 import { LoadingDots, LoadingPanel } from '../components/Loading';
+import FavoritesPanel from '../components/FavoritesPanel';
 
 export default function Account() {
   const themeCtx = useTheme();
@@ -19,6 +20,10 @@ export default function Account() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  // Two views of the same account: the profile form, and the files starred
+  // from the catalogue. Favourites live on their own tab rather than below the
+  // form, which is already a full page of fields.
+  const [tab, setTab] = useState('profile');
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -180,6 +185,26 @@ export default function Account() {
           </div>
         )}
 
+        <div className="flex gap-2 mb-6">
+          {[
+            { id: 'profile', label: 'Profile', icon: User },
+            { id: 'favorites', label: 'Favourites', icon: Star },
+          ].map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                tab === id
+                  ? 'bg-gradient-primary text-white shadow-lg shadow-purple-500/20'
+                  : 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 space-y-6">
             <div className="glass rounded-3xl border border-white/5 p-6 text-center backdrop-blur-xl">
@@ -229,6 +254,12 @@ export default function Account() {
                   <Coffee className="w-4 h-4" />
                   Ask Barista
                 </Link>
+                {/* The visitor-facing version of this account: avatar, bio and
+                    the favourites marked shared. */}
+                <Link to={`/u/${profile?.username}`} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-surface border border-border rounded-xl text-sm hover:border-primary/30">
+                  <Globe className="w-4 h-4" />
+                  View public profile
+                </Link>
                 <button
                   onClick={handleLogoutConfirm}
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 rounded-xl text-sm transition-colors"
@@ -249,6 +280,10 @@ export default function Account() {
           </div>
 
           <div className="lg:col-span-2 space-y-6">
+            {tab === 'favorites' ? (
+              <FavoritesPanel onError={setError} />
+            ) : (
+            <>
             {/* Appearance: the scheme is a per-browser preference, so it is not
                 part of the profile form and saves the moment it is clicked. */}
             <div className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl">
@@ -409,6 +444,8 @@ export default function Account() {
                 </div>
               </form>
             </div>
+            </>
+            )}
           </div>
         </div>
       </div>

@@ -178,6 +178,37 @@ describe('Snapshots and rollback', () => {
     fs.rmSync(empty, { force: true });
   });
 
+  it('treats favourites as part of the database, not the catalogue', () => {
+    // A favourite points at a user and an item, so it is only in scope for a
+    // full rollback. That is deliberate: rolling the *catalogue* back after a
+    // bad bulk edit should not cost everyone their stars.
+    db.prepare(
+      `INSERT OR IGNORE INTO users (username, email, password_hash, role)
+       VALUES ('restore-test-user', 'restore-test@example.com', 'pepper_v1:x', 'viewer')`
+    ).run();
+    const userId = db.prepare("SELECT id FROM users WHERE username = 'restore-test-user'").get().id;
+    db.prepare('DELETE FROM favorites WHERE user_id = ?').run(userId);
+    db.prepare('INSERT INTO favorites (user_id, item_id, is_public) VALUES (?, ?, 1)').run(userId, seedId);
+
+    restoreFromSnapshot(snapshotPath, { scope: 'catalogue' });
+    assert.equal(
+      db.prepare('SELECT COUNT(*) c FROM favorites WHERE user_id = ?').get(userId).c, 1,
+      'a catalogue rollback must leave favourites alone'
+    );
+
+    // The snapshot pre-dates the favourite, so a full rollback removes it -
+    // which is exactly what restoring the whole database means.
+    const result = restoreFromSnapshot(snapshotPath, { scope: 'all' });
+    assert.ok('favorites' in result.restored, 'favourites should be part of an all-scope restore');
+    assert.equal(
+      db.prepare('SELECT COUNT(*) c FROM favorites WHERE user_id = ?').get(userId).c, 0,
+      'a full rollback restores the database to the snapshot, favourites included'
+    );
+
+    db.prepare('DELETE FROM favorites WHERE user_id = ?').run(userId);
+    db.prepare("DELETE FROM users WHERE username = 'restore-test-user'").run();
+  });
+
   it('keeps snapshots disabled when CATALOG_BACKUP=false', async () => {
     process.env.CATALOG_BACKUP = 'false';
     try {

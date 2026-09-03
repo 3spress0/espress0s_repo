@@ -27,7 +27,13 @@ function queryTokenAllowed(request) {
 }
 
 /** Pull a bearer token off the request, honouring the query-token policy. */
-function extractToken(request) {
+/**
+ * The token for this request, wherever it travels: Bearer header, the httpOnly
+ * session cookie, the legacy x-access-token header, or (download/preview only)
+ * the query string. Exported because the rate limiter needs to tell a session
+ * apart from a stranger before any route handler has run.
+ */
+export function extractToken(request) {
   const authHeader = request.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) return authHeader.substring(7);
   if (request.cookies && request.cookies.espress0_token) return request.cookies.espress0_token;
