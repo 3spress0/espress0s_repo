@@ -61,7 +61,8 @@ export class AIService {
   constructor() {
     this.tgptAvailable = null; // null = unknown, check lazily
     this.tgptBinary = null;    // resolved once alongside availability
-    this.lastError = null;     // why the last tgpt call failed (shown to admins)
+    this.tgptProbe = null;     // share a bounded in-flight probe across requests
+    this.lastError = null;     // why the last provider call failed (shown to admins)
   }
 
   /**
@@ -73,37 +74,69 @@ export class AIService {
    * package manager (~/go/bin, ~/.local/bin) marked the service available while
    * every call died with ENOENT.
    */
-  async checkTgptAvailable() {
+  async checkTgptAvailable(timeoutMs = config.ai.timeoutMs) {
     if (this.tgptAvailable !== null) return this.tgptAvailable;
+    if (this.tgptProbe) return this.tgptProbe;
 
     if (!config.ai.enabled) {
       this.tgptAvailable = false;
       return false;
     }
 
-    const binary = await findTgpt(config.ai.tgpt.binaryPath);
-    if (!binary) {
+    // Both finding a PATH binary and invoking --version share one bounded
+    // budget. A corrupt executable (or a wrapper that starts an interactive
+    // process) used to make GET /api/ai/status wait forever.
+    const configuredTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : config.ai.timeoutMs;
+    const deadline = Date.now() + configuredTimeoutMs;
+    const remaining = () => Math.max(1, deadline - Date.now());
+    this.tgptProbe = (async () => {
+      const binary = await findTgpt(config.ai.tgpt.binaryPath, remaining());
+      if (!binary) {
+        this.tgptAvailable = false;
+        this.lastError = 'no AI provider configured (set AI_API_KEY in .env, or run ./espress0 ai for the free tgpt CLI)';
+        return false;
+      }
+      if (Date.now() < deadline && await tgptRuns(binary, remaining())) {
+        this.tgptBinary = binary;
+        this.tgptAvailable = true;
+        return true;
+      }
       this.tgptAvailable = false;
-      this.lastError = 'no AI provider configured (set AI_API_KEY in .env, or run ./espress0 ai for the free tgpt CLI)';
+      this.lastError = `tgpt found at ${binary} but failed to run within ${configuredTimeoutMs} ms`;
       return false;
+    })();
+
+    try {
+      return await this.tgptProbe;
+    } finally {
+      this.tgptProbe = null;
     }
-    if (await tgptRuns(binary)) {
-      this.tgptBinary = binary;
-      this.tgptAvailable = true;
-      return true;
-    }
-    this.tgptAvailable = false;
-    this.lastError = `tgpt found at ${binary} but failed to run`;
-    return false;
   }
 
   /** Effective settings for one call: .env, then admin overrides, then the probe. */
   async aiConfig() {
-    await this.checkTgptAvailable();
-    return resolveAi({
+    // Resolve first. Explicit Gemini/OpenAI configurations have no dependency
+    // on tgpt, so probing the CLI there is both wasted work and (when the local
+    // executable hangs) a request-blocking bug. Only auto/tgpt and Gemini's
+    // documented no-key fallback need the availability result.
+    let resolved = resolveAi({
       tgptAvailable: this.tgptAvailable === true,
       tgptBinary: this.tgptBinary,
     });
+    const couldUseTgpt = resolved.enabled && (
+      resolved.provider === 'tgpt'
+      || (resolved.provider === 'none' && ['auto', 'gemini'].includes(resolved.requestedProvider))
+    );
+    if (!couldUseTgpt || this.tgptAvailable !== null) return resolved;
+
+    await this.checkTgptAvailable(resolved.timeoutMs);
+    resolved = resolveAi({
+      tgptAvailable: this.tgptAvailable === true,
+      tgptBinary: this.tgptBinary,
+    });
+    return resolved;
   }
 
   /** What a visitor may know about the AI backend: enough to explain a fallback. */
@@ -131,8 +164,12 @@ export class AIService {
       keyConfigured: cfg.keyConfigured,
       notes: cfg.notes,
     };
-    if (!cfg.enabled) return { ok: false, ...base, error: 'AI features are switched off (Settings -> AI).' };
-    if (cfg.provider === 'none') return { ok: false, ...base, error: 'No usable provider. Set AI_API_KEY in .env or install tgpt.' };
+    if (!cfg.enabled) {
+      return { ok: false, ...base, code: 'disabled', error: 'AI features are switched off (Settings -> AI).' };
+    }
+    if (cfg.provider === 'none') {
+      return { ok: false, ...base, code: 'unavailable', error: 'No usable provider. Set AI_API_KEY in .env or install tgpt.' };
+    }
 
     const started = Date.now();
     try {
@@ -142,9 +179,16 @@ export class AIService {
         cfg,
         kind: 'ask',
       });
+      this.lastError = null;
       return { ok: true, ...base, ms: Date.now() - started, sample: out.text.slice(0, 120) };
     } catch (e) {
-      return { ok: false, ...base, ms: Date.now() - started, error: redact(e.message, cfg.apiKey).slice(0, 300) };
+      const code = typeof e?.code === 'string' ? e.code : 'unavailable';
+      const error = redact(e?.message || e, cfg.apiKey).slice(0, 300);
+      // Keep the same sanitized failure visible in the admin status card. The
+      // test endpoint previously swallowed it into one response, so a reload
+      // claimed that no provider error had occurred.
+      this.lastError = redact(`[${cfg.provider}] ${code}: ${error}`, cfg.apiKey).slice(0, 300);
+      return { ok: false, ...base, ms: Date.now() - started, code, error };
     }
   }
 

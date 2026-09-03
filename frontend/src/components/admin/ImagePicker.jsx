@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Upload, Link2, Image as ImageIcon, X, Check, Loader2 } from 'lucide-react';
+import { Upload, Link2, Image as ImageIcon, X, Check } from 'lucide-react';
 import { uploadsApi } from '../../lib/api';
 import { LoadingDots } from '../Loading';
 
@@ -136,7 +136,7 @@ export default function ImagePicker({ label, value, onChange, hint }) {
           />
           {uploading ? (
             <div className="flex items-center justify-center gap-2 text-sm text-textSecondary">
-              <Loader2 className="w-4 h-4 animate-spin" /> Uploading...
+              <LoadingDots size={16} /> Uploading...
             </div>
           ) : (
             <>

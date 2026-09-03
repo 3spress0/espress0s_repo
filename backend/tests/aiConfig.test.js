@@ -85,6 +85,7 @@ describe('provider resolution', () => {
   it('openai means a chat/completions endpoint and refuses to invent a model', async () => {
     const r = await decide({ provider: 'openai' });
     assert.equal(r.format, 'openai');
+    assert.equal(r.requestedProvider, 'openai', 'the service can skip an unrelated tgpt availability probe');
     assert.equal(r.baseUrl, 'https://api.openai.com/v1', 'the openai default, not the gemini one');
     assert.equal(r.model, '', 'a model name for someone else\'s endpoint has to come from the operator');
 

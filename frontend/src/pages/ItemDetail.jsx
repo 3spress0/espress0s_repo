@@ -259,7 +259,7 @@ export default function ItemDetail() {
 
               {canPreview && (
                 <button onClick={handlePreview} disabled={previewLoading} className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-surface border border-border hover:border-primary/30 rounded-2xl font-medium text-sm transition-all disabled:opacity-50">
-                  {previewLoading ? <>Loading...</> : <><Play className="w-4 h-4" />Preview {isAudio ? 'Audio' : isVideo ? 'Video' : 'Media'}</>}
+                  {previewLoading ? <><LoadingDots size={16} /> Loading...</> : <><Play className="w-4 h-4" />Preview {isAudio ? 'Audio' : isVideo ? 'Video' : 'Media'}</>}
                 </button>
               )}
               

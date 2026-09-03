@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  X, Save, Loader2, AlertCircle, Eye, Check, Link as LinkIcon,
+  X, Save, AlertCircle, Eye, Check, Link as LinkIcon,
   RotateCcw, Sparkles, CheckCircle2, Circle, ArrowLeft, ArrowRight,
   Wand2, GitBranch, Plus, Trash2,
 } from 'lucide-react';
@@ -637,7 +637,11 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
               )}
             </div>
             <div className="text-[11px] mt-1 h-4">
-              {slugState?.checking && <span className="text-textMuted">Checking availability...</span>}
+              {slugState?.checking && (
+                <span className="inline-flex items-center gap-1.5 text-textMuted">
+                  <LoadingDots size={12} /> Checking availability...
+                </span>
+              )}
               {!slugState?.checking && slugState?.available === true && (
                 <span className="text-green-400 flex items-center gap-1"><Check className="w-3 h-3" /> /file/{slugState.slug} is free</span>
               )}
@@ -942,7 +946,7 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
             disabled={saving}
             className="px-6 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium flex items-center gap-2 disabled:opacity-50"
           >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {saving ? <LoadingDots size={16} /> : <Save className="w-4 h-4" />}
             {saving ? 'Saving...' : (isEdit ? 'Save changes' : 'Create page')}
           </button>
           {!form.published && (

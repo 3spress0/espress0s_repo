@@ -1,5 +1,8 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 /**
  * AI provider transport tests: dependency-free (no database, no network, no
@@ -124,6 +127,90 @@ describe('openai-compatible transport', () => {
     assert.equal(calls[0].body.stream, false);
   });
 
+  it('supports Groq through the OpenAI-compatible base URL', async () => {
+    const calls = stubFetch(() => json({
+      id: 'chatcmpl-groq-test',
+      object: 'chat.completion',
+      choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+    }));
+    const out = await mod.generate({
+      system: 'Reply with exactly: OK',
+      prompt: 'connection test',
+      cfg: baseCfg({
+        format: 'openai',
+        provider: 'openai',
+        baseUrl: 'https://api.groq.com/openai/v1',
+        // Transport regression: endpoint validation has its own tests below;
+        // keeping this true makes this wire-format test network-independent.
+        baseUrlIsDefault: true,
+        model: 'openai/gpt-oss-120b',
+        apiKey: 'gsk_test_key_not_real_0123456789',
+      }),
+    });
+
+    assert.deepEqual(out, { text: 'OK', provider: 'openai', model: 'openai/gpt-oss-120b' });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://api.groq.com/openai/v1/chat/completions');
+    assert.equal(calls[0].init.headers.authorization, 'Bearer gsk_test_key_not_real_0123456789');
+    assert.equal(calls[0].body.model, 'openai/gpt-oss-120b');
+    assert.equal(calls[0].body.stream, false);
+  });
+
+  it('keeps the configured timeout active while reading the response body', async () => {
+    let finishBody;
+    globalThis.fetch = async (_url, init) => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"choices":['));
+        const finish = () => {
+          try {
+            controller.enqueue(new TextEncoder().encode('{"message":{"content":"too late"}}]}'));
+            controller.close();
+          } catch { /* the timeout already errored the stream */ }
+        };
+        finishBody = setTimeout(finish, 200);
+        init.signal.addEventListener('abort', () => {
+          clearTimeout(finishBody);
+          controller.error(init.signal.reason);
+        }, { once: true });
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+
+    const started = Date.now();
+    await assert.rejects(
+      () => mod.generate({
+        prompt: 'x',
+        cfg: baseCfg({
+          format: 'openai',
+          provider: 'openai',
+          baseUrl: 'https://api.groq.com/openai/v1',
+          baseUrlIsDefault: true,
+          model: 'openai/gpt-oss-120b',
+          timeoutMs: 40,
+        }),
+      }),
+      (e) => e.code === 'timeout' && /40 ms/.test(e.message)
+    );
+    assert.ok(Date.now() - started < 180, 'the stalled response body outlived the configured timeout');
+    clearTimeout(finishBody);
+  });
+
+  it('surfaces Groq API errors with their provider code and message', async () => {
+    stubFetch(() => json({ error: { message: 'The model `missing/model` does not exist', type: 'invalid_request_error' } }, 400));
+    await assert.rejects(
+      () => mod.generate({
+        prompt: 'x',
+        cfg: baseCfg({
+          format: 'openai',
+          provider: 'openai',
+          baseUrl: 'https://api.groq.com/openai/v1',
+          baseUrlIsDefault: true,
+          model: 'missing/model',
+        }),
+      }),
+      (e) => e.code === 'http' && /HTTP 400/.test(e.message) && /does not exist/.test(e.message)
+    );
+  });
+
   it('accepts a base URL that already includes the endpoint path', async () => {
     const calls = stubFetch(() => json({ choices: [{ message: { content: 'ok' } }] }));
     await mod.generate({
@@ -246,5 +333,19 @@ describe('tgpt transport still works', () => {
       () => mod.callTgpt({ prompt: 'x', cfg: { timeoutMs: 1000, tgpt: { binary: '' }, apiKey: '' } }),
       (e) => e.code === 'unavailable' && /not installed/.test(e.message)
     );
+  });
+
+  it('bounds the version probe used by status checks', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgpt-probe-timeout-'));
+    const binary = path.join(dir, 'tgpt');
+    fs.writeFileSync(binary, '#!/bin/sh\nexec sleep 2\n');
+    fs.chmodSync(binary, 0o755);
+    try {
+      const started = Date.now();
+      assert.equal(await mod.tgptRuns(binary, 50), false);
+      assert.ok(Date.now() - started < 500, 'tgpt --version ignored the status-check timeout');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

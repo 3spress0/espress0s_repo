@@ -12,6 +12,7 @@ import Register from './pages/Register';
 import NotFound from './pages/NotFound';
 import Account from './pages/Account';
 import AskAIPopup from './components/AskAIPopup';
+import MaintenanceBanner from './components/MaintenanceBanner';
 import { AuthProvider } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -51,6 +52,7 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-background text-textPrimary flex flex-col transition-colors duration-300">
       <Navbar onAskOpen={() => setAskOpen(true)} />
+      <MaintenanceBanner />
       <main className="flex-1">
         {/* One fallback for the split routes: the same dots the rest of the app
             uses, full-screen, so a chunk fetch looks like every other wait. */}

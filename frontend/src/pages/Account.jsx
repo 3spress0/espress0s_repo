@@ -7,7 +7,7 @@ import StarryBackground from '../components/StarryBackground';
 import ThemePicker from '../components/ThemePicker';
 import { useTheme } from '../context/ThemeContext';
 import Logo from '../components/Logo';
-import { LoadingPanel } from '../components/Loading';
+import { LoadingDots, LoadingPanel } from '../components/Loading';
 
 export default function Account() {
   const themeCtx = useTheme();
@@ -400,7 +400,7 @@ export default function Account() {
                     disabled={saving}
                     className="px-6 py-3 bg-gradient-primary hover:bg-gradient-primary-hover disabled:opacity-50 text-white rounded-xl font-medium shadow-lg shadow-purple-500/20 flex items-center gap-2 transition-all"
                   >
-                    <Save className="w-4 h-4" />
+                    {saving ? <LoadingDots size={16} /> : <Save className="w-4 h-4" />}
                     {saving ? 'Saving...' : 'Save Customization'}
                   </button>
                   <Link to="/" className="px-6 py-3 bg-surface border border-border rounded-xl text-sm hover:border-primary/30 transition-colors">

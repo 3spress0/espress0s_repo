@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FolderPlus, Folder, Trash2, Edit, X, Loader2, AlertTriangle, Package } from 'lucide-react';
+import { FolderPlus, Folder, Trash2, Edit, X, AlertTriangle, Package } from 'lucide-react';
 import { foldersApi } from '../../lib/api';
+import Loading, { LoadingDots } from '../../components/Loading';
 
 const COLORS = ['#8b5cf6', '#6366f1', '#3b82f6', '#06b6d4', '#10b981', '#f59e0b', '#ec4899', '#6b7280'];
 const ICONS = ['📁', '💿', '🧰', '🎮', '📚', '🔐', '🐧', '⭐', '🧪', '📦'];
@@ -101,7 +102,9 @@ export default function AdminFolders() {
       </div>
 
       {loading ? (
-        <div className="glass rounded-2xl border border-white/5 p-10 text-center text-textMuted text-sm">Loading folders...</div>
+        <div className="glass rounded-2xl border border-white/5 p-10">
+          <Loading text="Loading folders…" />
+        </div>
       ) : folders.length === 0 ? (
         <div className="glass rounded-2xl border border-white/5 p-10 text-center">
           <Folder className="w-10 h-10 mx-auto text-textMuted mb-3" />
@@ -217,7 +220,7 @@ export default function AdminFolders() {
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setEditing(null)} className="px-4 py-2.5 bg-background border border-border rounded-xl text-sm">Cancel</button>
                 <button type="submit" disabled={saving} className="px-5 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium flex items-center gap-2 disabled:opacity-50">
-                  {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {saving && <LoadingDots size={16} />}
                   {editing === 'new' ? 'Create folder' : 'Save changes'}
                 </button>
               </div>
@@ -248,7 +251,7 @@ export default function AdminFolders() {
                 disabled={saving}
                 className="px-4 py-2.5 bg-red-500/15 border border-red-500/40 text-red-400 rounded-xl text-sm font-medium flex items-center gap-2 disabled:opacity-50"
               >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {saving ? <LoadingDots size={16} /> : <Trash2 className="w-4 h-4" />}
                 Delete folder
               </button>
             </div>
