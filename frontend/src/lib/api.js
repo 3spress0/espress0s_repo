@@ -228,6 +228,8 @@ export const favoritesApi = {
 
 /** Public account pages. No session required, and no email is ever returned. */
 export const usersApi = {
+  /** Searchable directory of accounts. params: { q, page, limit, sort }. */
+  list: (params) => api.get('/users', { params }).then(r => r.data),
   profile: (username) => api.get(`/users/${encodeURIComponent(username)}`).then(r => r.data),
   favorites: (username, params) =>
     api.get(`/users/${encodeURIComponent(username)}/favorites`, { params }).then(r => r.data),

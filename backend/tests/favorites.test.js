@@ -399,3 +399,60 @@ describe('public profiles', () => {
     db.prepare('DELETE FROM favorites WHERE user_id = ?').run(other.id);
   });
 });
+
+describe('people directory', () => {
+  it('lists accounts without leaking any email address', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/users' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(Array.isArray(body.users));
+    assert.ok(body.users.length >= 1);
+    // Directory is public, so it must never carry an email in any shape.
+    assert.equal(JSON.stringify(body).includes('@example.com'), false);
+    for (const u of body.users) {
+      assert.equal(u.email, undefined);
+      assert.equal(typeof u.username, 'string');
+      assert.equal(typeof u.favorites_count, 'number');
+    }
+  });
+
+  it('finds an account by a username substring, case-insensitively', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/users?q=OWNER' });
+    assert.equal(res.statusCode, 200);
+    const names = res.json().users.map(u => u.username);
+    assert.ok(names.includes('fav_owner'));
+    assert.ok(names.every(n => n.toLowerCase().includes('owner')));
+  });
+
+  it('returns an empty page rather than everyone for a no-match search', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/users?q=definitely-not-a-user-xyz' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().users.length, 0);
+    assert.equal(res.json().pagination.total, 0);
+  });
+
+  it('counts only shared, published favourites per account', async () => {
+    makeUser('dir_counter');
+    const counter = userRow('dir_counter');
+    makeItem('dir-public-item');
+    makeItem('dir-private-item');
+    const pub = db.prepare('SELECT * FROM items WHERE slug = ?').get('dir-public-item');
+    const priv = db.prepare('SELECT * FROM items WHERE slug = ?').get('dir-private-item');
+
+    await app.inject({
+      method: 'POST', url: '/api/favorites', headers: tokenFor(counter),
+      payload: { item_id: pub.id, is_public: true },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/favorites', headers: tokenFor(counter),
+      payload: { item_id: priv.id, is_public: false },
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/api/users?q=dir_counter' });
+    const row = res.json().users.find(u => u.username === 'dir_counter');
+    assert.ok(row);
+    assert.equal(row.favorites_count, 1);
+
+    db.prepare('DELETE FROM favorites WHERE user_id = ?').run(counter.id);
+  });
+});

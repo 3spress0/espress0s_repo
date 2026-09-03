@@ -5,6 +5,7 @@ import Footer from './components/Footer';
 import Loading from './components/Loading';
 import Home from './pages/Home';
 import Browse from './pages/Browse';
+import People from './pages/People';
 import ItemDetail from './pages/ItemDetail';
 import Ask from './pages/Ask';
 import Login from './pages/Login';
@@ -61,6 +62,7 @@ function AppContent() {
           <Routes>
             <Route path="/" element={<Home onAskOpen={() => setAskOpen(true)} />} />
             <Route path="/browse" element={<Browse />} />
+            <Route path="/people" element={<People />} />
             <Route path="/file/:slug" element={<ItemDetail />} />
             <Route path="/item/:slug" element={<ItemRedirect />} />
             <Route path="/ask" element={<Ask />} />
