@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  Search, Plus, Edit, Trash2, Eye, X, Link2, ImageIcon, Copy,
+  Search, Plus, Edit, Trash2, Eye, Link2, ImageIcon, Copy,
   EyeOff, AlertTriangle, CheckCircle2, Star, Folder,
 } from 'lucide-react';
 import { adminApi, itemsApi, foldersApi, categoriesApi, catalogAdminApi } from '../../lib/api';
@@ -699,13 +699,9 @@ export default function AdminItems() {
       {showEditor && (
         <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
           <div className="w-full max-w-4xl my-8 relative">
-            <button
-              type="button"
-              onClick={closeEditor}
-              className="absolute -top-3 -right-3 z-10 p-2 rounded-full bg-surface border border-border text-textSecondary hover:text-textPrimary"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            {/* No floating close button here: the editor renders its own in the
+                card header, next to "View page", so this modal had two X's
+                stacked on the same corner. */}
             {loadingId ? (
               <div className="bg-surface border border-border rounded-2xl p-10">
                 <Loading text="Loading page…" />

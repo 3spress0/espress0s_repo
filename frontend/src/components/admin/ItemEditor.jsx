@@ -496,7 +496,13 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
             </a>
           )}
           {onClose && (
-            <button type="button" onClick={onClose} className="p-2 hover:bg-surfaceHover rounded-xl">
+            <button
+              type="button"
+              onClick={onClose}
+              title="Close the editor"
+              aria-label="Close editor"
+              className="p-2 hover:bg-surfaceHover rounded-xl"
+            >
               <X className="w-5 h-5" />
             </button>
           )}
