@@ -23,7 +23,7 @@ const FALLBACKS = {
   show_dev_credentials_panel: false,
   ai_enabled: true,
   maintenance_mode: false,
-  maintenance_message: '',
+  maintenance_message: 'We are performing maintenance. Downloads may be temporarily unavailable.',
   theme_default: 'midnight',
   theme_light_default: 'daybreak',
   theme_allow_user_choice: true,
