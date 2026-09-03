@@ -40,6 +40,33 @@ SUMMARY: <one sentence, max 160 characters>
 BODY:
 <markdown body, 120-250 words, using "## " headings such as Overview, What's included, Requirements, Notes, plus bullet lists>`;
 
+/**
+ * Rules for the "fill the gaps" helper. Unlike DRAFT_SYSTEM_PROMPT (which only
+ * writes prose), this one classifies a known piece of software into the
+ * catalogue's own controlled vocabulary so the empty metadata fields can be
+ * pre-filled. The reply is strict JSON so the server can apply it field by
+ * field, and every value is a suggestion the admin can still override.
+ */
+const FILL_SYSTEM_PROMPT = `You complete missing metadata for an entry in a personal software catalogue.
+
+You are given the fields an admin has already filled in and the list of fields that are still empty. Using widely-documented, factual knowledge about the named software, propose values for ONLY the empty fields.
+
+Rules:
+- Never change a field the admin already filled — only suggest for the ones listed as empty.
+- Never invent a version number, checksum, file size or download link. Leave those blank if you are not certain.
+- Use ONLY these controlled values where they apply:
+  - platform: one of windows, linux, macos, cross-platform
+  - architecture: one of x86, x64, arm64, universal
+  - file_type: a bare extension such as iso, exe, zip, msi, pdf, dmg, appimage, deb, tar.gz
+  - license_status: one of public-domain, redistributable, proprietary, check-license, internal-only, abandonware
+- tags: 3 to 8 short lowercase keywords, as a JSON array of strings.
+- description: one factual sentence, max 160 characters.
+- long_description: a markdown body of 120-250 words using "## " headings (Overview, Features, Requirements, Notes) and bullet lists. Put square-bracket placeholders like [confirm minimum RAM] where you are unsure.
+- If you genuinely do not know a field, omit it from the JSON rather than guessing.
+
+Reply with a single JSON object and nothing else. Example:
+{"version":"","platform":"windows","architecture":"x64","file_type":"exe","license_status":"proprietary","tags":["editor","developer-tools"],"description":"...","long_description":"## Overview\\n..."}`;
+
 /** Appended to the catalogue data instead of the system prompt: it is per-question. */
 const ANSWER_TAIL = `Answer helpfully based ONLY on the repository data above. If no relevant items, say so clearly and suggest how to browse categories. Aim for under 300 words, link to relevant items as /file/{slug} where they apply, and always finish your final sentence rather than stopping mid-thought.`;
 
@@ -155,7 +182,100 @@ export function completeCutOffAnswer(text) {
   return `${trimmed}\n\n_(This answer was shortened because it reached the configured output limit. Ask a narrower question, or raise Max output tokens in Settings -> AI.)_`;
 }
 
+/** Controlled vocabularies for the gap-filling helper — the same the editor uses. */
+const FILL_ENUMS = {
+  platform: ['windows', 'linux', 'macos', 'cross-platform'],
+  architecture: ['x86', 'x64', 'arm64', 'universal'],
+  license_status: ['public-domain', 'redistributable', 'proprietary', 'check-license', 'internal-only', 'abandonware'],
+};
 
+/**
+ * Pull the first balanced JSON object out of a model reply. Providers wrap the
+ * object in prose or ```json fences often enough that JSON.parse on the raw
+ * string is unreliable, so we scan for the outermost {...}.
+ */
+export function extractJsonObject(text) {
+  if (!text) return null;
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        const slice = text.slice(start, i + 1);
+        try { return JSON.parse(slice); } catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Validate a model's field suggestions against the form's own rules, keeping
+ * only the requested targets. A value that is not in the controlled vocabulary
+ * is dropped rather than passed through, so the editor never receives a
+ * platform of "linux/mac" or a made-up license status.
+ */
+export function sanitizeFieldSuggestions(raw, targets) {
+  if (!raw || typeof raw !== 'object') return {};
+  const allow = new Set(targets);
+  const out = {};
+
+  const wantEnum = (key) => {
+    const v = String(raw[key] ?? '').trim().toLowerCase();
+    if (v && FILL_ENUMS[key].includes(v)) out[key] = v;
+  };
+
+  if (allow.has('platform')) wantEnum('platform');
+  if (allow.has('architecture')) wantEnum('architecture');
+  if (allow.has('license_status')) wantEnum('license_status');
+
+  if (allow.has('file_type') && raw.file_type != null) {
+    const ft = String(raw.file_type).trim().toLowerCase().replace(/^\.+/, '');
+    if (ft && /^[a-z0-9.]{1,12}$/.test(ft)) out.file_type = ft;
+  }
+
+  if (allow.has('version') && raw.version != null) {
+    const v = String(raw.version).trim();
+    // Only accept a version that looks like one; never a placeholder sentence.
+    if (v && v.length <= 40 && /\d/.test(v) && !/\s/.test(v)) out.version = v;
+  }
+
+  if (allow.has('tags') && raw.tags != null) {
+    const list = Array.isArray(raw.tags)
+      ? raw.tags
+      : String(raw.tags).split(',');
+    const tags = list
+      .map(t => String(t).trim().toLowerCase())
+      .filter(t => t && t.length <= 30)
+      .slice(0, 8);
+    if (tags.length) out.tags = Array.from(new Set(tags));
+  }
+
+  if (allow.has('description') && raw.description != null) {
+    const d = String(raw.description).trim().replace(/\s+/g, ' ').slice(0, 480);
+    if (d) out.description = d;
+  }
+
+  if (allow.has('long_description') && raw.long_description != null) {
+    const b = String(raw.long_description).trim().slice(0, 5000);
+    if (b) out.long_description = b;
+  }
+
+  return out;
+}
 
 /**
  * Barista: repository search first, an AI answer second, metadata-only as the
@@ -618,6 +738,144 @@ ${subject ? `\nCurrent subject of the conversation: ${subject}\n` : ''}
     if (this.lastError) template.aiError = this.lastError;
     else if (cfg.notes.length) template.aiError = cfg.notes[cfg.notes.length - 1];
     return template;
+  }
+
+  /**
+   * "Fill in the gaps": look at the metadata an admin has entered so far and
+   * suggest values for the fields that are still empty, using the model's
+   * knowledge of the named software.
+   *
+   * This differs from describeItem (which only writes the two prose fields)
+   * and from the URL autofill (which scrapes a page): it needs no URL and can
+   * classify platform / architecture / file type / license / tags as well as
+   * write copy. Every returned value is a *suggestion* keyed by field name, so
+   * the caller applies only the fields the admin approves and never overwrites
+   * something already filled in.
+   *
+   * @param {object} meta   the current form values (same shape as describeItem
+   *                         plus optional current values for the fields below)
+   * @param {string[]} want the field names the admin wants filled; defaults to
+   *                         every gap-fillable field that is currently empty.
+   * @returns {{ suggestions: object, filledFields: string[], usedAI: boolean, provider?: string, aiError?: string }}
+   */
+  async suggestFields(meta = {}, want = null) {
+    const name = String(meta.name || '').trim();
+    if (!name) throw new Error('name is required to suggest fields');
+
+    // The fields this helper is allowed to propose. Anything not here (slug,
+    // download URLs, checksums, file size) is deliberately excluded: it is
+    // instance-specific and must not be guessed.
+    const FILLABLE = [
+      'version', 'platform', 'architecture', 'file_type',
+      'license_status', 'tags', 'description', 'long_description',
+    ];
+
+    const current = {
+      version: String(meta.version || '').trim(),
+      platform: String(meta.platform || '').trim(),
+      architecture: String(meta.architecture || '').trim(),
+      file_type: String(meta.file_type || '').trim(),
+      license_status: String(meta.license_status || '').trim(),
+      tags: Array.isArray(meta.tags)
+        ? meta.tags.filter(Boolean).map(String)
+        : String(meta.tags || '').split(',').map(s => s.trim()).filter(Boolean),
+      description: String(meta.description || '').trim(),
+      long_description: String(meta.long_description || '').trim(),
+    };
+
+    const isEmpty = (key) => {
+      const v = current[key];
+      if (key === 'tags') return v.length === 0;
+      // check-license is the form's default, i.e. "not decided yet".
+      if (key === 'license_status') return !v || v === 'check-license';
+      return !v;
+    };
+
+    // Which fields to fill: an explicit request wins, otherwise every empty one.
+    const requested = Array.isArray(want) && want.length
+      ? want.filter(k => FILLABLE.includes(k))
+      : FILLABLE.filter(isEmpty);
+    const targets = requested.filter(isEmpty);
+
+    if (targets.length === 0) {
+      return { suggestions: {}, filledFields: [], usedAI: false, nothingToFill: true };
+    }
+
+    const clean = {
+      name,
+      version: current.version,
+      category: String(meta.category || '').trim(),
+      platform: current.platform,
+      architecture: current.architecture,
+      file_type: current.file_type,
+      tags: current.tags.slice(0, 15),
+      notes: String(meta.notes || '').trim().slice(0, 1000),
+      targets,
+    };
+
+    const cfg = await this.aiConfig();
+    if (cfg.enabled && cfg.provider !== 'none') {
+      try {
+        const suggestions = await this.fillWithProvider(clean, cfg);
+        if (suggestions && Object.keys(suggestions).length) {
+          return {
+            suggestions,
+            filledFields: Object.keys(suggestions),
+            usedAI: true,
+            provider: cfg.provider,
+          };
+        }
+      } catch (e) {
+        this.lastError = redact(`[${cfg.provider}] fill failed: ${e.message}`, cfg.apiKey).slice(0, 200);
+        console.warn('[ai] fill failed:', redact(e.message, cfg.apiKey));
+        return {
+          suggestions: {},
+          filledFields: [],
+          usedAI: false,
+          provider: cfg.provider,
+          aiError: this.lastError,
+        };
+      }
+    }
+
+    // No model configured: say so plainly, the same way describeItem does.
+    const aiError = this.lastError
+      || (cfg.notes.length ? cfg.notes[cfg.notes.length - 1] : 'No AI model is configured — set one up in Settings → AI, or run ./espress0 ai for the free CLI.');
+    return { suggestions: {}, filledFields: [], usedAI: false, provider: null, aiError };
+  }
+
+  /**
+   * Ask the provider for the empty fields and parse its JSON reply into a
+   * sanitised suggestion map. Only the requested target fields survive, and
+   * each value is validated against the same controlled vocabulary the form
+   * uses so a hallucinated "linux/mac" or "v.latest" never reaches the editor.
+   */
+  async fillWithProvider(meta, cfg) {
+    const known = [
+      `Name: ${meta.name}`,
+      meta.version && `Version: ${meta.version}`,
+      meta.category && `Category: ${meta.category}`,
+      meta.platform && `Platform: ${meta.platform}`,
+      meta.architecture && `Architecture: ${meta.architecture}`,
+      meta.file_type && `File type: ${meta.file_type}`,
+      meta.tags.length && `Tags: ${meta.tags.join(', ')}`,
+      meta.notes && `Admin notes: ${meta.notes}`,
+    ].filter(Boolean).join('\n');
+
+    const prompt = `Already filled in:
+${known}
+
+Empty fields to suggest values for (only these): ${meta.targets.join(', ')}
+
+Return the JSON object.`;
+
+    const out = (await generate({ system: FILL_SYSTEM_PROMPT, prompt, cfg, kind: 'draft' }).then(r => r.text)) || '';
+    if (!out.trim()) return null;
+
+    const parsed = extractJsonObject(out);
+    if (!parsed) return null;
+
+    return sanitizeFieldSuggestions(parsed, meta.targets);
   }
 
   async draftWithProvider(meta, cfg) {

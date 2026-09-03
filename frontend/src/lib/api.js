@@ -257,6 +257,8 @@ export const adminApi = {
   duplicateItem: (id) => api.post(`/admin/items/${id}/duplicate`).then(r => r.data),
   bulkItems: (action, ids, extra = {}) => api.post('/admin/items/bulk', { action, ids, ...extra }).then(r => r.data),
   describeItem: (meta) => api.post('/admin/ai/describe', meta, { timeout: AI_TIMEOUT }).then(r => r.data),
+  /** Suggest values for the still-empty fields of a page from what's typed so far. */
+  fillGaps: (meta) => api.post('/admin/ai/fill-gaps', meta, { timeout: AI_TIMEOUT }).then(r => r.data),
   // Admin view of the AI backend: resolved provider, endpoint, last failure.
   aiStatus: () => api.get('/admin/ai/status').then(r => r.data),
   // One live round-trip, so a saved provider/model/base-URL edit can be proven
