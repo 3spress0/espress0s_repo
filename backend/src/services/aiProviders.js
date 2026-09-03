@@ -56,26 +56,63 @@ async function readCapped(res, maxBytes = MAX_RESPONSE_BYTES) {
   const decoder = new TextDecoder();
   let out = '';
   let truncated = false;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    out += decoder.decode(value, { stream: true });
-    if (out.length > maxBytes) { truncated = true; await reader.cancel().catch(() => {}); break; }
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+      if (out.length > maxBytes) {
+        truncated = true;
+        await reader.cancel().catch(() => {});
+        break;
+      }
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* already released by cancel() */ }
   }
-  try { reader.releaseLock(); } catch { /* already released by cancel() */ }
   return truncated ? out.slice(0, maxBytes) : out;
+}
+
+function timeoutError(timeoutMs, detail = '') {
+  return Object.assign(new Error(`timed out after ${timeoutMs} ms${detail ? ` ${detail}` : ''}`), { code: 'timeout' });
+}
+
+/** Bound work which does not accept AbortSignal itself (notably dns.lookup). */
+async function within(promise, timeoutMs, configuredTimeoutMs, detail) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(timeoutError(configuredTimeoutMs, detail)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
  * POST JSON and return the parsed body, with the timeout, redirect and
  * error-text rules every provider call needs.
+ *
+ * The timer covers the complete response body, not only the arrival of HTTP
+ * headers. A gateway can send headers and then stall forever; clearing the
+ * timer immediately after fetch() resolves turns that into an unbounded API
+ * request even though AI_TIMEOUT_MS is configured.
  */
-async function postJson(urlStr, { headers, body, timeoutMs, key, format = 'json' }) {
+async function postJson(urlStr, {
+  headers,
+  body,
+  timeoutMs,
+  configuredTimeoutMs = timeoutMs,
+  key,
+  format = 'json',
+}) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(new Error('timeout')), timeoutMs);
-  let res;
+  const timer = setTimeout(() => ctrl.abort(timeoutError(configuredTimeoutMs)), timeoutMs);
   try {
-    res = await fetch(urlStr, {
+    const res = await fetch(urlStr, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...headers },
       body: JSON.stringify(body),
@@ -84,37 +121,42 @@ async function postJson(urlStr, { headers, body, timeoutMs, key, format = 'json'
       // and the key - to one that is not.
       redirect: 'manual',
     });
+
+    if (res.status >= 300 && res.status < 400) {
+      throw Object.assign(new Error(`endpoint redirected (HTTP ${res.status}); refusing to follow it`), { code: 'config' });
+    }
+
+    const text = await readCapped(res);
+    if (!res.ok) {
+      const detail = redact(text.replace(/\s+/g, ' ').trim().slice(0, 300), key);
+      const hint = res.status === 401 || res.status === 403
+        ? ' - the API key is missing, revoked, or restricted below what this endpoint needs'
+        : res.status === 404
+          ? ' - usually a model name this endpoint does not serve'
+          : res.status === 429
+            ? ' - quota or rate limit; the free tier for this key is used up'
+            : '';
+      throw Object.assign(new Error(`HTTP ${res.status}${hint}${detail ? `: ${detail}` : ''}`), { code: 'http' });
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw Object.assign(new Error(`endpoint returned non-JSON: ${redact(text.slice(0, 200), key)}`), { code: 'http' });
+    }
   } catch (e) {
+    // Preserve actionable provider/configuration failures constructed above.
+    if (e?.code && !ctrl.signal.aborted) throw e;
+
     const aborted = e?.name === 'AbortError' || ctrl.signal.aborted;
     throw Object.assign(new Error(aborted
-      ? `timed out after ${timeoutMs} ms`
+      ? `timed out after ${configuredTimeoutMs} ms`
       : `request to ${new URL(urlStr).host} failed (${format} format): ${redact(e?.message || e, key)}`
         + (e?.cause?.message ? ` (${redact(e.cause.message, key)})` : '')), {
       code: aborted ? 'timeout' : 'unavailable',
     });
   } finally {
     clearTimeout(timer);
-  }
-
-  if (res.status >= 300 && res.status < 400) {
-    throw Object.assign(new Error(`endpoint redirected (HTTP ${res.status}); refusing to follow it`), { code: 'config' });
-  }
-
-  const text = await readCapped(res);
-  if (!res.ok) {
-    const detail = redact(text.replace(/\s+/g, ' ').trim().slice(0, 300), key);
-    const hint = res.status === 401 || res.status === 403
-      ? ' - the API key is missing, revoked, or restricted below what this endpoint needs'
-      : res.status === 404
-        ? ' - usually a model name this endpoint does not serve'
-        : res.status === 429
-          ? ' - quota or rate limit; the free tier for this key is used up'
-          : '';
-    throw Object.assign(new Error(`HTTP ${res.status}${hint}${detail ? `: ${detail}` : ''}`, { key }), { code: 'http' });
-  }
-
-  try { return JSON.parse(text); } catch {
-    throw Object.assign(new Error(`endpoint returned non-JSON: ${redact(text.slice(0, 200), key)}`), { code: 'http' });
   }
 }
 
@@ -153,6 +195,7 @@ export async function callGemini({ system, prompt, cfg }) {
     headers: { 'x-goog-api-key': cfg.apiKey || '' },
     body,
     timeoutMs: cfg.timeoutMs,
+    configuredTimeoutMs: cfg.configuredTimeoutMs,
     key: cfg.apiKey,
     format: 'gemini generateContent',
   });
@@ -219,6 +262,7 @@ export async function callOpenai({ system, prompt, cfg }) {
       stream: false,
     },
     timeoutMs: cfg.timeoutMs,
+    configuredTimeoutMs: cfg.configuredTimeoutMs,
     key: cfg.apiKey,
     format: 'openai chat/completions',
   });
@@ -249,18 +293,25 @@ export async function callOpenai({ system, prompt, cfg }) {
  * a package manager (~/go/bin, ~/.local/bin) and every AI call died with ENOENT
  * even though `tgpt` worked fine in a shell.
  */
-export async function findTgpt(configuredPath) {
+export async function findTgpt(configuredPath, timeoutMs = 20000) {
   if (configuredPath && configuredPath !== 'tgpt' && fs.existsSync(configuredPath)) return configuredPath;
   try {
-    return (await execFileAsync('which', ['tgpt'])).stdout.trim() || 'tgpt';
+    return (await execFileAsync('which', ['tgpt'], {
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
+    })).stdout.trim() || 'tgpt';
   } catch {
     return configuredPath && fs.existsSync(configuredPath) ? configuredPath : null;
   }
 }
 
-export function tgptRuns(binary) {
+/** A status request must not wait forever on a broken/non-tgpt executable. */
+export function tgptRuns(binary, timeoutMs = 20000) {
   if (!binary) return Promise.resolve(false);
-  return execFileAsync(binary, ['--version']).then(() => true, () => false);
+  return execFileAsync(binary, ['--version'], {
+    timeout: timeoutMs,
+    killSignal: 'SIGKILL',
+  }).then(() => true, () => false);
 }
 
 /**
@@ -304,7 +355,7 @@ export async function callTgpt({ system, prompt, cfg }) {
 
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      finish(reject, Object.assign(new Error(`timed out after ${cfg.timeoutMs} ms`), { code: 'timeout' }));
+      finish(reject, timeoutError(cfg.configuredTimeoutMs || cfg.timeoutMs));
     }, cfg.timeoutMs);
 
     child.stdout.on('data', (chunk) => {
@@ -340,21 +391,36 @@ export async function generate({ system = '', prompt, cfg, kind = 'ask' }) {
     throw Object.assign(new Error(`unknown AI format: ${cfg.format}`), { code: 'config' });
   }
 
+  const configuredTimeoutMs = kind === 'draft' ? cfg.draftTimeoutMs : cfg.timeoutMs;
+  if (!Number.isFinite(configuredTimeoutMs) || configuredTimeoutMs <= 0) {
+    throw Object.assign(new Error('AI timeout is not a positive number'), { code: 'config' });
+  }
+  const deadline = Date.now() + configuredTimeoutMs;
+  const remaining = (detail) => {
+    const ms = deadline - Date.now();
+    if (ms <= 0) throw timeoutError(configuredTimeoutMs, detail);
+    return ms;
+  };
+
   let baseUrl = cfg.baseUrl;
   // The shipped defaults are public hosts this file controls, so they skip the
   // DNS round-trip; anything an operator typed is checked here, at request
   // time, rather than when the setting was saved - a host that was safe at
-  // 3am is not necessarily safe now.
+  // 3am is not necessarily safe now. DNS validation is part of the configured
+  // provider budget as well; otherwise a stuck resolver can hang both status
+  // tests and normal Barista requests before fetch() gets its AbortSignal.
   if (cfg.format !== 'tgpt' && baseUrl && !cfg.baseUrlIsDefault) {
     try {
-      const url = await assertConfiguredEndpoint(baseUrl, {
+      const budget = remaining('while validating AI_BASE_URL');
+      const url = await within(assertConfiguredEndpoint(baseUrl, {
         allowPrivate: cfg.allowPrivateBaseUrl,
         // A model server on this very box is the most common non-default
         // endpoint; aiConfig keeps the flag for reaching further into the LAN.
         allowLoopback: true,
-      });
+      }), budget, configuredTimeoutMs, 'while validating AI_BASE_URL');
       baseUrl = url.origin + url.pathname.replace(/\/$/, '');
     } catch (e) {
+      if (e?.code === 'timeout') throw e;
       throw Object.assign(new Error(`AI_BASE_URL refused: ${e.message}`), { code: 'config' });
     }
   }
@@ -362,7 +428,10 @@ export async function generate({ system = '', prompt, cfg, kind = 'ask' }) {
   const call = {
     ...cfg,
     baseUrl,
-    timeoutMs: kind === 'draft' ? cfg.draftTimeoutMs : cfg.timeoutMs,
+    // Endpoint validation and the provider share one deadline. Keep the
+    // original value for a stable, operator-facing timeout message.
+    timeoutMs: remaining('before contacting the AI provider'),
+    configuredTimeoutMs,
   };
   if (cfg.format !== 'tgpt' && !call.baseUrl) {
     throw Object.assign(new Error('no AI base URL resolved for this provider'), { code: 'config' });

@@ -91,9 +91,17 @@ AI_API_KEY=<your key>          # GEMINI_API_KEY / GOOGLE_API_KEY are read too
 AI_MODEL=gemini-2.5-flash      # optional
 ```
 
-Any other endpoint works via `AI_PROVIDER=openai` + `AI_BASE_URL` (OpenRouter,
-Ollama on `127.0.0.1:11434`, a company gateway). `AI_PROVIDER=auto` — the
-default — uses the key when there is one and the free tgpt CLI when there is
+Any other endpoint works via `AI_PROVIDER=openai` + `AI_BASE_URL` (Groq,
+OpenRouter, Ollama on `127.0.0.1:11434`, a company gateway). For example:
+
+```bash
+AI_PROVIDER=openai
+AI_API_KEY=<your Groq key>
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_MODEL=openai/gpt-oss-120b
+```
+
+`AI_PROVIDER=auto` — the default — uses the key when there is one and the free tgpt CLI when there is
 not, so an existing install does not change behaviour. Admin → Settings → AI
 edits provider, model, endpoint, temperature and budgets live (no restart) and
 has a **Send a test prompt** button; the key is not in that list on purpose,

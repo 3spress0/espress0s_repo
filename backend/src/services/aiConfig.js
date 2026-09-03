@@ -108,7 +108,12 @@ export function decide({ env, settings = () => null, tgptAvailable = false, tgpt
   if (!requested) {
     notes.push(`AI_PROVIDER="${str(env.provider)}" is not one of ${AI_PROVIDERS.join('/')}; using auto.`);
   }
-  let provider = requested || 'auto';
+  // Keep the operator's effective choice alongside the provider it resolves to.
+  // aiService uses this to decide whether the tgpt fallback is relevant before
+  // it starts a subprocess probe. In particular, an explicit OpenAI-compatible
+  // endpoint must never wait for an unrelated `tgpt --version` command.
+  const requestedProvider = requested || 'auto';
+  let provider = requestedProvider;
 
   const apiKey = env.apiKey || '';
   // A key only implies "Gemini is intended" if it was set under one of the
@@ -158,6 +163,9 @@ export function decide({ env, settings = () => null, tgptAvailable = false, tgpt
 
   const resolved = {
     enabled: env.enabled !== false && str(settings('ai_enabled')) !== 'false',
+    // Internal resolution detail. Public/admin serializers below deliberately
+    // whitelist their fields, so this never exposes additional configuration.
+    requestedProvider,
     provider,
     format,
     model: pick(settings('ai_model'), env.model) || (format === 'gemini' && !baseUrlRaw ? GEMINI_DEFAULT_MODEL : ''),

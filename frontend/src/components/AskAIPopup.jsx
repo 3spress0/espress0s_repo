@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Coffee, Send, Database, AlertCircle, ExternalLink, Lightbulb, Search, Loader2, X, Sparkles } from 'lucide-react';
+import { Coffee, Send, Database, AlertCircle, ExternalLink, Lightbulb, Search, X, Sparkles } from 'lucide-react';
 import { aiApi, describeAi, describeApiError } from '../lib/api';
+import { LoadingDots } from './Loading';
 
 export default function AskAIPopup({ isOpen, onClose }) {
   const [query, setQuery] = useState('');
@@ -123,7 +124,7 @@ export default function AskAIPopup({ isOpen, onClose }) {
             <div className="flex gap-2">
               <div className="w-7 h-7 rounded-xl bg-gradient-primary flex items-center justify-center"><Coffee className="w-3.5 h-3.5 text-white" /></div>
               <div className="bg-surface border border-border rounded-2xl px-3.5 py-2.5 flex items-center gap-2 text-xs text-textMuted">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <LoadingDots size={14} />
                 Barista searching...
               </div>
             </div>
