@@ -68,7 +68,7 @@ function modelArgs() {
  * AI_API_KEY environment variable, never on the command line where other
  * local users could read it from ps(1).
  */
-function runTgpt(binary, prompt, { timeoutMs = 30000, maxBytes = 1024 * 1024 } = {}) {
+function runTgpt(binary, prompt, { timeoutMs = config.ai.timeoutMs, maxBytes = 1024 * 1024 } = {}) {
   const env = { ...process.env };
   if (config.ai.apiKey) env.AI_API_KEY = config.ai.apiKey;
   return new Promise((resolve, reject) => {
@@ -201,17 +201,26 @@ export class AIService {
     if (tgptAvailable) {
       try {
         const answer = await this.askWithTgpt(question, context);
+        this.lastError = null;
         return this.askResponse(answer, searchResults, true);
       } catch (e) {
+        this.lastError = `tgpt ${e.code === 'ETIMEDOUT'
+          ? `timed out after ${config.ai.timeoutMs} ms`
+          : 'failed'}: ${e.message}`.slice(0, 200);
         console.warn('tgpt failed, falling back to rule-based:', e.message);
         // Fall through to rule-based
       }
     }
 
     // 3. Fallback: rule-based answering using only metadata
-    return this.askResponse(
+    const fallback = this.askResponse(
       this.ruleBasedAnswer(question, searchResults.results, faqResults),
       searchResults, false);
+    // Say *why* this answer is metadata-only. Without it an admin watching a
+    // degraded answer has no way to tell tgpt is broken, as opposed to the
+    // repository simply having nothing matching the question.
+    if (this.lastError) fallback.tgptError = this.lastError;
+    return fallback;
   }
 
   /** Uniform ask() payload: answer + the verified items backing it. */
@@ -288,7 +297,7 @@ STRICT RULES:
     
     const fullPrompt = `${context}\n\nProvide a concise, helpful answer (max 300 words). Include links to relevant items as /file/{slug} if applicable.`;
 
-    const stdout = await runTgpt(binary, fullPrompt, { timeoutMs: 30000 });
+    const stdout = await runTgpt(binary, fullPrompt, { timeoutMs: config.ai.timeoutMs });
 
     // Clean output - tgpt may include extra formatting
     let answer = stdout.trim();
@@ -459,7 +468,11 @@ BODY:
 <markdown body, 120-250 words, using "## " headings such as Overview, What's included, Requirements, Notes, plus bullet lists>`;
 
     try {
-      const stdout = await runTgpt(binary, prompt, { timeoutMs: 45000 });
+      // Was a hard-coded 45000 ms, i.e. longer than the browser's request
+      // budget - the admin pressed "generate", tgpt was still thinking, and
+      // axios had already cancelled. config.ai.draftTimeoutMs is deliberately
+      // below AI_TIMEOUT in the frontend for the same reason as ask().
+      const stdout = await runTgpt(binary, prompt, { timeoutMs: config.ai.draftTimeoutMs });
 
       const out = (stdout || '').trim();
       if (!out) return null;

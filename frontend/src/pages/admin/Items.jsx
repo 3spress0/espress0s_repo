@@ -2,10 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Search, Plus, Edit, Trash2, Eye, X, Link2, ImageIcon, Copy,
-  EyeOff, Loader2, AlertTriangle, CheckCircle2, Star, Folder, FolderInput,
+  EyeOff, Loader2, AlertTriangle, CheckCircle2, Star, Folder,
 } from 'lucide-react';
-import { adminApi, itemsApi, foldersApi } from '../../lib/api';
+import { adminApi, itemsApi, foldersApi, categoriesApi, catalogAdminApi } from '../../lib/api';
 import ItemEditor from '../../components/admin/ItemEditor';
+import Loading, { LoadingDots } from '../../components/Loading';
+import Progress from '../../components/Progress';
+import CatalogFilters from '../../components/admin/CatalogFilters';
+import BulkEditPanel from '../../components/admin/BulkEditPanel';
 
 function formatSize(bytes) {
   if (!bytes) return '—';
@@ -18,6 +22,21 @@ const FILTERS = [
   { id: 'published', label: 'Published' },
   { id: 'draft', label: 'Drafts' },
 ];
+
+const PAGE_SIZE = 50;
+
+/**
+ * Every value that narrows or orders the result set. They are sent to
+ * `/admin/catalog/search`, which runs the FTS5 index and the admin-only
+ * filters in SQL, so the table reflects the whole catalogue rather than one
+ * page of rows filtered again in the browser.
+ */
+const DEFAULT_FILTERS = {
+  q: '', published: '', status: '', category: '', tag: '', platform: '',
+  architecture: '', version: '', storage_provider: '', folder: 'all',
+  missing: '', link_health: '', release_from: '', release_to: '',
+  sort: 'updated_at', order: 'desc', page: 1,
+};
 
 /** Confirm dialog for destructive actions — replaces window.confirm. */
 function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel, busy }) {
@@ -57,13 +76,28 @@ export default function AdminItems() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState([]);
   const [folders, setFolders] = useState([]);
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [folderFilter, setFolderFilter] = useState(searchParams.get('folder') || 'all');
-  const [moveTarget, setMoveTarget] = useState('');
+  // Seed the filter state from the query string so links from the dashboard
+  // (?status=deprecated, ?missing=icon, ?link_health=down, ...) open this view
+  // already filtered.
+  const [filters, setFilters] = useState(() => {
+    const next = { ...DEFAULT_FILTERS };
+    for (const key of Object.keys(DEFAULT_FILTERS)) {
+      const raw = searchParams.get(key);
+      if (raw === null) continue;
+      if (key === 'page') next.page = Math.max(1, parseInt(raw, 10) || 1);
+      else next[key] = raw;
+    }
+    return next;
+  });
+  const [total, setTotal] = useState(0);
+  const [facets, setFacets] = useState({});
+  const [categories, setCategories] = useState([]);
+  const [progress, setProgress] = useState(null);
   const [editing, setEditing] = useState(null); // item object being edited
   const [creating, setCreating] = useState(false);
   const [loadingId, setLoadingId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [selected, setSelected] = useState([]); // ids
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null); // { kind, message }
@@ -74,30 +108,50 @@ export default function AdminItems() {
     setTimeout(() => setToast(t => (t?.message === message ? null : t)), 4000);
   };
 
-  const load = useCallback(async (q = '') => {
-    try {
-      const data = await adminApi.items({ q, limit: 200 });
-      setItems(data.items || []);
-    } catch (e) {
-      console.error('Failed to load items', e);
-      notify('error', e.response?.data?.error || 'Failed to load pages');
-    }
+  /** Re-run the current filter set (used after bulk edits and single saves). */
+  const load = useCallback(() => setFilters(f => ({ ...f })), []);
+
+  // One request per filter change, debounced so typing in the search box does
+  // not fire a query per keystroke.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    const t = setTimeout(async () => {
+      try {
+        const res = await catalogAdminApi.search({ ...filters, limit: PAGE_SIZE });
+        if (cancelled) return;
+        setItems(res.items || []);
+        setTotal(res.total || 0);
+      } catch (e) {
+        if (cancelled) return;
+        setError(e.response?.data?.error || e.message || 'Search failed');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [filters]);
+
+  useEffect(() => {
+    catalogAdminApi.facets().then(setFacets).catch(() => {});
+    foldersApi.adminList().then(d => setFolders(d.folders || [])).catch(() => {});
+    categoriesApi.list().then(r => setCategories(r.categories || [])).catch(() => {});
   }, []);
 
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    foldersApi.adminList().then(d => setFolders(d.folders || [])).catch(() => {});
-  }, []);
+  const patchFilters = (patch) => {
+    setFilters(f => ({ ...f, ...patch, page: 1 }));
+    const next = new URLSearchParams(searchParams);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v && v !== 'all') next.set(k, v); else next.delete(k);
+    }
+    setSearchParams(next, { replace: true });
+  };
+
 
   const folderById = useMemo(() => new Map(folders.map(f => [f.id, f])), [folders]);
   const folderName = (folderId) => folderId ? (folderById.get(folderId)?.name || `#${folderId}`) : null;
 
-  const changeFolderFilter = (value) => {
-    setFolderFilter(value);
-    const next = new URLSearchParams(searchParams);
-    if (value && value !== 'all') next.set('folder', value); else next.delete('folder');
-    setSearchParams(next, { replace: true });
-  };
 
   // Deep link: /admin/items/:id opens that item's editor directly.
   useEffect(() => {
@@ -111,15 +165,10 @@ export default function AdminItems() {
     return () => { cancelled = true; };
   }, [id]);
 
-  const visible = useMemo(() => items.filter(i => {
-    if (filter === 'published') return !!i.published;
-    if (filter === 'draft') return !i.published;
-    return true;
-  }).filter(i => {
-    if (folderFilter === 'all') return true;
-    if (folderFilter === 'none') return !i.folder_id;
-    return String(i.folder_id) === String(folderFilter);
-  }), [items, filter, folderFilter]);
+  // Every filter is already applied server-side, so the table renders what
+  // came back.
+  const visible = items;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const allVisibleSelected = visible.length > 0 && visible.every(i => selected.includes(i.id));
 
@@ -137,7 +186,7 @@ export default function AdminItems() {
 
   const onSaved = async (saved) => {
     closeEditor();
-    await load(query);
+    load();
     notify('success', saved?.name ? `Saved “${saved.name}”` : 'Page saved');
   };
 
@@ -160,7 +209,7 @@ export default function AdminItems() {
     setBusy(true);
     try {
       const res = await adminApi.duplicateItem(item.id);
-      await load(query);
+      load();
       notify('success', res.message || 'Duplicated as a draft');
       if (res.item?.id) navigate(`/admin/items/${res.item.id}`);
     } catch (e) {
@@ -183,38 +232,72 @@ export default function AdminItems() {
     run: async () => {
       await itemsApi.delete(item.id);
       setSelected(s => s.filter(x => x !== item.id));
-      await load(query);
+      load();
       notify('success', `Deleted “${item.name}”`);
     },
   });
 
   /* ---- bulk actions ---- */
 
-  const runBulk = async (action) => {
+  /**
+   * Run a bulk action with a progress bar. The request itself is one
+   * transaction, so the bar shows staged progress (sending, waiting,
+   * refreshing) rather than pretending to know per-row progress.
+   */
+  const runBulk = async (action, value, label) => {
+    const count = selected.length;
     setBusy(true);
+    setProgress({ label: label || action, value: 5, sublabel: `${count} selected` });
     try {
-      const res = await adminApi.bulkItems(action, selected);
-      await load(query);
+      const res = await adminApi.bulkItems(action, selected, value ?? undefined);
+      setProgress({ label: label || action, value: 75, sublabel: `${res.affected} updated` });
+      load();
       setSelected([]);
-      notify('success', `${action} applied to ${res.affected} page${res.affected === 1 ? '' : 's'}`);
+      notify('success', `${label || action}: ${res.affected} page${res.affected === 1 ? '' : 's'}`);
+      setProgress({ label: 'Done', value: 100, tone: 'success' });
     } catch (e) {
       notify('error', e.response?.data?.error || 'Bulk action failed');
+      setProgress(null);
     } finally {
       setBusy(false);
+      setTimeout(() => setProgress(null), 1200);
     }
   };
 
-  const askBulkDelete = () => setConfirm({
-    title: `Delete ${selected.length} page${selected.length === 1 ? '' : 's'}?`,
-    body: 'These pages and all of their download links are removed permanently.',
-    confirmLabel: `Delete ${selected.length}`,
-    run: async () => {
-      await adminApi.bulkItems('delete', selected);
-      await load(query);
-      setSelected([]);
-      notify('success', 'Pages deleted');
-    },
-  });
+  /** Field edits from the bulk panel map onto a bulk action + value. */
+  const applyBulkEdit = (field, value, label) => {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed) {
+      notify('error', `Enter a value for ${label}`);
+      return;
+    }
+    // The endpoint takes the new value under a generic `value` key (folder
+    // keeps its own `folderId` so null can mean "remove from folder").
+    const payload = field === 'folder'
+      ? { folderId: trimmed === 'none' ? null : Number(trimmed) }
+      : { value: trimmed };
+    runBulk(field, payload, label);
+  };
+
+  /** Archive/delete go through ConfirmDialog first. */
+  const askBulk = (kind) => {
+    const n = selected.length;
+    if (kind === 'archive') {
+      setConfirm({
+        title: `Archive ${n} page${n === 1 ? '' : 's'}?`,
+        body: 'They are marked as archived and unpublished, so visitors no longer see them. Nothing is deleted and you can restore them at any time.',
+        confirmLabel: `Archive ${n}`,
+        run: async () => { await runBulk('archive', null, 'Archive'); },
+      });
+      return;
+    }
+    setConfirm({
+      title: `Delete ${n} page${n === 1 ? '' : 's'}?`,
+      body: 'These pages and all of their download links are removed permanently. Consider archiving instead if you might want them back.',
+      confirmLabel: `Delete ${n}`,
+      run: async () => { await runBulk('delete', null, 'Delete'); },
+    });
+  };
 
   const runConfirm = async () => {
     if (!confirm) return;
@@ -233,28 +316,32 @@ export default function AdminItems() {
 
   return (
     <div className="space-y-4">
+      {/* Search box: server-side FTS5 across the whole catalogue. */}
       <div className="flex flex-wrap gap-3 items-center">
         <div className="flex-1 min-w-[220px] relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-textMuted" />
           <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') load(query); }}
-            placeholder="Search pages by name or slug..."
-            className="w-full pl-10 pr-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50"
+            type="search"
+            value={filters.q}
+            onChange={(e) => patchFilters({ q: e.target.value })}
+            placeholder="Search the whole catalogue by name, description or tag..."
+            aria-label="Search the catalogue"
+            className="w-full pl-10 pr-12 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50"
           />
+          {loading && (
+            <span className="absolute right-3 top-1/2 -translate-y-1/2">
+              <LoadingDots size={16} />
+            </span>
+          )}
         </div>
-        <button onClick={() => load(query)} className="px-5 py-2.5 bg-surface border border-border rounded-xl text-sm hover:border-primary/30">
-          Search
-        </button>
 
         <div className="relative">
           <Folder className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-textMuted pointer-events-none" />
           <select
-            value={folderFilter}
-            onChange={(e) => changeFolderFilter(e.target.value)}
+            value={filters.folder}
+            onChange={(e) => patchFilters({ folder: e.target.value })}
             title="Filter by folder"
+            aria-label="Filter by folder"
             className="pl-9 pr-8 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50 appearance-none"
           >
             <option value="all">All folders</option>
@@ -266,22 +353,21 @@ export default function AdminItems() {
         </div>
 
         <div className="flex items-center gap-1 p-1 bg-surface rounded-xl border border-border">
-          {FILTERS.map(f => (
-            <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                filter === f.id ? 'bg-gradient-primary text-white' : 'text-textSecondary hover:text-textPrimary'
-              }`}
-            >
-              {f.label}
-              {f.id !== 'all' && (
-                <span className="ml-1.5 opacity-70">
-                  {items.filter(i => (f.id === 'published' ? i.published : !i.published)).length}
-                </span>
-              )}
-            </button>
-          ))}
+          {FILTERS.map(f => {
+            const want = f.id === 'published' ? 'true' : f.id === 'draft' ? 'false' : '';
+            const activeTab = (filters.published || '') === want;
+            return (
+              <button
+                key={f.id}
+                onClick={() => patchFilters({ published: want })}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeTab ? 'bg-gradient-primary text-white' : 'text-textSecondary hover:text-textPrimary'
+                }`}
+              >
+                {f.label}
+              </button>
+            );
+          })}
         </div>
 
         <button
@@ -292,70 +378,63 @@ export default function AdminItems() {
         </button>
       </div>
 
-      {/* Bulk action bar */}
-      {selected.length > 0 && (
-        <div className="glass rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 flex flex-wrap items-center gap-2">
-          <span className="text-sm text-textSecondary mr-1">
-            {selected.length} selected
-          </span>
-          <button onClick={() => runBulk('publish')} disabled={busy}
-            className="px-3 py-1.5 rounded-lg text-xs bg-surface border border-border hover:border-green-500/40 text-textSecondary disabled:opacity-50">
-            Publish
-          </button>
-          <button onClick={() => runBulk('unpublish')} disabled={busy}
-            className="px-3 py-1.5 rounded-lg text-xs bg-surface border border-border hover:border-amber-500/40 text-textSecondary disabled:opacity-50">
-            Unpublish
-          </button>
-          <button onClick={() => runBulk('feature')} disabled={busy}
-            className="px-3 py-1.5 rounded-lg text-xs bg-surface border border-border hover:border-primary/40 text-textSecondary disabled:opacity-50">
-            Feature
-          </button>
-          <button onClick={() => runBulk('unfeature')} disabled={busy}
-            className="px-3 py-1.5 rounded-lg text-xs bg-surface border border-border hover:border-primary/40 text-textSecondary disabled:opacity-50">
-            Unfeature
-          </button>
-          <span className="inline-flex items-center gap-1 rounded-lg bg-surface border border-border px-1">
-            <FolderInput className="w-3.5 h-3.5 text-textMuted ml-1" />
-            <select
-              value={moveTarget}
-              onChange={async (e) => {
-                const v = e.target.value;
-                setMoveTarget('');
-                if (v === '') return;
-                setBusy(true);
-                try {
-                  const folderId = v === 'none' ? null : Number(v);
-                  const res = await adminApi.bulkItems('folder', selected, { folderId });
-                  await load(query);
-                  setSelected([]);
-                  notify('success', folderId === null
-                    ? `Removed ${res.affected} page${res.affected === 1 ? '' : 's'} from their folder`
-                    : `Moved ${res.affected} page${res.affected === 1 ? '' : 's'} to “${res.folder}”`);
-                } catch (err) {
-                  notify('error', err.response?.data?.error || 'Move failed');
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              disabled={busy}
-              className="py-1.5 pr-1 bg-transparent text-xs text-textSecondary focus:outline-none disabled:opacity-50"
-            >
-              <option value="">Move to folder…</option>
-              <option value="none">— Remove from folder —</option>
-              {folders.map(f => (
-                <option key={f.id} value={String(f.id)}>{f.name}</option>
-              ))}
-            </select>
-          </span>
-          <button onClick={askBulkDelete} disabled={busy}
-            className="px-3 py-1.5 rounded-lg text-xs bg-red-500/10 border border-red-500/30 text-red-400 disabled:opacity-50">
-            Delete
-          </button>
-          <button onClick={() => setSelected([])} className="ml-auto text-xs text-textMuted hover:text-textPrimary">
-            Clear selection
-          </button>
+      {/* Filters + sorting. Options come from the database, so the dropdowns
+          only offer values that actually exist. */}
+      <CatalogFilters
+        facets={facets}
+        value={filters}
+        onChange={(next) => {
+          setFilters(next);
+          const sp = new URLSearchParams(searchParams);
+          if (next.folder && next.folder !== 'all') sp.set('folder', next.folder); else sp.delete('folder');
+          if (next.q) sp.set('q', next.q); else sp.delete('q');
+          setSearchParams(sp, { replace: true });
+        }}
+        onReset={() => {
+          setFilters(DEFAULT_FILTERS);
+          setSearchParams(new URLSearchParams(), { replace: true });
+        }}
+        resultCount={total}
+        loading={loading}
+      />
+
+      {error && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          {error}
         </div>
       )}
+
+      {/* Bulk selection: quick toggles, any-field edits, archive and delete. */}
+      {selected.length > 0 && (
+        <>
+          <BulkEditPanel
+            count={selected.length}
+            categories={categories}
+            folders={folders}
+            busy={busy}
+            progress={progress ? (
+              <Progress
+                value={progress.value}
+                label={progress.label}
+                sublabel={progress.sublabel}
+                tone={progress.tone}
+              />
+            ) : null}
+            onApply={(action, value, label) => {
+              if (value === null || value === undefined) runBulk(action, null, label);
+              else applyBulkEdit(action, value, label);
+            }}
+            onConfirm={askBulk}
+          />
+          <div className="flex justify-end">
+            <button onClick={() => setSelected([])} className="text-xs text-textMuted hover:text-textPrimary">
+              Clear selection
+            </button>
+          </div>
+        </>
+      )}
+
 
       <div className="glass rounded-2xl border border-white/5 overflow-hidden">
         <div className="overflow-x-auto">
@@ -486,7 +565,14 @@ export default function AdminItems() {
                   </td>
                 </tr>
               ))}
-              {visible.length === 0 && (
+              {loading && visible.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="p-10 text-center">
+                    <Loading text="Searching the catalogue…" />
+                  </td>
+                </tr>
+              )}
+              {visible.length === 0 && !loading && (
                 <tr>
                   <td colSpan={9} className="p-10 text-center">
                     <p className="text-sm text-textSecondary mb-1">
@@ -509,6 +595,33 @@ export default function AdminItems() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Result count + paging. The server sorts and filters, so the page
+          controls just move the window over the same query. */}
+      <div className="flex flex-wrap items-center gap-3 text-xs text-textMuted">
+        <span className="tabular-nums">
+          {total === 0 ? 'No matches' : `Showing ${visible.length} of ${total.toLocaleString()}`}
+        </span>
+        {pageCount > 1 && (
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setFilters(f => ({ ...f, page: Math.max(1, (f.page || 1) - 1) }))}
+              disabled={loading || (filters.page || 1) <= 1}
+              className="px-3 py-1.5 rounded-lg bg-surface border border-border text-textSecondary disabled:opacity-40 hover:border-primary/30"
+            >
+              Previous
+            </button>
+            <span className="tabular-nums">Page {filters.page || 1} of {pageCount}</span>
+            <button
+              onClick={() => setFilters(f => ({ ...f, page: Math.min(pageCount, (f.page || 1) + 1) }))}
+              disabled={loading || (filters.page || 1) >= pageCount}
+              className="px-3 py-1.5 rounded-lg bg-surface border border-border text-textSecondary disabled:opacity-40 hover:border-primary/30"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
 
       {toast && (

@@ -50,6 +50,21 @@ export function getDb() {
     if (!hasImageUrl) {
       dbInstance.exec("ALTER TABLE items ADD COLUMN image_url TEXT");
     }
+    // Catalogue additions. Both are nullable/defaulted so existing rows stay
+    // valid, and the CHECK default satisfies itself, which SQLite requires.
+    const hasBannerUrl = itemCols.some(c => c.name === 'banner_url');
+    if (!hasBannerUrl) {
+      dbInstance.exec("ALTER TABLE items ADD COLUMN banner_url TEXT");
+    }
+    const hasStatus = itemCols.some(c => c.name === 'status');
+    if (!hasStatus) {
+      dbInstance.exec(`ALTER TABLE items ADD COLUMN status TEXT DEFAULT 'current'
+        CHECK(status IN ('current', 'legacy', 'deprecated', 'archived', 'unreleased'))`);
+    }
+    // Created here, not in SCHEMA_SQL: on a database that predates the column
+    // the schema block runs before this ALTER, so indexing it there would fail
+    // with "no such column: status".
+    dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_items_status ON items(status)");
     const hasFolderId = itemCols.some(c => c.name === 'folder_id');
     if (!hasFolderId) {
       dbInstance.exec("ALTER TABLE items ADD COLUMN folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL");
@@ -90,6 +105,9 @@ export function getDb() {
       if (!hasDownReason) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN down_reason TEXT");
       const hasStatus = linkCols.some(c => c.name === 'status');
       if (!hasStatus) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN status TEXT DEFAULT 'up'");
+      // Serves the admin link-health filter ("does this item have a link in
+      // state X"); item_id first so the EXISTS subquery can seek.
+      dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_download_links_item_status ON item_download_links(item_id, status)");
       const hasLastChecked = linkCols.some(c => c.name === 'last_checked');
       if (!hasLastChecked) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN last_checked DATETIME");
       const hasHttpStatus = linkCols.some(c => c.name === 'http_status');

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Database, Link2, AlertTriangle } from 'lucide-react';
 import { adminApi, linkHealthApi } from '../../lib/api';
+import Loading from '../../components/Loading';
 
 export default function AdminOverview() {
   const [overview, setOverview] = useState(null);
@@ -22,8 +23,16 @@ export default function AdminOverview() {
   };
 
   if (!overview) {
-    return <div className="text-textMuted text-sm">Loading overview...</div>;
+    // Same loading treatment as everywhere else in the admin.
+    return <Loading fullScreen text="Loading the dashboard…" />;
   }
+
+  const stats = overview.catalog || {};
+  const totals = stats.totals || {};
+  const quality = stats.quality || {};
+  const linkHealth = stats.linkHealth || {};
+  /** /admin/items reads these from the query string into its filter state. */
+  const itemLink = (params) => `/admin/items?${new URLSearchParams(params).toString()}`;
 
   const cards = [
     { label: 'Total Files', value: overview.counts.totalItems, color: 'text-textPrimary' },
@@ -42,6 +51,90 @@ export default function AdminOverview() {
             <div className="text-xs text-textMuted uppercase tracking-widest">{c.label}</div>
           </div>
         ))}
+      </div>
+
+      {/* Catalogue statistics: what needs attention, each figure linking
+          straight into the file-pages view with the matching filter applied. */}
+      <div className="glass rounded-2xl p-5 border border-white/5">
+        <h3 className="text-sm font-bold text-textPrimary mb-1">Catalogue health</h3>
+        <p className="text-xs text-textMuted mb-4">
+          {(totals.items ?? 0).toLocaleString()} items across {(totals.categories ?? 0).toLocaleString()} categories
+          {' · '}{(totals.relations ?? 0).toLocaleString()} related links
+          {stats.lastImport && (
+            <>
+              {' · '}last import <span className="text-textSecondary">{stats.lastImport.filename || '—'}</span>
+              <span className={stats.lastImport.status === 'ok' ? 'text-green-400' : 'text-amber-400'}> {stats.lastImport.status}</span>
+            </>
+          )}
+        </p>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <div>
+            <h4 className="text-[10px] uppercase tracking-widest text-textMuted mb-2">Status</h4>
+            <ul className="space-y-1 text-sm">
+              {(stats.byStatus || []).map(row => (
+                <li key={row.value}>
+                  <Link to={itemLink({ status: row.value })} className="flex justify-between hover:text-primary">
+                    <span className="text-textSecondary capitalize">{row.value}</span>
+                    <span className="text-textPrimary tabular-nums">{row.count.toLocaleString()}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-[10px] uppercase tracking-widest text-textMuted mb-2">Missing data</h4>
+            <ul className="space-y-1 text-sm">
+              {[
+                ['missingIcon', 'icon', 'Icon'],
+                ['missingBanner', 'banner', 'Banner'],
+                ['missingChecksum', 'checksum', 'SHA-256'],
+                ['missingDescription', 'description', 'Description'],
+                ['missingVersion', 'version', 'Version'],
+                ['missingReleaseDate', 'release_date', 'Release date'],
+                ['missingLinks', 'links', 'Download links'],
+              ].map(([key, filter, label]) => (
+                <li key={key}>
+                  <Link to={itemLink({ missing: filter })} className="flex justify-between hover:text-primary">
+                    <span className="text-textSecondary">{label}</span>
+                    <span className={`tabular-nums ${quality[key] ? 'text-amber-400' : 'text-textMuted'}`}>
+                      {(quality[key] ?? 0).toLocaleString()}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-[10px] uppercase tracking-widest text-textMuted mb-2">Top platforms</h4>
+            <ul className="space-y-1 text-sm">
+              {(stats.byPlatform || []).map(row => (
+                <li key={row.value}>
+                  <Link to={itemLink({ platform: row.value === '(unset)' ? '' : row.value })} className="flex justify-between hover:text-primary">
+                    <span className="text-textSecondary">{row.value}</span>
+                    <span className="text-textPrimary tabular-nums">{row.count.toLocaleString()}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        {(linkHealth.down || linkHealth.itemsWithoutLinks || linkHealth.unknown) > 0 && (
+          <div className="mt-4 pt-4 border-t border-white/5 flex flex-wrap gap-4 text-xs text-textMuted">
+            <Link to={itemLink({ link_health: 'down' })} className="hover:text-red-400">
+              <span className="text-red-400 font-medium">{linkHealth.down ?? 0}</span> with a dead mirror
+            </Link>
+            <Link to={itemLink({ link_health: 'unknown' })} className="hover:text-amber-400">
+              <span className="text-amber-400 font-medium">{linkHealth.unknown ?? 0}</span> not yet checked
+            </Link>
+            <Link to={itemLink({ link_health: 'missing' })} className="hover:text-primary">
+              <span className="font-medium text-textSecondary">{linkHealth.itemsWithoutLinks ?? 0}</span> without download links
+            </Link>
+          </div>
+        )}
       </div>
 
       {health && (health.counts.down > 0 || health.counts.manuallyDown > 0 || health.counts.unknown > 0) && (

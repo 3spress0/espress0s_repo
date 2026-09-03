@@ -14,6 +14,7 @@ import AdminItems from './pages/admin/Items';
 import AdminCategories from './pages/admin/Categories';
 import AdminFolders from './pages/admin/Folders';
 import AdminBackup from './pages/admin/Backup';
+import AdminImports from './pages/admin/Imports';
 import AdminStorage from './pages/admin/Storage';
 import AdminSettings from './pages/admin/Settings';
 import UserManager from './components/UserManager';
@@ -57,6 +58,7 @@ function AppContent() {
             <Route path="folders" element={<AdminFolders />} />
             <Route path="users" element={<div className="glass rounded-2xl border border-white/5 p-6"><UserManager /></div>} />
             <Route path="storage" element={<AdminStorage />} />
+            <Route path="imports" element={<AdminImports />} />
             <Route path="backup" element={<AdminBackup />} />
             <Route path="settings" element={<AdminSettings />} />
             <Route path="monitoring" element={<Monitoring />} />

@@ -24,11 +24,36 @@ const appRelativePath = z.string().regex(/^\/[A-Za-z0-9._~/-]*$/, 'Not a valid l
 
 export const imageUrlSchema = httpUrl.or(internalUploadPath).or(z.literal('')).optional().nullable();
 
+/**
+ * Stricter variant for catalogue imports: a plain http(s) URL and nothing else.
+ *
+ * Catalogue entries must not point at `/api/uploads/...` or any other local
+ * path, because the archive is meant to be portable between installs and the
+ * VM has no room for image files. `imageUrlSchema` above still allows upload
+ * paths for the admin image picker, which is a different feature.
+ */
+export const externalImageUrlSchema = httpUrl.or(z.literal('')).optional().nullable();
+
+/** True when a value is an http(s) URL; used to filter exports. */
+export function isExternalUrl(value) {
+  if (typeof value !== 'string' || !value) return false;
+  try {
+    const p = new URL(value).protocol;
+    return p === 'http:' || p === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export const itemSchema = z.object({
   name: z.string().min(2).max(200),
   slug: z.string().min(2).max(200).optional(),
-  description: z.string().min(5).max(500),
-  long_description: z.string().max(5000).optional().nullable(),
+  // 1000, not 500: the column is TEXT and seeded rows already exceed 500,
+  // which made catalogue exports un-importable.
+  description: z.string().min(5).max(1000),
+  // Markdown body for the item page. Raised from 5000 to 200k so catalogue
+  // imports can carry full documentation; the DB column was always TEXT.
+  long_description: z.string().max(200000).optional().nullable(),
   category_id: z.number().int().positive().optional().nullable(),
   folder_id: z.number().int().positive().optional().nullable(),
   version: z.string().max(100).optional().nullable(),
@@ -52,7 +77,9 @@ export const itemSchema = z.object({
   license_notes: z.string().max(1000).optional().nullable(),
   tags: z.string().or(z.array(z.string())).optional().nullable(),
   icon_url: imageUrlSchema,
+  banner_url: imageUrlSchema,
   image_url: imageUrlSchema,
+  status: z.enum(['current', 'legacy', 'deprecated', 'archived', 'unreleased']).optional().nullable(),
   screenshots: z.string().or(z.array(imageUrlSchema)).optional().nullable(),
   documentation_url: httpUrl.or(z.literal('')).optional().nullable(),
   changelog: z.string().max(5000).optional().nullable(),

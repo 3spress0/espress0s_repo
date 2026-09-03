@@ -16,6 +16,35 @@ dotenv.config();
 export const DEV_JWT_SECRET = 'dev-secret-change-in-production-min-32-chars-long!';
 export const DEV_ADMIN_PASSWORD = 'ChangeMe123!';
 
+/**
+ * Parses a positive integer from the environment, falling back when the value
+ * is missing, malformed or outside a sane range (an empty `TGPT_TIMEOUT_MS=`
+ * in .env would otherwise become NaN and disable the subprocess timeout).
+ */
+function intFromEnv(name, fallback, min, max) {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = parseInt(raw, 10);
+  if (!Number.isFinite(value) || value < min || value > max) {
+    console.warn(`[config] Ignoring ${name}=${raw} (expected ${min}-${max} ms); using ${fallback} ms.`);
+    return fallback;
+  }
+  return value;
+}
+
+/**
+ * How long a single tgpt run may take before it is killed.
+ *
+ * Both budgets must stay *below* the browser's request budget (AI_TIMEOUT in
+ * frontend/src/lib/api.js). They used to both be 30000 ms - exactly the axios
+ * default - so a slow provider killed tgpt at the same instant the browser
+ * gave up: the rule-based fallback answer was computed for nobody and the
+ * visitor saw a bare "timeout of 30000ms exceeded". backend/tests/ai.test.js
+ * asserts the ordering so the two cannot drift back into a tie.
+ */
+export const TGPT_ASK_TIMEOUT_MS = intFromEnv('TGPT_TIMEOUT_MS', 20000, 2000, 60000);
+export const TGPT_DRAFT_TIMEOUT_MS = intFromEnv('TGPT_DRAFT_TIMEOUT_MS', 30000, 2000, 120000);
+
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PROD = NODE_ENV === 'production';
 
@@ -37,6 +66,17 @@ export const config = {
     })(),
     url: process.env.DATABASE_URL || null,
   },
+
+  // Where pre-import database snapshots go. Catalogue imports write one before
+  // applying so a bad archive can be rolled back without restoring from cron.
+  // Resolved relative to the project root, exactly like db.path.
+  backupDir: (() => {
+    const p = process.env.BACKUP_DIR || './backups';
+    if (!path.isAbsolute(p)) {
+      return path.resolve(__dirname, '../../', p);
+    }
+    return p;
+  })(),
 
   security: {
     jwtSecret: process.env.JWT_SECRET || DEV_JWT_SECRET,
@@ -83,6 +123,10 @@ export const config = {
     provider: process.env.TGPT_PROVIDER || '',
     apiKey: process.env.TGPT_API_KEY || process.env.AI_API_KEY || '',
     model: process.env.TGPT_MODEL || '',
+    // Per-run subprocess budgets; see TGPT_ASK_TIMEOUT_MS above for why they
+    // must be smaller than the client's AI_TIMEOUT.
+    timeoutMs: TGPT_ASK_TIMEOUT_MS,
+    draftTimeoutMs: TGPT_DRAFT_TIMEOUT_MS,
   },
 
   rateLimit: {

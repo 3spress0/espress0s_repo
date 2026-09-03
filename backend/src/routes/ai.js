@@ -57,8 +57,10 @@ export async function aiRoutes(fastify) {
       tgptAvailable: available,
       // Admin-only honesty about why AI features might fall back: lets the
       // admin act ("tgpt not installed", bad provider, missing key) instead
-      // of silently getting template drafts.
-      tgptError: available ? null : aiService.lastError,
+      // of silently getting template drafts. Reported even when the binary
+      // runs — a tgpt that starts fine but times out on every question looks
+      // identical to a healthy one otherwise.
+      tgptError: aiService.lastError,
       provider: config.ai.provider || 'tgpt default (free, no key)',
       fallback: 'rule-based metadata search',
       enabled: true,
