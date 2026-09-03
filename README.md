@@ -1,187 +1,322 @@
 # espress0's repo
 
-A self-hosted catalogue for software, ISOs, tools and documents: a Fastify
-API with SQLite/FTS5 search and a React frontend, no containers or external
-services required. Files themselves live with external providers (Google
-Drive, OneDrive, plain URLs); the app stores only metadata and redirects.
+A lightweight, self-hosted software catalogue for applications, operating systems, ISOs, tools, drivers, documents, and other downloadable resources.
 
-Built to run on the smallest machine you own — an old laptop, a Raspberry Pi
-or a 1 vCPU VM. One Node process, one SQLite file, zero memory-hungry
-services.
+Built with **Fastify**, **SQLite + FTS5**, and **React**. The application stores catalogue metadata and external download links rather than acting as a file mirror.
 
-Requires Node 20+. Everything else ships in the repo or is installed by the
-setup script.
+## What it does
 
-## Start here
+espress0's repo gives you a searchable catalogue with:
+
+* Software, ISO, tool, driver, document, and archive entries
+* Fast full-text search powered by SQLite FTS5
+* Categories, folders, tags, platforms, architectures, and versions
+* Markdown descriptions and cover images
+* Multiple download/mirror links per item
+* Checksums and file metadata
+* Version history with diffs and restore
+* Link-health monitoring
+* Admin management and bulk operations
+* Backup, restore, import, and export
+* Optional AI-assisted metadata and description generation
+* Dark and light themes
+
+The application is designed to run on small machines, including old PCs, Raspberry Pis, and small virtual machines. It uses a single Node.js application and SQLite database rather than requiring a large service stack.
+
+## Quick start
+
+Requirements:
+
+* Node.js 20+
+* npm
+
+Clone the repository:
 
 ```bash
-git clone <your-repo> espress0s-repo
-cd espress0s-repo
+git clone https://github.com/3spress0/espress0s_repo.git
+cd espress0s_repo
+```
+
+Run the setup wizard:
+
+```bash
 ./espress0 setup
 ```
 
-`./espress0` is the single entry point for every command:
+The wizard configures the application, database, administrator account, optional AI integration, and runtime settings.
 
-| Command | What it does |
-| --- | --- |
-| `setup` | First run installs everything. The wizard asks for admin login, port, network exposure, AI and how to run. Any `--flag` keeps it scriptable. |
-| `config` | Re-run the same wizard on a configured machine (after its first run, `scripts/setup.sh` renames itself to `scripts/config.sh`). |
-| `dev` | Backend on :3000 + Vite dev server on :5173. `--build` serves the production build from :3000 only. |
-| `serve` | Keeps the app running in tmux (survives logout), with an auto-update window. Options: `dev`, `status`, `stop`, `logs`. |
-| `update` | Auto-updater: builds the next commit off to the side, then stop → swap → migrate → restart → health check, rolling back if the site stays down. `--once` for cron. |
-| `deploy` | Full Ubuntu server install (root): systemd, nginx, certbot HTTPS. |
-| `backup`, `db`, `ai`, `scan`, `test`, `status` | Backup/seed/install the optional tgpt CLI/security probe/tests/dashboard. |
+Start the application:
 
-`./espress0 help` prints the same list. Each command calls the matching
-script in `scripts/`, so direct script usage keeps working.
+```bash
+./espress0 serve
+```
 
-## Features
+Check its status:
 
-- Pages per file (`/file/<slug>`) with markdown body, cover images,
-  multiple mirror links, checksums and platform/architecture metadata.
-- Search with SQLite FTS5 and typo-tolerant reranking; filters for
-  category, folder, tag, license, file type, platform and architecture;
-  sorting by date, name, size, downloads, views.
-- Folders (admin-defined groupings) alongside categories; bulk assign.
-- Version history for every page: 50 snapshots, diff preview, one-click
-  restore.
-- Mirror health: HEAD-probes with SSRF protection, per-link status, manual
-  and periodic sweeps, "mark down" from the admin panel.
-- Backup & restore: full JSON export, dry-run import preview, upsert by slug.
-- Admin panel for pages, categories, folders, users, settings, storage and
-  monitoring.
-- AI helpers (Gemini key, any OpenAI-compatible endpoint, or the free tgpt
-  CLI): a metadata-first "Ask" assistant and a one-click description drafter;
-  both fall back to deterministic templates with no model configured.
-- Themes: 9 dark/light palettes switchable from the navbar, admin-set site
-  default.
-- Seeded catalog (`backend/src/db/seed-catalog.js`, `seed-modern.js`,
-  `seed-archive.js`): **100k+ entries** across Windows and Linux -- distro
-  ISOs (Ubuntu, Fedora, Debian, Mint, Arch, Alpine, Kali, rescue/live images,
-  retro OS corner), Windows media, drivers and firmware, flagship desktop apps
-  with per-version history, CLI tools, fonts, portable apps, open-source games
-  and documentation. The modern wave adds AI/LLM tooling (ollama, llama.cpp,
-  LM Studio, ComfyUI, Claude Code, aider), current editors/IDEs, cloud-native
-  and IoC tooling, plus release archives for npm/PyPI/crates/Maven/NuGet and
-  daily nightly-build snapshots. Everything lands in folders with
-  deterministic slugs; re-running the seeder is a no-op.
-- Legacy/abandonware corner: Windows 1.0 through 2000 and Office 95-2000 with
-  written histories and the generic installation keys documented by the
-  preservation community (these releases predate activation and are no longer
-  sold or supported). XP-era and later ships no keys; an entry also lists
-  Microsoft's officially published KMS client setup keys (GVLK) as reference.
+```bash
+./espress0 status
+```
+
+## The `espress0` CLI
+
+The repository uses `./espress0` as the main command-line entry point.
+
+| Command             | Purpose                               |
+| ------------------- | ------------------------------------- |
+| `./espress0 setup`  | Initial setup                         |
+| `./espress0 config` | Change configuration                  |
+| `./espress0 dev`    | Development mode                      |
+| `./espress0 serve`  | Run the application in the background |
+| `./espress0 update` | Update the installation               |
+| `./espress0 deploy` | Deploy to an Ubuntu server            |
+| `./espress0 backup` | Create backups                        |
+| `./espress0 db`     | Database utilities                    |
+| `./espress0 ai`     | AI configuration/utilities            |
+| `./espress0 scan`   | Security scanning                     |
+| `./espress0 test`   | Run tests                             |
+| `./espress0 status` | Show application status               |
+
+Run:
+
+```bash
+./espress0 help
+```
+
+for the complete command list.
+
+## Catalogue
+
+Each catalogue entry can contain information such as:
+
+* Name and version
+* Stable slug
+* Category and folder
+* Description
+* Release date
+* File name and size
+* Platform and architecture
+* Tags
+* Checksums
+* License information
+* External download links
+* Related versions
+* Icon and banner URLs
+
+The catalogue is intended to describe software and resources, not to become a general-purpose file-hosting service.
+
+## Search
+
+Search uses **SQLite FTS5** for fast full-text queries.
+
+Catalogue entries can be filtered and sorted by metadata such as category, folder, tags, platform, architecture, date, size, downloads, and views.
+
+## Link health
+
+External download and mirror links can be checked automatically.
+
+The health system supports:
+
+* Per-link status
+* Manual checks
+* Periodic checks
+* Redirect handling
+* Timeout handling
+* SSRF protection
+* Administrative "mark down" controls
+
+Health checks run separately from normal catalogue browsing so an unavailable external server does not unnecessarily block the application.
+
+## Import and export
+
+The catalogue supports backup and metadata import/export workflows.
+
+Imports support:
+
+* Dry-run validation
+* Upsert by slug
+* Existing-entry updates
+* Validation errors and warnings
+* Safe processing of untrusted input
+
+Backups can be used to restore catalogue data when necessary.
+
+## Administration
+
+The admin interface provides management for:
+
+* Catalogue entries
+* Categories
+* Folders
+* Users
+* Settings
+* Storage configuration
+* Monitoring
+* AI configuration
+
+Version history is available for catalogue pages, including snapshots, diffs, and restore operations.
+
+## AI
+
+AI is optional.
+
+The application can use:
+
+* Google Gemini
+* OpenAI-compatible APIs
+* The `tgpt` command-line client
+* No AI provider at all
+
+The AI layer is designed as an optional service. Without an AI provider, the catalogue continues to work and deterministic metadata/template fallbacks can still be used.
+
+Example Gemini configuration:
+
+```env
+AI_PROVIDER=gemini
+AI_API_KEY=your_api_key
+AI_MODEL=your_model
+```
+
+For more AI configuration options, see `SETUP.md`.
+
+## Deployment
+
+### Ubuntu server
+
+The repository includes a deployment script that can configure:
+
+* Node.js
+* Dependencies
+* SQLite/database migrations
+* systemd
+* nginx
+* HTTPS with Let's Encrypt
+
+Example:
+
+```bash
+sudo ./espress0 deploy \
+  --repo https://github.com/3spress0/espress0s_repo.git \
+  --domain repo.example.com \
+  --https
+```
+
+The deployment keeps the application behind nginx while the Node.js application runs locally.
+
+### Docker
+
+Docker Compose configuration is also included:
+
+```bash
+docker compose up -d --build
+```
+
+See `SETUP.md` and `DEPLOYMENT.md` for detailed deployment instructions.
+
+## Running in the background
+
+For machines accessed through SSH, the built-in tmux runner keeps the application alive after disconnecting:
+
+```bash
+./espress0 serve
+```
+
+Useful commands:
+
+```bash
+./espress0 serve status
+./espress0 serve logs
+./espress0 serve stop
+```
+
+You can also attach directly to the tmux session:
+
+```bash
+tmux attach -t espress0
+```
+
+The repository also includes an automatic updater that can fetch new commits, build them, run migrations, restart the application, perform a health check, and roll back a failed update.
+
+## Project structure
+
+```text
+backend/
+  src/
+    routes/
+    services/
+    db/
+
+frontend/
+  src/
+    pages/
+    components/
+    themes/
+
+scripts/
+systemd/
+```
+
+The backend contains the Fastify API, services, database logic, search, AI integration, storage handling, versioning, and link-health functionality.
+
+The frontend contains the React application, public catalogue pages, administration interface, components, and themes.
 
 ## Security
 
-Sessions live in an httpOnly, SameSite=Lax cookie (never localStorage) with a
-double-submit CSRF token on mutations. Passwords are bcrypt+pepper; emails
-are AES-encrypted at rest. Login is captcha-gated and rate-limited; "log out
-all devices" and password changes invalidate old tokens. The cookie `Secure`
-flag adapts to the transport (HTTPS logins keep it; plain-HTTP logins drop
-it, with a log warning, because browsers would otherwise refuse to store the
-cookie at all). Helmet CSP, SSRF-guarded outbound fetches, strict input
-validation with zod throughout. See `SECURITY-AUDIT.md` for the full list.
+Security is a core part of the project.
 
-## Running it
+The application includes protections such as:
 
-Local machine or LAN box:
+* HTTP-only SameSite cookies
+* CSRF protection
+* Rate limiting
+* bcrypt password hashing with pepper
+* Encrypted sensitive data
+* Content Security Policy via Helmet
+* SSRF protection for outbound requests
+* Input validation
+* Authentication and authorization controls
 
-```bash
-./espress0 serve            # background, includes the auto-updater
-./espress0 status           # everything at a glance
-```
+See `SECURITY-AUDIT.md` for the project's security documentation.
 
-Ubuntu server with a domain (app stays on 127.0.0.1:3000 behind nginx on
-80/443, Let's Encrypt included):
+## Documentation
 
-```bash
-sudo ./espress0 deploy --repo <url> --domain repo.example.com --https
-```
+| File                | Description                          |
+| ------------------- | ------------------------------------ |
+| `README.md`         | Project overview and quick start     |
+| `SETUP.md`          | Local installation and configuration |
+| `DEPLOYMENT.md`     | Server deployment                    |
+| `CATALOG.md`        | Catalogue/import/export format       |
+| `THEME.md`          | Themes and visual configuration      |
+| `SECURITY-AUDIT.md` | Security documentation               |
 
-Docker works too (`docker compose up -d --build`; Caddy profile adds HTTPS).
-Details: `SETUP.md`. For the catalogue import/export format see `CATALOG.md`,
-for palettes and brand defaults `THEME.md`, and for the hardening record
-`SECURITY-AUDIT.md`.
+## Storage model
 
-## Storage providers
+The application does not need to host every file itself.
 
-The VM never hosts the files. A download is a 302 redirect resolved from the
-item's provider:
+Supported storage/link types include:
 
-- `gdrive` — store the Google Drive file ID; resolved to `uc?export=download`
-- `onedrive` — share link, `?download=1` appended
-- `external` — any direct URL
-- `github` — release asset URL
+* Google Drive
+* OneDrive
+* GitHub release assets
+* Direct external URLs
 
-## AI (Barista)
+The application stores the relevant metadata and resolves the configured external download destination when a user downloads an item.
 
-Optional, and the backend is a plug, not a dependency. "Ask AI" and the admin
-"Draft with AI" button both go through one transport layer
-(`backend/src/services/aiProviders.js`); whichever you pick, the answer is
-still restricted to files that exist in the catalogue.
+## Contributing
 
-| `AI_PROVIDER` | what it does |
-| --- | --- |
-| `auto` (default) | Gemini if a key exists, the tgpt CLI if it does not, metadata search if neither |
-| `gemini` | Google's `generateContent` REST API — needs a key, nothing to install |
-| `openai` | anything speaking `POST {AI_BASE_URL}/chat/completions` |
-| `tgpt` | the free [tgpt](https://github.com/aandrew-me/tgpt) CLI — `./espress0 ai` |
-| `none` | no model at all; deterministic metadata matching |
+Contributions are welcome.
+
+Before submitting changes:
 
 ```bash
-# .env — Gemini is one line, no binary, no Go toolchain in the image
-AI_PROVIDER=gemini
-AI_API_KEY=<key from https://aistudio.google.com/apikey>
-AI_MODEL=gemini-2.5-flash        # optional; this is the default
+./espress0 test
 ```
 
-`AI_API_KEY`, `GEMINI_API_KEY` and `GOOGLE_API_KEY` are all read, in that order,
-so a box that already exports one of Google's names needs no edit. `TGPT_API_KEY`
-is read too — but only as *tgpt's* key: because it belongs to whatever
-`TGPT_PROVIDER` points at, it never makes `auto` choose the Gemini backend, so
-an existing deployment keeps calling the service it was already calling. Note that
-Google now rejects *unrestricted* legacy API keys (auth keys are what AI Studio
-issues), so a key that returns 403 was probably created before that change and
-needs a restriction or a replacement.
+and verify that the application still builds correctly.
 
-**Any other endpoint** works through the OpenAI-shaped client:
+For larger changes, keep the existing architecture and avoid introducing unnecessary services or dependencies.
 
-```bash
-AI_PROVIDER=openai
-AI_BASE_URL=https://openrouter.ai/api/v1     # many models, one key
-AI_BASE_URL=http://127.0.0.1:11434/v1        # Ollama on this box
-AI_MODEL=llama3.1:8b
-```
+## License
 
-`AI_BASE_URL` is a server-side request the admin controls, so it is validated:
-loopback is fine, a LAN address needs `AI_ALLOW_PRIVATE_BASE_URL=true`, cloud
-metadata addresses are refused whatever you set, and redirects are never
-followed (see `backend/src/lib/safeFetch.js`, the same guard the download-link
-checker uses).
+See the repository's licensing and legal documentation for the applicable terms.
 
-Provider, model, endpoint, temperature, token ceiling and timeouts are also
-editable in **Admin → Settings → AI**, with a "Send a test prompt" button that
-proves the combination actually answers. The **key is deliberately not one of
-those settings**: `site_settings` is plaintext, readable through
-`/api/admin/settings` and copied into every database backup, so the key stays
-in `.env` beside `JWT_SECRET` and is never echoed by any endpoint or log line.
-
-Without a model configured, nothing breaks: Ask answers from metadata and the
-drafter produces a filled-in markdown skeleton with `[bracketed]` gaps.
-
-## Layout
-
-```
-backend/src    Fastify app: routes/, services/ (storage, search, ai,
-               versioning, link health), db/ (schema, migrate, seed)
-frontend/src   React app: pages/ (public + admin/), components/, themes/
-scripts/       the tools behind ./espress0
-systemd/       app + updater unit examples
-```
-
-## Legal
-
-Each item carries a `license_status` (`public-domain`,
-`redistributable`, `proprietary`, `check-license`, `internal-only`,
-`abandonware`) — set it honestly; hosting metadata is not permission to
-redistribute, and linking an original source URL is good practice.
+Catalogue entries may link to third-party software. A catalogue entry or external link does not grant redistribution rights. Always respect the original software's license and distribution terms.
