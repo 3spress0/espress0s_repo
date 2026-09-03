@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { Database, Shield } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 import { safeHref } from '../lib/utils';
+import { LOGO_SRC } from '../lib/brand.js';
 
 /**
  * Footer. Branding, intro copy and every link come from site settings, so an
@@ -35,7 +36,7 @@ export default function Footer() {
           <div className="md:col-span-2">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-9 h-9 rounded-xl overflow-hidden">
-                <img src="/logo.svg" alt="" className="w-full h-full object-contain" />
+                <img src={LOGO_SRC} alt="" className="w-full h-full object-contain" />
               </div>
               <div>
                 <h3 className="font-bold text-textPrimary">{siteName}</h3>

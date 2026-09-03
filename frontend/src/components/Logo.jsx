@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { LOGO_SRC, LOGO_ALT } from '../lib/brand.js';
 
 export default function Logo({ size = 36, showText = false, className = '' }) {
   const [hover, setHover] = useState(false);
@@ -22,8 +23,8 @@ export default function Logo({ size = 36, showText = false, className = '' }) {
       >
         {!imgError ? (
           <img 
-            src="/logo.svg" 
-            alt="espress0's repo"
+            src={LOGO_SRC}
+            alt={LOGO_ALT}
             className="w-full h-full object-contain"
             style={{ background: 'transparent' }}
             onError={() => setImgError(true)}
@@ -74,7 +75,7 @@ export function LogoLarge({ className = '' }) {
     <div className={`flex flex-col items-center gap-4 ${className}`}>
       <div className="w-20 h-20 rounded-2xl overflow-hidden shadow-xl shadow-purple-500/20" style={{ background: 'transparent' }}>
         {!imgError ? (
-          <img src="/logo.svg" alt="logo" className="w-full h-full object-contain" onError={() => setImgError(true)} />
+          <img src={LOGO_SRC} alt={LOGO_ALT} className="w-full h-full object-contain" onError={() => setImgError(true)} />
         ) : (
           <Logo size={80} />
         )}

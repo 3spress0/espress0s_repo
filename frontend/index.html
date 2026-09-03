@@ -2,10 +2,12 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
-    <!-- PNG fallback for browsers without SVG favicons (Safari <16); iOS needs
-         a raster apple-touch-icon and ignores the SVG entirely. -->
-    <link rel="alternate icon" type="image/png" href="/favicon-48.png" />
+    <!-- One mark everywhere: /apple-touch-icon.png is the 180x180 isometric
+         stack, and it is what the navbar, the footer and the tab icon all use
+         (see src/lib/brand.js). It is a raster PNG with transparent corners,
+         so it renders identically in every browser and on both themes -
+         the SVG it replaced drew differently depending on the renderer. -->
+    <link rel="icon" type="image/png" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>espress0's repo</title>
