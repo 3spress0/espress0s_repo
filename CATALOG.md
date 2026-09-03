@@ -155,6 +155,112 @@ Both new item columns are added by `ALTER TABLE` in `backend/src/db/index.js`,
 so existing databases are migrated in place and every existing row is backfilled
 to `status = 'current'`.
 
+## Managing the catalogue in the admin
+
+Everything the bulk importer writes can also be managed by hand in
+**Admin → File pages** and **Admin → Dashboard**.
+
+### Searching, filtering and sorting
+
+`GET /api/admin/catalog/search` runs the same FTS5 index as the public search
+(`buildFtsQuery`, so tokens are sanitised the same way) and adds the admin-only
+filter set. Every filter is a bound parameter; `sort` is allow-listed against a
+column map, so a `?sort=` value can never reach the `ORDER BY` clause.
+
+| Parameter | Values |
+| --- | --- |
+| `q` | free text (FTS5; falls back to `LIKE` if the MATCH expression is malformed) |
+| `status` | `current`, `legacy`, `deprecated`, `archived`, `unreleased` |
+| `platform`, `architecture`, `version`, `file_type` | exact (case-insensitive for platform/architecture/file_type) |
+| `storage_provider` | `local`, `gdrive`, `onedrive`, `github`, `external` |
+| `category`, `folder` | slug or numeric id; `folder=none` means unfiled |
+| `tag` | matches the quoted JSON token, so `iso` does not match `isometric` |
+| `release_from`, `release_to` | `YYYY-MM-DD`, and must be a real calendar date |
+| `published` | `true` / `false` |
+| `missing_images` | either artwork column empty |
+| `missing` | `icon`, `banner`, `checksum`, `description`, `version`, `release_date`, `links` |
+| `link_health` | `up`, `down`, `unknown`, `checking`, `missing` |
+| `sort` | `name`, `slug`, `created_at`, `updated_at`, `release_date`, `file_size`, `download_count`, `view_count`, `status`, `version` |
+| `order`, `page`, `limit` | `asc`/`desc`, 1-based, 1–500 (default 50) |
+
+Each row is annotated with `link_health` (`missing` when the page has no
+download links at all), `missing_icon` and `missing_banner`, so the table can
+flag incomplete pages without a second request.
+
+`GET /api/admin/catalog/facets` returns the distinct values that actually exist
+for each filterable column, with counts, so the filter dropdowns never list a
+value that matches nothing.
+
+### Bulk edits
+
+`POST /api/admin/items/bulk` takes `{ action, ids: [...], <field> }` — up to
+500 ids, applied in one transaction so a bad id cannot leave the list
+half-changed.
+
+- Flags: `publish`, `unpublish`, `feature`, `unfeature`
+- Destructive: `archive` (sets `status='archived'` **and** unpublishes — nothing
+  is deleted), `delete`
+- Field edits: `status`, `platform`, `architecture`, `version`, `icon_url`,
+  `banner_url`, `tags`, `category`, `folder`
+
+The new value goes under a generic `value` key, or under a key named after the
+action (`{ action: 'tags', tags: 'a, b' }`); `folder` keeps its own `folderId`
+so `null` can mean "remove from folder". A field edit with **no** value is
+rejected with 400 rather than blanking the column across every selected row.
+`tags` accepts an array or a comma-separated string and re-syncs the `item_tags`
+junction table. `icon_url` / `banner_url` must be external http(s) URLs, matching
+the importer's rule that images are never stored locally.
+
+The UI routes archive and delete through a confirmation dialog first.
+
+### Dashboard statistics
+
+`GET /api/admin/catalog/stats` (also embedded in `GET /api/admin/overview` as
+`catalog`) reports totals, the status spread, per-category/platform/
+architecture breakdowns, quality gaps (missing icon, banner, checksum,
+description, version, release date, download links), link-health counts and the
+most recent catalogue import. Every figure in the dashboard links straight into
+**File pages** with the matching filter already applied.
+
+### Manual item creation
+
+- The page URL follows the name as you type; `POST /api/admin/slugify` returns
+  the slug the server would generate plus a collision-free alternative
+  (`…-2`, `…-3`) when the plain one is taken, offered as a one-click fix next to
+  the "already used" warning. Note `makeSlug` strips dots, so "24.04" becomes
+  `2404` — the same reason the importer tries the raw slug before the
+  normalised one.
+- **Autofill from a public URL** (`POST /api/admin/metadata-autofill`,
+  rate-limited) is optional and suggestion-only: it scrapes `og:`/`twitter:`
+  meta, the title, version and release hints, platform/architecture/file-type
+  hints, an icon and any checksums from the page, and the admin applies each
+  field individually. Nothing is written by the request. It fetches through the
+  SSRF-hardened client, so private, loopback and link-local addresses are
+  refused with 400 `UNSAFE_URL`; responses are capped at 2 MB over 15 s.
+
+### Related versions
+
+`item_relations` is managed per item:
+
+```
+GET    /api/admin/items/:id/related
+POST   /api/admin/items/:id/related   { relatedSlug | relatedId, relation, note? }
+DELETE /api/admin/items/:id/related/:relationId
+```
+
+`relation` is one of `related`, `supersedes`, `superseded-by`, `variant`.
+Self-relations are refused, and re-adding an existing pair updates its relation
+and note instead of failing.
+
+### Loading and progress
+
+Searches, filters, bulk actions, health checks, dashboard loads and forms all
+use the same loading treatment (`frontend/src/components/Loading.jsx`, which
+drives `loading_dots_white.gif`). Long operations — bulk edits, autofill,
+imports — report progress through `frontend/src/components/Progress.jsx`, which
+shows a determinate bar when the caller knows the percentage and the standard
+dots plus a pulsing track when it only knows that work is still running.
+
 ## Known issue in the seed data
 
 `backend/src/db/seed-modern.js:99` defines `GH_REL` as a curried function, and

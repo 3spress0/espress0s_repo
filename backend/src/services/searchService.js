@@ -51,11 +51,11 @@ function tokenize(query) {
  * digits, dot, underscore and dash is stripped first - FTS5 has no bound
  * parameters inside a MATCH string, so escaping is the only option.
  */
-function sanitizeFtsToken(token) {
+export function sanitizeFtsToken(token) {
   return token.replace(/[^\p{L}\p{N}._-]+/gu, ' ').trim();
 }
 
-function buildFtsQuery(query) {
+export function buildFtsQuery(query) {
   // Convert "ubuntu 24.04" to "ubuntu* 24.04*"
   const tokens = tokenize(query)
     .map(sanitizeFtsToken)

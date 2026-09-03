@@ -203,5 +203,174 @@ check('external icon and banner survived the round trip',
   `${first.payload.icon_url} / ${first.payload.banner_url}`);
 check('long markdown survived', /## Overview/.test(first.payload.long_description || ''));
 
+
+// ==========================================================================
+// Catalogue management / admin UX endpoints
+// ==========================================================================
+
+// --- admin search ----------------------------------------------------------
+const search = await api('/admin/catalog/search?q=E2E%20Ubuntu&limit=10');
+check('admin catalog search returns a paginated result set', search.status === 200
+  && Array.isArray(search.payload.items) && typeof search.payload.total === 'number'
+  && search.payload.items.length >= 2, `status ${search.status}, total ${search.payload.total}`);
+check('search rows carry link health and missing-media flags',
+  search.payload.items.every((i) => ['up', 'down', 'unknown', 'checking', 'missing'].includes(i.link_health)
+    && typeof i.missing_icon === 'boolean' && typeof i.missing_banner === 'boolean'));
+
+const byStatus = await api('/admin/catalog/search?q=E2E%20Ubuntu&status=legacy');
+check('status filter narrows the result', byStatus.status === 200
+  && byStatus.payload.items.length === 1 && byStatus.payload.items[0].slug === 'e2e-ubuntu-2204',
+  `${byStatus.payload.items.length} rows`);
+check('bad status is rejected with 400', (await api('/admin/catalog/search?status=nope')).status === 400);
+check('bad release date is rejected with 400', (await api('/admin/catalog/search?release_from=2024-13-99')).status === 400);
+check('sort injection cannot reach ORDER BY',
+  (await api(`/admin/catalog/search?q=E2E%20Ubuntu&sort=${encodeURIComponent('name; DROP TABLE items')}`)).status === 200);
+
+const healthRows = await api('/admin/catalog/search?link_health=up&limit=5');
+check('link_health filter runs', healthRows.status === 200 && Array.isArray(healthRows.payload.items));
+const missingRows = await api('/admin/catalog/search?missing=icon&limit=5');
+check('missing-data filter runs', missingRows.status === 200
+  && missingRows.payload.items.every((i) => !i.icon_url));
+
+// --- facets + stats --------------------------------------------------------
+const facets = await api('/admin/catalog/facets');
+check('facets list real values with counts', facets.status === 200
+  && Array.isArray(facets.payload.platforms) && Array.isArray(facets.payload.categories)
+  && facets.payload.categories.some((c) => c.count > 0), `status ${facets.status}`);
+
+const stats = await api('/admin/catalog/stats');
+check('stats report totals, status spread and quality gaps', stats.status === 200
+  && stats.payload.totals.items > 0
+  && Array.isArray(stats.payload.byStatus)
+  && typeof stats.payload.quality.missingIcon === 'number'
+  && typeof stats.payload.linkHealth.totalLinks === 'number', `status ${stats.status}`);
+
+const overview = await api('/admin/overview');
+check('the dashboard payload embeds catalogue stats', overview.status === 200
+  && overview.payload.catalog?.totals?.items > 0);
+
+// --- slug generation -------------------------------------------------------
+const slug1 = await api('/admin/slugify', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ text: 'Ubuntu Desktop 24.04 LTS' }),
+});
+// makeSlug strips dots by design ("24.04" -> "2404"), which is why the
+// catalogue importer tries the raw slug before the normalised one.
+check('slugify generates a slug from free text', slug1.status === 200
+  && slug1.payload.slug === 'ubuntu-desktop-2404-lts' && slug1.payload.available === true,
+  JSON.stringify(slug1.payload));
+const slug2 = await api('/admin/slugify', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ text: 'E2E Ubuntu 24.04' }),
+});
+check('slugify avoids a slug that is already taken', slug2.status === 200 && slug2.payload.slug !== 'e2e-ubuntu-2404'
+  && slug2.payload.available === false, JSON.stringify(slug2.payload));
+check('slugify rejects empty text', (await api('/admin/slugify', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '   ' }),
+})).status === 400);
+
+// --- metadata autofill -----------------------------------------------------
+// A loopback target must be refused: autofill goes through the SSRF-hardened
+// client, and the sandbox has no public internet to scrape.
+const autofillLocal = await api('/admin/metadata-autofill', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ url: 'http://127.0.0.1:3200/' }),
+});
+check('autofill refuses a private/loopback URL', autofillLocal.status === 400,
+  `status ${autofillLocal.status}, ${JSON.stringify(autofillLocal.payload).slice(0, 90)}`);
+check('autofill requires a url', (await api('/admin/metadata-autofill', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+})).status === 400);
+
+// --- bulk editing ----------------------------------------------------------
+const targets = (await api('/admin/catalog/search?q=E2E%20Ubuntu&limit=10')).payload.items;
+const ids = targets.map((t) => t.id);
+check('bulk edit fixtures are in place', ids.length >= 2, ids.join(', '));
+
+const bulkTag = await api('/admin/items/bulk', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'tags', ids, value: 'e2e, bulk-edited' }),
+});
+check('bulk tag edit reports how many rows it changed', bulkTag.status === 200 && bulkTag.payload.affected === ids.length,
+  JSON.stringify(bulkTag.payload).slice(0, 120));
+const afterTags = await api('/items/e2e-ubuntu-2404');
+check('bulk tag edit reached the database', (afterTags.payload.tags || []).includes('bulk-edited'),
+  JSON.stringify(afterTags.payload.tags));
+
+const bulkFields = await api('/admin/items/bulk', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'platform', ids: [ids[0]], value: 'Linux' }),
+});
+check('bulk platform edit works', bulkFields.status === 200 && bulkFields.payload.affected === 1);
+
+const bulkIconLocal = await api('/admin/items/bulk', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'icon_url', ids: [ids[0]], value: '/uploads/evil.png' }),
+});
+check('bulk icon edit refuses a non-external URL', bulkIconLocal.status === 400,
+  `status ${bulkIconLocal.status}`);
+const bulkIconOk = await api('/admin/items/bulk', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'icon_url', ids: [ids[0]], value: 'https://example.com/new-icon.png' }),
+});
+check('bulk icon edit accepts an external URL', bulkIconOk.status === 200 && bulkIconOk.payload.affected === 1);
+
+const bulkArchive = await api('/admin/items/bulk', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'archive', ids: [ids[1]] }),
+});
+check('bulk archive marks the page archived and unpublished', bulkArchive.status === 200
+  && bulkArchive.payload.affected === 1);
+const archived = await api('/admin/catalog/search?q=E2E%20Ubuntu&status=archived');
+check('the archived page now filters as archived',
+  archived.payload.items.some((i) => i.id === ids[1]), JSON.stringify(archived.payload.items.map((i) => i.slug)));
+
+check('a field edit with no value is refused instead of blanking the column',
+  (await api('/admin/items/bulk', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'icon_url', ids: [ids[0]] }),
+  })).status === 400);
+check('an unknown bulk action is rejected', (await api('/admin/items/bulk', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'nope', ids }),
+})).status === 400);
+check('an empty id list is rejected', (await api('/admin/items/bulk', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'publish', ids: [] }),
+})).status === 400);
+
+// --- related versions ------------------------------------------------------
+const relatedList = await api(`/admin/items/${ids[0]}/related`);
+check('related items are readable', relatedList.status === 200
+  && Array.isArray(relatedList.payload.relations), `status ${relatedList.status}`);
+
+const addRel = await api(`/admin/items/${ids[0]}/related`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ relatedSlug: 'e2e-ubuntu-2204', relation: 'supersedes', note: 'e2e relation' }),
+});
+check('a relation can be added by slug', addRel.status === 201 && addRel.payload.relation.relation === 'supersedes',
+  `status ${addRel.status}`);
+check('a self relation is refused', (await api(`/admin/items/${ids[0]}/related`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ relatedId: ids[0], relation: 'related' }),
+})).status === 400);
+check('an unknown relation type is refused', (await api(`/admin/items/${ids[0]}/related`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ relatedSlug: 'e2e-ubuntu-2204', relation: 'married-to' }),
+})).status === 400);
+
+const relId = addRel.payload.relation.id;
+const delRel = await api(`/admin/items/${ids[0]}/related/${relId}`, { method: 'DELETE' });
+check('a relation can be removed', delRel.status === 200 && delRel.payload.success === true);
+
 console.log(failures === 0 ? '\nALL E2E CHECKS PASSED' : `\n${failures} E2E CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

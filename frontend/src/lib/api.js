@@ -202,6 +202,24 @@ export const backupApi = {
  * Import is deliberately two calls: first without `apply` for the preview, then
  * with it. The archive travels as multipart form data, not JSON.
  */
+/**
+ * Admin catalogue management: filtered FTS search, bulk edits, dashboard
+ * statistics, slug generation and metadata autofill.
+ */
+export const catalogAdminApi = {
+  /** FTS5 search with the admin filter set; sort is allow-listed server-side. */
+  search: (params) => api.get('/admin/catalog/search', { params, timeout: AI_TIMEOUT }).then(r => r.data),
+  facets: () => api.get('/admin/catalog/facets').then(r => r.data),
+  stats: () => api.get('/admin/catalog/stats').then(r => r.data),
+  /** Same slug the server would generate, plus a collision-free suggestion. */
+  slugify: (text, excludeId) => api.post('/admin/slugify', { text, excludeId }).then(r => r.data),
+  /** Suggest fields from a public software URL. Writes nothing. */
+  autofill: (url) => api.post('/admin/metadata-autofill', { url }, { timeout: AI_TIMEOUT }).then(r => r.data),
+  related: (id) => api.get(`/admin/items/${id}/related`).then(r => r.data),
+  addRelated: (id, data) => api.post(`/admin/items/${id}/related`, data).then(r => r.data),
+  removeRelated: (id, relationId) => api.delete(`/admin/items/${id}/related/${relationId}`).then(r => r.data),
+};
+
 export const catalogApi = {
   /** Preview (`apply=false`) or write (`apply=true`) a catalogue archive. */
   import: (file, { apply = false, mode = 'upsert' } = {}) => {

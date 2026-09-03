@@ -6,6 +6,12 @@ import { monitoringService } from '../services/monitoringService.js';
 import { getItemLinksForMany, serializeItem } from '../services/itemSerializer.js';
 import { recordItemVersion, listVersions, getVersion, restoreItemVersion } from '../services/versionService.js';
 import { makeSlug } from '../utils/slug.js';
+import { isExternalUrl } from '../utils/validation.js';
+import {
+  searchCatalog, catalogFacets, catalogStats, ITEM_STATUSES,
+} from '../services/catalogQueryService.js';
+import { autofillFromUrl } from '../services/metadataAutofillService.js';
+import { UnsafeUrlError } from '../lib/safeFetch.js';
 import { readFileSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
 import path from 'path';
@@ -63,6 +69,11 @@ export async function adminRoutes(fastify) {
 
     return {
       counts: { totalItems, published, unpublished, featured, totalSize, totalUsers, adminUsers },
+      // Catalogue statistics: status spread, completeness gaps and link health,
+      // so the dashboard says what needs attention rather than just how big the
+      // archive is. Computed here rather than in the browser so one request
+      // covers the page.
+      catalog: catalogStats(),
       recent,
       topDownloads,
       storageProviders: storageManager.listProviders(),
@@ -296,13 +307,34 @@ export async function adminRoutes(fastify) {
   });
 
   /**
-   * POST /admin/items/bulk  { action, ids: [], folderId? }
-   * Publish / unpublish / feature / unfeature / delete / re-file several pages
-   * at once. One transaction, so a bad id can't leave the list half-changed.
+   * POST /admin/items/bulk  { action, ids: [], <field>? }
+   * Publish / unpublish / feature / unfeature / archive / delete several pages
+   * at once, or set one field (status, platform, architecture, version, tags,
+   * category, folder, icon_url, banner_url) across all of them.
+   *
+   * The new value may arrive either under a generic `value` key or under a key
+   * named after the action (`{ action: 'tags', tags: 'a, b' }`), which is how
+   * the admin UI sends it. One transaction, so a bad id can't leave the list
+   * half-changed.
    */
   fastify.post('/admin/items/bulk', async (request, reply) => {
-    const { action, ids, folderId } = request.body || {};
-    const allowed = ['publish', 'unpublish', 'feature', 'unfeature', 'delete', 'folder'];
+    const body = request.body || {};
+    const { action, ids, folderId, categoryId } = body;
+    const value = body.value !== undefined ? body.value : body[action];
+
+    // Field-setting actions: one column, one validated value, many rows.
+    const FIELD_ACTIONS = {
+      status: { column: 'status', kind: 'enum', values: ITEM_STATUSES },
+      platform: { column: 'platform', kind: 'text', max: 50 },
+      architecture: { column: 'architecture', kind: 'text', max: 50 },
+      version: { column: 'version', kind: 'text', max: 100 },
+      icon_url: { column: 'icon_url', kind: 'externalUrl' },
+      banner_url: { column: 'banner_url', kind: 'externalUrl' },
+    };
+    const allowed = [
+      'publish', 'unpublish', 'feature', 'unfeature', 'delete', 'folder',
+      'archive', 'category', 'tags', ...Object.keys(FIELD_ACTIONS),
+    ];
     if (!allowed.includes(action)) {
       return reply.code(400).send({ error: `action must be one of: ${allowed.join(', ')}` });
     }
@@ -311,52 +343,252 @@ export async function adminRoutes(fastify) {
       ? [...new Set(ids.map(Number).filter(n => Number.isInteger(n) && n > 0))]
       : [];
     if (!cleanIds.length) return reply.code(400).send({ error: 'ids must be a non-empty array of item ids' });
-    if (cleanIds.length > 200) return reply.code(400).send({ error: 'Too many items in one request (max 200)' });
+    if (cleanIds.length > 500) return reply.code(400).send({ error: 'Too many items in one request (max 500)' });
 
     const db = getDb();
+    const placeholders = cleanIds.map(() => '?').join(',');
+    const now = new Date().toISOString();
 
-    let folderName = null;
-    if (action === 'folder') {
+    // --- validate the value before touching anything ------------------------
+    let sql = null;
+    let args = [];
+    let summary = null;
+
+    if (action === 'delete') {
+      // No value to validate; handled below inside its own transaction.
+    } else if (action === 'folder') {
       const fid = folderId === null || folderId === undefined || folderId === '' ? null : Number(folderId);
       if (fid !== null && (!Number.isInteger(fid) || fid <= 0)) {
         return reply.code(400).send({ error: 'folderId must be a positive integer or null' });
       }
+      let folderName = null;
       if (fid !== null) {
         const folder = db.prepare('SELECT id, name FROM folders WHERE id = ?').get(fid);
         if (!folder) return reply.code(404).send({ error: 'Folder not found' });
         folderName = folder.name;
       }
-    }
+      sql = `UPDATE items SET folder_id = ?, updated_at = ? WHERE id IN (${placeholders})`;
+      args = [fid, now];
+      summary = { folder: folderName };
+    } else if (action === 'category') {
+      const cid = categoryId === null || categoryId === undefined || categoryId === '' ? null : Number(categoryId);
+      if (cid !== null && (!Number.isInteger(cid) || cid <= 0)) {
+        return reply.code(400).send({ error: 'categoryId must be a positive integer or null' });
+      }
+      let categoryName = null;
+      if (cid !== null) {
+        const category = db.prepare('SELECT id, name FROM categories WHERE id = ?').get(cid);
+        if (!category) return reply.code(404).send({ error: 'Category not found' });
+        categoryName = category.name;
+      }
+      sql = `UPDATE items SET category_id = ?, updated_at = ? WHERE id IN (${placeholders})`;
+      args = [cid, now];
+      summary = { category: categoryName };
+    } else if (action === 'tags') {
+      if (value === undefined || value === null || value === '') {
+        return reply.code(400).send({ error: 'tags is required (an array of strings or a comma-separated string)' });
+      }
+      const list = Array.isArray(value) ? value : (typeof value === 'string' ? value.split(',') : null);
+      if (!list) return reply.code(400).send({ error: 'tags must be an array of strings or a comma-separated string' });
+      const tags = [...new Set(list.map(t => String(t).trim()).filter(Boolean))].slice(0, 100);
+      if (tags.some(t => t.length > 100)) return reply.code(400).send({ error: 'Each tag must be 100 characters or fewer' });
+      sql = `UPDATE items SET tags = ?, updated_at = ? WHERE id IN (${placeholders})`;
+      args = [JSON.stringify(tags), now];
+      summary = { tags };
+    } else if (action === 'archive') {
+      sql = `UPDATE items SET status = 'archived', published = 0, updated_at = ? WHERE id IN (${placeholders})`;
+      args = [now];
+      summary = { status: 'archived', published: false };
+    } else if (FIELD_ACTIONS[action]) {
+      const spec = FIELD_ACTIONS[action];
+      // Refuse a missing value outright. Treating it as null would blank the
+      // column across every selected row while still reporting success.
+      if (value === undefined || value === null || value === '') {
+        return reply.code(400).send({ error: `${action} is required` });
+      }
+      const raw = value;
 
-    const placeholders = cleanIds.map(() => '?').join(',');
-
-    const statements = {
-      publish: `UPDATE items SET published = 1, updated_at = ? WHERE id IN (${placeholders})`,
-      unpublish: `UPDATE items SET published = 0, updated_at = ? WHERE id IN (${placeholders})`,
-      feature: `UPDATE items SET featured = 1, updated_at = ? WHERE id IN (${placeholders})`,
-      unfeature: `UPDATE items SET featured = 0, updated_at = ? WHERE id IN (${placeholders})`,
-      folder: `UPDATE items SET folder_id = ?, updated_at = ? WHERE id IN (${placeholders})`,
-    };
-
-    let affected = 0;
-    if (action === 'delete') {
-      affected = db.transaction(() =>
-        db.prepare(`DELETE FROM items WHERE id IN (${placeholders})`).run(...cleanIds).changes
-      )();
-    } else if (action === 'folder') {
-      const now = new Date().toISOString();
-      const fid = folderId === null || folderId === undefined || folderId === '' ? null : Number(folderId);
-      affected = db.transaction(() =>
-        db.prepare(statements.folder).run(fid, now, ...cleanIds).changes
-      )();
+      if (spec.kind === 'enum') {
+        if (raw === null || !spec.values.includes(raw)) {
+          return reply.code(400).send({ error: `${action} must be one of: ${spec.values.join(', ')}` });
+        }
+      } else if (spec.kind === 'text') {
+        if (raw !== null && (typeof raw !== 'string' || raw.length > spec.max)) {
+          return reply.code(400).send({ error: `${action} must be a string of at most ${spec.max} characters` });
+        }
+      } else if (spec.kind === 'externalUrl') {
+        // Catalogue rule: images are external URLs, never local uploads.
+        if (raw !== null && !isExternalUrl(raw)) {
+          return reply.code(400).send({ error: `${action} must be an external http(s) URL - images are never stored locally` });
+        }
+      }
+      sql = `UPDATE items SET ${spec.column} = ?, updated_at = ? WHERE id IN (${placeholders})`;
+      args = [raw, now];
+      summary = { [action]: raw };
     } else {
-      const now = new Date().toISOString();
-      affected = db.transaction(() =>
-        db.prepare(statements[action]).run(now, ...cleanIds).changes
-      )();
+      const flags = { publish: ['published', 1], unpublish: ['published', 0], feature: ['featured', 1], unfeature: ['featured', 0] };
+      const [column, flagValue] = flags[action];
+      sql = `UPDATE items SET ${column} = ?, updated_at = ? WHERE id IN (${placeholders})`;
+      args = [flagValue, now];
+      summary = { [column]: !!flagValue };
     }
 
-    return { success: true, action, affected, ids: cleanIds, folder: folderName };
+    // --- apply in one transaction ------------------------------------------
+    let affected = 0;
+    try {
+      affected = db.transaction(() => {
+        if (action === 'delete') {
+          return db.prepare(`DELETE FROM items WHERE id IN (${placeholders})`).run(...cleanIds).changes;
+        }
+        const changed = db.prepare(sql).run(...args, ...cleanIds).changes;
+        // Keep the tag junction in step with the JSON column, or the tag facets
+        // and tag filters would drift away from what the rows actually say.
+        if (action === 'tags') {
+          const tags = summary.tags;
+          const ensureTag = db.prepare('INSERT OR IGNORE INTO tags (name, slug) VALUES (?, ?)');
+          const tagId = db.prepare('SELECT id FROM tags WHERE slug = ?');
+          const link = db.prepare('INSERT OR IGNORE INTO item_tags (item_id, tag_id) VALUES (?, ?)');
+          const unlink = db.prepare('DELETE FROM item_tags WHERE item_id = ?');
+          const idsOfTags = tags.map((name) => {
+            ensureTag.run(name, makeSlug(name) || name.toLowerCase());
+            return tagId.get(makeSlug(name) || name.toLowerCase())?.id;
+          }).filter(Boolean);
+          for (const itemId of cleanIds) {
+            unlink.run(itemId);
+            for (const tid of idsOfTags) link.run(itemId, tid);
+          }
+        }
+        return changed;
+      })();
+    } catch (e) {
+      request.log.error(e, 'Bulk action failed');
+      return reply.code(500).send({ error: `Bulk action failed, nothing was changed: ${e.message}` });
+    }
+
+    return { success: true, action, affected, ids: cleanIds, ...(summary || {}) };
+  });
+
+  /**
+   * GET /admin/catalog/search - FTS5 search plus the admin-only filter set.
+   * Every filter is a bound parameter; sort is allow-listed in the service.
+   */
+  fastify.get('/admin/catalog/search', async (request, reply) => {
+    try {
+      return searchCatalog(request.query);
+    } catch (e) {
+      return reply.code(400).send({ error: e.message });
+    }
+  });
+
+  // GET /admin/catalog/facets - distinct values for the filter dropdowns
+  fastify.get('/admin/catalog/facets', async () => {
+    return catalogFacets();
+  });
+
+  // GET /admin/catalog/stats - dashboard numbers
+  fastify.get('/admin/catalog/stats', async () => {
+    return catalogStats();
+  });
+
+  /**
+   * POST /admin/slugify - the same slug the server would generate, plus a
+   * collision-free suggestion, so the editor can show the slug before save.
+   */
+  fastify.post('/admin/slugify', async (request, reply) => {
+    const text = String(request.body?.text ?? '').slice(0, 300);
+    if (!text.trim()) return reply.code(400).send({ error: 'text is required' });
+
+    const db = getDb();
+    const excludeId = Number(request.body?.excludeId) || null;
+    const base = makeSlug(text);
+    if (!base) return reply.code(400).send({ error: 'That text has no usable slug characters' });
+
+    const taken = (slug) => db.prepare(
+      excludeId ? 'SELECT id FROM items WHERE slug = ? AND id != ?' : 'SELECT id FROM items WHERE slug = ?'
+    ).get(...(excludeId ? [slug, excludeId] : [slug]));
+
+    let slug = base;
+    let suffix = 2;
+    while (taken(slug) && suffix <= 999) slug = `${base}-${suffix++}`;
+
+    return { slug, base, available: slug === base && !taken(base), alternatives: slug !== base ? [slug] : [] };
+  });
+
+  /**
+   * POST /admin/metadata-autofill - suggest fields from a public software URL.
+   * Fetched through the SSRF-hardened client; nothing is written.
+   */
+  fastify.post('/admin/metadata-autofill', {
+    config: { rateLimit: { max: 20, timeWindow: '5 minutes' } },
+  }, async (request, reply) => {
+    const url = String(request.body?.url ?? '').slice(0, 2000);
+    if (!url) return reply.code(400).send({ error: 'url is required' });
+    try {
+      const result = await autofillFromUrl(url);
+      return result;
+    } catch (e) {
+      if (e instanceof UnsafeUrlError) return reply.code(400).send({ error: e.message, code: 'UNSAFE_URL' });
+      request.log.warn({ err: e.message }, 'Metadata autofill failed');
+      return reply.code(422).send({ error: `Could not read that URL: ${e.message}`.slice(0, 300) });
+    }
+  });
+
+  // --- related versions / items --------------------------------------------
+  fastify.get('/admin/items/:id/related', async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ error: 'Invalid item id' });
+    const db = getDb();
+    if (!db.prepare('SELECT id FROM items WHERE id = ?').get(id)) return reply.code(404).send({ error: 'Item not found' });
+    const relations = db.prepare(`
+      SELECT r.id, r.relation, r.note, r.created_at,
+             i.id AS item_id, i.name, i.slug, i.version, i.status, i.platform, i.architecture
+      FROM item_relations r JOIN items i ON i.id = r.related_item_id
+      WHERE r.item_id = ? ORDER BY r.sort_order, r.id
+    `).all(id);
+    return { relations };
+  });
+
+  fastify.post('/admin/items/:id/related', async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ error: 'Invalid item id' });
+    const { relatedSlug, relatedId, relation = 'related', note } = request.body || {};
+    const db = getDb();
+    if (!db.prepare('SELECT id FROM items WHERE id = ?').get(id)) return reply.code(404).send({ error: 'Item not found' });
+
+    let targetId = Number(relatedId) || null;
+    if (!targetId && relatedSlug) {
+      const row = db.prepare('SELECT id FROM items WHERE slug = ?').get(String(relatedSlug));
+      if (!row) return reply.code(404).send({ error: `No item with slug "${relatedSlug}"` });
+      targetId = row.id;
+    }
+    if (!targetId) return reply.code(400).send({ error: 'relatedId or relatedSlug is required' });
+    if (targetId === id) return reply.code(400).send({ error: 'An item cannot be related to itself' });
+    if (!db.prepare('SELECT id FROM items WHERE id = ?').get(targetId)) return reply.code(404).send({ error: 'Related item not found' });
+
+    const allowedRelations = ['related', 'supersedes', 'superseded-by', 'variant'];
+    if (!allowedRelations.includes(relation)) {
+      return reply.code(400).send({ error: `relation must be one of: ${allowedRelations.join(', ')}` });
+    }
+
+    const result = db.prepare(`
+      INSERT INTO item_relations (item_id, related_item_id, relation, note, sort_order)
+      VALUES (?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM item_relations WHERE item_id = ?), 0))
+      ON CONFLICT(item_id, related_item_id) DO UPDATE SET relation = excluded.relation, note = excluded.note
+    `).run(id, targetId, relation, note ? String(note).slice(0, 500) : null, id);
+
+    // ON CONFLICT leaves lastInsertRowid at 0, so fall back to a lookup.
+    const saved = db.prepare('SELECT * FROM item_relations WHERE id = ?').get(result.lastInsertRowid)
+      || db.prepare('SELECT * FROM item_relations WHERE item_id = ? AND related_item_id = ?').get(id, targetId);
+    return reply.code(201).send({ relation: saved });
+  });
+
+  fastify.delete('/admin/items/:id/related/:relationId', async (request, reply) => {
+    const id = Number(request.params.id);
+    const relationId = Number(request.params.relationId);
+    const db = getDb();
+    const result = db.prepare('DELETE FROM item_relations WHERE id = ? AND item_id = ?').run(relationId, id);
+    if (!result.changes) return reply.code(404).send({ error: 'Relation not found' });
+    return { success: true };
   });
 
   /**

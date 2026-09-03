@@ -2,14 +2,31 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   X, Save, Loader2, AlertCircle, Eye, Check, Link as LinkIcon,
   RotateCcw, Sparkles, CheckCircle2, Circle, ArrowLeft, ArrowRight,
+  Wand2, GitBranch, Plus, Trash2,
 } from 'lucide-react';
-import { itemsApi, categoriesApi, foldersApi, adminApi } from '../../lib/api';
+import { itemsApi, categoriesApi, foldersApi, adminApi, catalogAdminApi } from '../../lib/api';
+import Loading, { LoadingDots } from '../Loading';
+import Progress from '../Progress';
 import ImagePicker from './ImagePicker';
 import DownloadLinksEditor from './DownloadLinksEditor';
 import MarkdownField from './MarkdownField';
 import TemplatePicker from './TemplatePicker';
 import VersionHistory from './VersionHistory';
 import { applyTemplate } from './pageTemplates';
+
+/** Human labels for the fields metadata autofill can suggest. */
+const AUTOFILL_LABELS = {
+  name: 'Name',
+  version: 'Version',
+  description: 'Short description',
+  long_description: 'Long description',
+  platform: 'Platform',
+  architecture: 'Architecture',
+  file_type: 'File type',
+  icon_url: 'Icon URL',
+  tags: 'Tags',
+  release_date: 'Release date',
+};
 
 const LICENSE_STATUSES = [
   { value: 'public-domain', label: 'Public domain' },
@@ -30,7 +47,13 @@ const BASE_SECTIONS = [
 ];
 
 // Version history only makes sense for a page that exists.
-const EDIT_SECTIONS = [...BASE_SECTIONS, { id: 'history', label: 'History' }];
+// Related versions live in their own step: they only make sense once the page
+// exists, since a relation needs a real id at both ends.
+const EDIT_SECTIONS = [
+  ...BASE_SECTIONS,
+  { id: 'related', label: 'Related' },
+  { id: 'history', label: 'History' },
+];
 
 /** Mirrors the backend's slugify closely enough for a live URL preview. */
 function slugify(text) {
@@ -121,6 +144,17 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
   const [slugTouched, setSlugTouched] = useState(false);
   const [slugState, setSlugState] = useState(null); // { checking, available, takenBy }
   const [aiNotice, setAiNotice] = useState('');
+  // Optional metadata autofill: fetched on demand, nothing is written until the
+  // admin applies an individual field.
+  const [autofillUrl, setAutofillUrl] = useState('');
+  const [autofill, setAutofill] = useState(null);
+  const [autofillBusy, setAutofillBusy] = useState(false);
+  const [autofillError, setAutofillError] = useState('');
+  const [relations, setRelations] = useState([]);
+  const [relatedSlug, setRelatedSlug] = useState('');
+  const [relatedType, setRelatedType] = useState('related');
+  const [relatedBusy, setRelatedBusy] = useState(false);
+  const [slugSuggestion, setSlugSuggestion] = useState(null);
 
   const isEdit = !!item?.id;
   const sections = useMemo(
@@ -170,7 +204,14 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
     setSlugState(s => ({ ...(s || {}), checking: true }));
     const t = setTimeout(() => {
       adminApi.checkSlug(effectiveSlug, item?.id)
-        .then(res => { if (!cancelled) setSlugState({ checking: false, ...res }); })
+        .then(res => {
+          if (cancelled) return;
+          setSlugState({ checking: false, ...res });
+          // Offer a ready-made free alternative instead of making the admin
+          // invent one.
+          if (res.available === false) suggestSlug(form.name || effectiveSlug);
+          else setSlugSuggestion(null);
+        })
         .catch(() => { if (!cancelled) setSlugState(null); });
     }, 400);
     return () => { cancelled = true; clearTimeout(t); };
@@ -264,6 +305,88 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
       setSaving(false);
     }
   }, [payload, isEdit, item, onSaved, slugState, effectiveSlug]);
+
+  /**
+   * Ask the server for the slug it would generate, including a collision-free
+   * suffix when the plain one is taken. Used both to seed a new page's URL and
+   * to offer a fix when the typed one is already used.
+   */
+  const suggestSlug = async (text) => {
+    try {
+      const res = await catalogAdminApi.slugify(text, item?.id);
+      setSlugSuggestion(res);
+      return res;
+    } catch (e) {
+      setSlugSuggestion(null);
+      return null;
+    }
+  };
+
+  /**
+   * Optional metadata autofill. Scrapes og:/twitter: tags, the title, version
+   * and release hints from a public software page. Every field is a suggestion
+   * the admin applies individually - nothing is written by the request.
+   */
+  const runAutofill = async () => {
+    const url = autofillUrl.trim();
+    if (!url) return;
+    setAutofillBusy(true);
+    setAutofillError('');
+    setAutofill(null);
+    try {
+      const res = await catalogAdminApi.autofill(url);
+      setAutofill(res);
+    } catch (e) {
+      setAutofillError(e.response?.data?.error || 'Could not read that URL');
+    } finally {
+      setAutofillBusy(false);
+    }
+  };
+
+  /** Apply one suggested field. tags arrive comma separated. */
+  const applySuggestion = (key, value) => {
+    if (key === 'tags') {
+      setForm(f => ({ ...f, tags: String(value) }));
+      return;
+    }
+    setForm(f => ({ ...f, [key]: value }));
+  };
+
+  /* ---- related versions / items ---- */
+  const loadRelations = useCallback(() => {
+    if (!item?.id) return;
+    catalogAdminApi.related(item.id)
+      .then(res => setRelations(res.relations || []))
+      .catch(() => setRelations([]));
+  }, [item?.id]);
+
+  useEffect(() => { loadRelations(); }, [loadRelations]);
+
+  const addRelation = async () => {
+    if (!relatedSlug.trim() || !item?.id) return;
+    setRelatedBusy(true);
+    try {
+      await catalogAdminApi.addRelated(item.id, { relatedSlug: relatedSlug.trim(), relation: relatedType });
+      setRelatedSlug('');
+      loadRelations();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not add that relation');
+    } finally {
+      setRelatedBusy(false);
+    }
+  };
+
+  const removeRelation = async (relationId) => {
+    setRelatedBusy(true);
+    try {
+      await catalogAdminApi.removeRelated(item.id, relationId);
+      loadRelations();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not remove that relation');
+    } finally {
+      setRelatedBusy(false);
+    }
+  };
 
   const submit = (e) => { e?.preventDefault(); save(); };
 
@@ -397,7 +520,90 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
       </div>
 
       {section === 'start' && (
-        <TemplatePicker selected={templateId} onSelect={chooseTemplate} />
+        <div className="space-y-4">
+          <TemplatePicker selected={templateId} onSelect={chooseTemplate} />
+
+          {/* Optional metadata autofill. Nothing here writes to the database:
+              the server scrapes the page and returns suggestions, and the
+              admin applies the ones they want. */}
+          <div className="rounded-xl border border-border bg-surface/40 p-4">
+            <h4 className="text-sm font-bold text-textPrimary flex items-center gap-2 mb-1">
+              <Wand2 className="w-4 h-4 text-primary" /> Autofill from a public URL
+            </h4>
+            <p className="text-xs text-textMuted mb-3">
+              Optional. Point this at the software&apos;s own page (a GitHub release, a download page)
+              and we&apos;ll suggest a name, version, description, platform and icon. You approve each field.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={autofillUrl}
+                onChange={(e) => setAutofillUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); runAutofill(); } }}
+                placeholder="https://github.com/example/app/releases/tag/v1.2.3"
+                className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:border-primary/50"
+                aria-label="Public software URL to read metadata from"
+              />
+              <button
+                type="button"
+                onClick={runAutofill}
+                disabled={autofillBusy || !autofillUrl.trim()}
+                className="px-4 py-2 bg-gradient-primary text-white rounded-lg text-sm font-medium disabled:opacity-40 flex items-center gap-2"
+              >
+                {autofillBusy ? <LoadingDots size={16} /> : <Sparkles className="w-4 h-4" />}
+                {autofillBusy ? 'Reading…' : 'Suggest fields'}
+              </button>
+            </div>
+
+            {autofillError && (
+              <p className="text-xs text-red-400 mt-2 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5" /> {autofillError}
+              </p>
+            )}
+
+            {autofill && (
+              <div className="mt-4 space-y-2">
+                <Progress value={100} tone="success" label={`Read ${autofill.finalUrl || autofill.url}`} />
+                {autofill.notes?.length > 0 && (
+                  <p className="text-[11px] text-textMuted">{autofill.notes.join(' · ')}</p>
+                )}
+                {Object.entries(autofill.fields || {}).map(([key, value]) => {
+                  if (value === null || value === undefined || value === '') return null;
+                  const label = AUTOFILL_LABELS[key] || key;
+                  const text = Array.isArray(value) ? value.join(', ') : String(value);
+                  return (
+                    <div key={key} className="flex items-start gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => applySuggestion(key, Array.isArray(value) ? value.join(', ') : value)}
+                        className="mt-0.5 px-2 py-1 rounded-md bg-surface border border-border text-textMuted hover:text-primary hover:border-primary/40 flex-shrink-0"
+                        title={`Use this ${label}`}
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                      <div className="min-w-0">
+                        <span className="text-textMuted block">{label}</span>
+                        <span className="text-textSecondary break-words block max-h-16 overflow-hidden">{text.slice(0, 300)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {(autofill.downloads || []).length > 0 && (
+                  <div className="pt-2 border-t border-white/5">
+                    <p className="text-[11px] text-textMuted mb-1">
+                      Download links found — add them in the Downloads step:
+                    </p>
+                    <ul className="text-[11px] font-mono text-textMuted space-y-0.5">
+                      {autofill.downloads.slice(0, 5).map(d => (
+                        <li key={d.url} className="truncate">{d.label || d.filename} — {d.url}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {section === 'basics' && (
@@ -436,8 +642,17 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
                 <span className="text-green-400 flex items-center gap-1"><Check className="w-3 h-3" /> /file/{slugState.slug} is free</span>
               )}
               {!slugState?.checking && slugState?.available === false && (
-                <span className="text-red-400 flex items-center gap-1">
+                <span className="text-red-400 flex items-center gap-1 flex-wrap">
                   <AlertCircle className="w-3 h-3" /> Already used by “{slugState.takenBy?.name || 'another page'}”
+                  {slugSuggestion?.slug && slugSuggestion.slug !== effectiveSlug && (
+                    <button
+                      type="button"
+                      onClick={() => { setSlugTouched(true); setForm(f => ({ ...f, slug: slugSuggestion.slug })); }}
+                      className="ml-1 px-2 py-0.5 rounded-md bg-surface border border-border text-textMuted hover:text-primary font-mono text-[10px]"
+                    >
+                      Use {slugSuggestion.slug}
+                    </button>
+                  )}
                 </span>
               )}
             </div>
@@ -570,6 +785,70 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
             <input type="checkbox" checked={!!form.featured} onChange={set('featured')} className="accent-purple-500" />
             Featured (shown on the homepage)
           </label>
+        </div>
+      )}
+
+      {section === 'related' && isEdit && (
+        <div className="space-y-3">
+          <p className="text-xs text-textMuted">
+            Link this page to other versions of the same software — useful when several releases
+            are mirrored side by side. &ldquo;Supersedes&rdquo; means this one replaces the page you link to.
+          </p>
+
+          <ul className="space-y-1.5">
+            {relations.map(r => (
+              <li key={r.id} className="flex items-center gap-2 text-sm rounded-lg border border-border bg-surface/40 px-3 py-2">
+                <GitBranch className="w-3.5 h-3.5 text-textMuted flex-shrink-0" />
+                <span className="text-[10px] uppercase tracking-widest text-textMuted flex-shrink-0">{r.relation}</span>
+                <span className="text-textPrimary truncate">{r.name}</span>
+                {r.version && <span className="text-textMuted font-mono text-xs flex-shrink-0">{r.version}</span>}
+                {r.note && <span className="text-textMuted text-xs truncate hidden sm:inline">· {r.note}</span>}
+                <button
+                  type="button"
+                  onClick={() => removeRelation(r.id)}
+                  disabled={relatedBusy}
+                  className="ml-auto p-1.5 text-textMuted hover:text-red-400 disabled:opacity-40"
+                  title="Remove this link"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </li>
+            ))}
+            {relations.length === 0 && (
+              <li className="text-xs text-textMuted px-1">No related pages yet.</li>
+            )}
+          </ul>
+
+          <div className="flex flex-wrap gap-2 items-center">
+            <input
+              type="text"
+              value={relatedSlug}
+              onChange={(e) => setRelatedSlug(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRelation(); } }}
+              placeholder="Slug of the other page, e.g. ubuntu-desktop-22-04-lts"
+              className="flex-1 min-w-[240px] px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono focus:outline-none focus:border-primary/50"
+              aria-label="Related page slug"
+            />
+            <select
+              value={relatedType}
+              onChange={(e) => setRelatedType(e.target.value)}
+              className="px-3 py-2 bg-surface border border-border rounded-lg text-sm text-textSecondary focus:outline-none focus:border-primary/50"
+              aria-label="Relation type"
+            >
+              <option value="related">Related</option>
+              <option value="supersedes">Supersedes</option>
+              <option value="superseded-by">Superseded by</option>
+              <option value="variant">Variant</option>
+            </select>
+            <button
+              type="button"
+              onClick={addRelation}
+              disabled={relatedBusy || !relatedSlug.trim()}
+              className="px-4 py-2 bg-gradient-primary text-white rounded-lg text-sm font-medium disabled:opacity-40 flex items-center gap-2"
+            >
+              {relatedBusy ? <LoadingDots size={16} /> : <Plus className="w-4 h-4" />} Link
+            </button>
+          </div>
         </div>
       )}
 
