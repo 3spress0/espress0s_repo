@@ -29,6 +29,12 @@
 #
 #   sudo ./scripts/deploy-ubuntu.sh --start
 #
+# Automatic updates are installed and enabled by default: a second systemd unit
+# (<app>-updater) watches the git remote and performs a staged, health-verified,
+# rollback-capable deploy. It is generated from THIS installation directory, so
+# a checkout in /home/<user>/espress0s_repo works exactly like /opt. Opt out
+# with --no-auto-update.
+#
 # The repository URL is remembered in /etc/espress0-repo/deploy.conf, so
 # --update needs no arguments after the first run. .env, data/ and backups/
 # are never touched by an update.
@@ -58,6 +64,7 @@ UPDATE_ONLY=0
 RESUME=0
 START_ONLY=0
 SKIP_FIREWALL=0
+AUTO_UPDATE=1
 PORT_GIVEN=0
 REPO_URL=""
 BRANCH=""
@@ -101,6 +108,8 @@ while [ $# -gt 0 ]; do
     --gemini-model)    GEMINI_MODEL="${2:-}"; shift ;;
     --gemini-model=*)  GEMINI_MODEL="${1#*=}" ;;
     --skip-firewall)   SKIP_FIREWALL=1 ;;
+    --no-auto-update)  AUTO_UPDATE=0 ;;
+    --auto-update)     AUTO_UPDATE=1 ;;
     -h|--help)         usage; exit 0 ;;
     *)                 die "Unknown option: $1 (try --help)" ;;
   esac
@@ -170,7 +179,7 @@ fi
 #     anything piped into a root shell goes through this helper.
 root_bash() { if [ -n "$SUDO" ]; then $SUDO -E bash -; else bash -; fi; }
 
-for f in backend/package.json frontend/package.json .env.example systemd/${APP_NAME}.service; do
+for f in backend/package.json frontend/package.json .env.example systemd/${APP_NAME}.service systemd/${APP_NAME}-updater.service; do
   [ -e "$f" ] || die "Missing $f - run this script from the repository root."
 done
 ok "Repository layout looks correct"
@@ -307,6 +316,113 @@ start_and_verify() {
 }
 
 # --- start-only mode ---------------------------------------------------------
+# --- automatic updates -------------------------------------------------------
+#
+# Installs the updater as its own systemd unit, generated from the REAL
+# installation directory (the shipped file hardcodes /opt/espress0s-repo, which
+# is wrong for e.g. /home/espress0/espress0s_repo), plus the narrow sudoers rule
+# it needs to restart the app unit.
+#
+# The updater refuses to deploy unless it can stop and restart the application,
+# so without these two pieces automatic updates simply decline to run - which is
+# safe, but useless. Installing them here is what makes `./espress0 update`
+# work unattended on a standard deployment.
+UPDATER_NAME="${APP_NAME}-updater"
+UPDATER_FILE="/etc/systemd/system/${UPDATER_NAME}.service"
+SUDOERS_FILE="/etc/sudoers.d/espress0-updater"
+
+install_auto_updater() {
+  step "Installing automatic updates"
+
+  local src="systemd/${APP_NAME}-updater.service"
+  if [ ! -f "$src" ]; then
+    warn "$src is missing - skipping automatic updates."
+    return 0
+  fi
+
+  local systemctl_bin
+  systemctl_bin="$(command -v systemctl || echo /usr/bin/systemctl)"
+
+  # 1. The sudoers rule: exactly three verbs on exactly one unit, for exactly
+  #    the service user. Anything broader would hand the app user general root.
+  local tmp_sudo
+  tmp_sudo="$(mktemp)"
+  cat > "$tmp_sudo" <<SUDO
+# Installed by deploy-ubuntu.sh for ${UPDATER_NAME}.
+# The updater stops the app before swapping files and starts it afterwards.
+# Restricted to three verbs on ${APP_NAME} only.
+${APP_USER} ALL=(root) NOPASSWD: ${systemctl_bin} stop ${APP_NAME}, ${systemctl_bin} stop ${APP_NAME}.service, ${systemctl_bin} restart ${APP_NAME}, ${systemctl_bin} restart ${APP_NAME}.service, ${systemctl_bin} start ${APP_NAME}, ${systemctl_bin} start ${APP_NAME}.service
+SUDO
+  chmod 440 "$tmp_sudo"
+
+  # A malformed sudoers file can lock the box out of sudo entirely, so it is
+  # validated before it is ever placed in /etc/sudoers.d.
+  if command -v visudo >/dev/null 2>&1; then
+    if ! $SUDO visudo -cf "$tmp_sudo" >/dev/null 2>&1; then
+      err "the generated sudoers rule failed validation - not installing it:"
+      $SUDO visudo -cf "$tmp_sudo" || true
+      rm -f "$tmp_sudo"
+      warn "Automatic updates will refuse to deploy until the updater can restart $APP_NAME."
+      return 0
+    fi
+    ok "sudoers rule validated with visudo -cf"
+  else
+    warn "visudo not found - installing the sudoers rule unvalidated."
+  fi
+  $SUDO cp "$tmp_sudo" "$SUDOERS_FILE"
+  $SUDO chown root:root "$SUDOERS_FILE"
+  $SUDO chmod 440 "$SUDOERS_FILE"
+  rm -f "$tmp_sudo"
+  ok "Installed $SUDOERS_FILE (stop/restart/start on $APP_NAME only)"
+
+  # 2. The unit, with every path taken from this installation.
+  local tmp_unit
+  tmp_unit="$(mktemp)"
+  sed -e "s|/opt/espress0s-repo|$ROOT_DIR|g" \
+      -e "s|^User=.*|User=$APP_USER|" \
+      -e "s|^Group=.*|Group=$APP_USER|" \
+      "$src" > "$tmp_unit"
+
+  # Pin the unit it manages, so detection never has to guess on this box.
+  if grep -q '^ExecStart=' "$tmp_unit" && ! grep -q -- '--service' "$tmp_unit"; then
+    sed -i "s|^\(ExecStart=.*auto-update.sh.*\)$|\1 --service $APP_NAME|" "$tmp_unit"
+  fi
+  sed -i "s|--service espress0-repo\b|--service $APP_NAME|g" "$tmp_unit"
+
+  if grep -q '/opt/espress0s-repo' "$tmp_unit"; then
+    err "the generated updater unit still contains /opt/espress0s-repo"
+    rm -f "$tmp_unit"
+    return 0
+  fi
+
+  $SUDO cp "$tmp_unit" "$UPDATER_FILE"
+  rm -f "$tmp_unit"
+  $SUDO chmod 644 "$UPDATER_FILE"
+  ok "Generated $UPDATER_FILE for $ROOT_DIR"
+
+  $SUDO systemctl daemon-reload
+  $SUDO systemctl enable "$UPDATER_NAME" >/dev/null 2>&1 || warn "could not enable $UPDATER_NAME"
+  if $SUDO systemctl restart "$UPDATER_NAME" 2>/dev/null; then
+    ok "Automatic updates active ($UPDATER_NAME)"
+  else
+    warn "Could not start $UPDATER_NAME - journalctl -u $UPDATER_NAME -n 50"
+  fi
+  printf '  %sPause updates:%s touch %s/data/.auto-update-disabled\n' "$B" "$R" "$ROOT_DIR"
+  printf '  %sDisable:%s      sudo systemctl disable --now %s\n' "$B" "$R" "$UPDATER_NAME"
+}
+
+remove_auto_updater_if_disabled() {
+  [ "$AUTO_UPDATE" -eq 0 ] || return 0
+  if [ -f "$UPDATER_FILE" ]; then
+    step "Disabling automatic updates (--no-auto-update)"
+    $SUDO systemctl disable --now "$UPDATER_NAME" >/dev/null 2>&1 || true
+    ok "Stopped and disabled $UPDATER_NAME (unit left in place)"
+  else
+    step "Skipping automatic updates (--no-auto-update)"
+    ok "The updater was not installed"
+  fi
+}
+
 if [ "$START_ONLY" -eq 1 ]; then
   [ -f .env ] || die ".env not found in $ROOT_DIR - run a full deploy first."
   if start_and_verify; then
@@ -474,10 +590,13 @@ if [ "$UPDATE_ONLY" -eq 1 ] && [ "$RESUME" -eq 0 ]; then
     REEXEC_ARGS=(--update --resume --repo "$REPO_URL" --branch "$BRANCH" --port "$APP_PORT")
     [ -n "$DOMAIN" ] && REEXEC_ARGS+=(--domain "$DOMAIN")
     [ "$WANT_HTTPS" -eq 1 ] && REEXEC_ARGS+=(--https)
+    # Without this the opt-out is silently forgotten by the second run.
+    [ "$AUTO_UPDATE" -eq 0 ] && REEXEC_ARGS+=(--no-auto-update)
     exec bash "$ROOT_DIR/${BASH_SOURCE[0]}" "${REEXEC_ARGS[@]}"
   fi
 
   run_post_update
+  if [ "$AUTO_UPDATE" -eq 1 ]; then install_auto_updater; else remove_auto_updater_if_disabled; fi
 
   printf '\n%s%s Update complete (%s) %s\n\n' "$B" "$GRN" "$AFTER" "$R"
   exit 0
@@ -487,6 +606,7 @@ fi
 if [ "$UPDATE_ONLY" -eq 1 ] && [ "$RESUME" -eq 1 ]; then
   step "Finishing update (post-sync)"
   run_post_update
+  if [ "$AUTO_UPDATE" -eq 1 ]; then install_auto_updater; else remove_auto_updater_if_disabled; fi
   start_and_verify || warn "Update applied, but the site is not answering - see the log lines above."
   printf '\n%s%s Update complete (%s) %s\n\n' "$B" "$GRN" \
     "$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo 'current build')" "$R"
@@ -653,6 +773,7 @@ else
   warn "'systemctl restart' failed (is systemd running?). Start it with: sudo systemctl start $APP_NAME"
 fi
 
+
 # --- 8. remember the update source -------------------------------------------
 step "Recording deployment source"
 if [ -z "$REPO_URL" ]; then detect_git_remote; fi
@@ -661,6 +782,13 @@ if [ -n "$REPO_URL" ]; then
   ok "Saved to $CONFIG_FILE - 'sudo $0 --update' will pull from it"
 else
   warn "No git remote and no --repo given; --update will need --repo <url>."
+fi
+
+# --- 8b. automatic updates ---------------------------------------------------
+if [ "$AUTO_UPDATE" -eq 1 ]; then
+  install_auto_updater
+else
+  remove_auto_updater_if_disabled
 fi
 
 # --- 9. nginx ----------------------------------------------------------------

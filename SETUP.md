@@ -49,38 +49,76 @@ sudo ./espress0 deploy --update --repo <other-url> # switch source
 
 #### Hands-free: the auto-updater
 
-On a **systemd deployment** (what deploy-ubuntu.sh sets up), run the updater
-next to the app and it pulls, rebuilds and restarts on every new commit:
+`./espress0 deploy` **installs and enables the updater by default**. It
+generates `systemd/espress0-repo-updater.service` from your actual installation
+directory (so `/home/espress0/espress0s_repo` works exactly like `/opt`), and
+installs a narrow sudoers rule — validated with `visudo -cf` before it is
+placed — granting the app user `stop`, `restart` and `start` on the app unit
+only. Opt out with:
 
 ```bash
-# once (e.g. from cron): checks and updates a single time
-sudo -u espress0 /opt/espress0s-repo/espress0 update --once --service espress0-repo
-
-# or permanent, as a service (unit ships in systemd/):
-sudo cp systemd/espress0-repo-updater.service /etc/systemd/system/
-sudo systemctl enable --now espress0-repo-updater
-# let the (unprivileged) updater control the app unit - it stops before the
-# swap and starts after, so all three verbs are needed, not just restart:
-echo 'espress0 ALL=(root) NOPASSWD: /bin/systemctl stop espress0-repo, /bin/systemctl restart espress0-repo, /bin/systemctl start espress0-repo' \
-  | sudo tee /etc/sudoers.d/espress0-updater
+sudo ./espress0 deploy --no-auto-update
 ```
 
-Behaviour notes: by default the next commit is cloned and built in
-`.auto-update/next` while the site keeps running, its migrations are rehearsed
-against a *copy* of the database, and only once that is proven does the updater
-stop the app, swap the files, run the real migrations, restart and poll
-`/api/health`. If the site does not come back, the previous commit **and** the
-previous `frontend/dist` are restored and the app is started again — so a bad
-release costs seconds rather than uptime. `git reset` cannot undo a gitignored
-build directory, which is why the snapshot exists.
+To run it by hand instead (cron, or a non-systemd box):
 
-`--mode pull` keeps the in-place fast-forward behaviour (local commits are never
-reset away, a dirty working tree postpones updates) with the same stop-first
-ordering and health check. `touch data/.auto-update-disabled` pauses everything.
-Restart target is explicit: `--service NAME` for systemd, `--tmux-session NAME`
-for the tmux runner, or `--stop-cmd`/`--start-cmd` for anything else (Docker, a
-custom supervisor). The current status is visible in the admin UI under
-**Admin -> Settings -> Auto-update** and in `data/.auto-update-status`.
+```bash
+sudo -u espress0 /opt/espress0s-repo/espress0 update --once
+```
+
+**The central rule: no verified restart target, no live deployment.**
+
+Swapping files under a process that keeps running leaves the code on disk and
+the code in memory on different commits — and a health check then passes
+against the *old* process, so the updater reports a success that never
+happened. To make that impossible:
+
+1. **The restart target is resolved before anything is modified.** Explicit
+   `--service` / `--tmux-session` / `--stop-cmd`+`--start-cmd` win; otherwise
+   the updater looks for an active systemd unit whose `WorkingDirectory` is
+   this checkout, then for an `espress0` tmux session with an `app`/`backend`
+   window. If it finds nothing it **stops before touching the live tree or the
+   database** and says exactly which options would fix it.
+2. **Stopping is mandatory.** A denied `systemctl stop`, a unit that is still
+   active afterwards, an unreachable tmux window or a failing custom stop
+   command all abort the deployment. Nothing is swapped, no migration runs and
+   `HEAD` does not move.
+3. **The running commit is verified, not just the port.** `/api/health` reports
+   the commit captured when Node started:
+
+   ```json
+   { "status": "ok", "service": "espress0's repo", "version": "1.0.0", "commit": "87785cd..." }
+   ```
+
+   The updater accepts a deploy only when that commit equals the one it just
+   deployed. Because the value is frozen at process start, an old process
+   cannot pass by virtue of the files having changed underneath it.
+4. **Rollback covers the database too.** The database is snapshotted
+   immediately before the live migration. If the app does not come back on the
+   new commit, the previous source, the previous `frontend/dist` and the
+   pre-update database are all restored, the app is started again, and the
+   updater confirms the *previous* commit is serving.
+
+For a deliberately offline, file-only deploy (you will restart the app
+yourself) pass `--no-restart`. That is the only way to get the old
+warn-and-continue behaviour, and it reports its state as
+`deployed-not-restarted` rather than claiming an update.
+
+Behaviour notes: by default the next commit is cloned and built in
+`.auto-update/next` while the site keeps running, and its migrations are
+rehearsed against a *copy* of the database, so a bad release is caught before
+the live tree is touched at all. `--mode pull` keeps the in-place fast-forward
+behaviour (local commits are never reset away, a dirty working tree postpones
+updates) under the same rules. `touch data/.auto-update-disabled` pauses
+everything.
+
+Status is written to `data/.auto-update-status` and includes the expected
+commit, the running commit, the selected supervisor, whether each of
+stop/migrate/start/verify succeeded, and the reason when a deployment was
+refused. `./espress0 status` renders it, and warns when the serving process is
+on a different commit from the checkout. The admin UI shows it read-only under
+**Admin -> Settings -> Auto-update**; letting a browser request drive systemd
+would expose privileged host operations for no real benefit.
 
 **AI backend (Barista).** Optional, and configurable without a deploy. Put a
 Gemini key in `.env` and the Ask page plus the admin drafter call it directly:
@@ -170,9 +208,12 @@ tmux attach -t espress0            # watch live logs (Ctrl-B D detaches)
 The updater window runs `scripts/auto-update.sh`: every 5 minutes it fetches
 the tracked branch, and if there is a new commit it clones and builds that
 commit under `.auto-update/next`, then stops the app, swaps the files in, runs
-migrations, restarts and health-checks it - rolling back if the site stays
-down. `--mode pull` keeps the older fast-forward-in-place behaviour. To run
-the updater in cron or systemd instead, see
+migrations, restarts it, and verifies that the process now answering
+`/api/health` reports the commit that was just deployed - rolling back the
+code, the build and the database if it does not. In the tmux runner the session
+itself is the restart target, so this works with no systemd at all.
+`--mode pull` keeps the older fast-forward-in-place behaviour under the same
+rules. To run the updater in cron or systemd instead, see
 `systemd/espress0-repo-updater.service` and `./espress0 update --help`.
 Live status is written to `data/.auto-update-status` and shows up in the admin
 UI (Settings -> Auto-update). `touch data/.auto-update-disabled` pauses it.

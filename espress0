@@ -20,7 +20,10 @@
 #                      stop | restart | status | logs
 #   update             Auto-updater: builds the next commit in .auto-update/next
 #                      while the site stays up, then stop -> swap -> migrate ->
-#                      restart -> health check, rolling back if it stays down.
+#                      restart -> verify the RUNNING commit, rolling back (code,
+#                      build and database) if it does not come up. Detects
+#                      systemd/tmux automatically and REFUSES to deploy if it
+#                      cannot restart the app — use --no-restart to override.
 #                      (--once for cron/single-shot, --interval N, --service NAME,
 #                       --branch NAME, --mode clone|pull — see ./espress0 update --help)
 #   deploy <args>      Full Ubuntu server deploy (root): systemd + nginx +
@@ -32,7 +35,8 @@
 #                      Gemini/OpenAI endpoint configured you do not need it.
 #   scan               Security probe of the RUNNING app on BASE_URL
 #   scan --full        Full audit: secrets, deps, tests, and HTTP probes
-#   test               Run the backend test suite
+#   test               Run the backend test suite + the deployment tests
+#                      (--backend for the Node tests only)
 #   status             Dashboard: git, ports, tmux session, updater state
 #   version            Print the current commit + branch
 #   help               This text
@@ -83,7 +87,17 @@ case "$CMD" in
     if [ "${1:-}" = "--full" ]; then shift; exec scripts/vuln-scan.sh "$@"; fi
     exec scripts/test-vuln.sh "$@" ;;
   test|tests)
-    run bash -c "cd backend && node --test tests/*.test.js" ;;
+    # Backend unit tests plus the shell-level deployment tests. The latter
+    # cover the auto-updater's "no verified restart target, no live deployment"
+    # rule, which no JS test can reach.
+    if [ "${1:-}" = "--backend" ]; then
+      run bash -c "cd backend && node --test tests/*.test.js"
+    fi
+    echo "== backend =="
+    (cd backend && node --test tests/*.test.js) || exit 1
+    echo
+    echo "== deployment / auto-update =="
+    exec bash tests/auto-update.test.sh ;;
   status)
     echo "── git ───────────────────────────────────────────"
     git log --oneline -1 2>/dev/null || echo "not a git checkout?"
@@ -106,9 +120,48 @@ case "$CMD" in
       echo "  PAUSED (data/.auto-update-disabled exists)"
     fi
     if [ -f data/.auto-update-status ]; then
-      cat data/.auto-update-status
+      python3 - <<'STATUSPY' 2>/dev/null || cat data/.auto-update-status
+import json
+try:
+    d = json.load(open('data/.auto-update-status'))
+except Exception:
+    raise SystemExit(1)
+print(f"  state:      {d.get('state','?')}")
+if d.get('message'):
+    print(f"  message:    {d['message']}")
+sup = d.get('supervisor') or 'none'
+tgt = d.get('target') or ''
+print(f"  supervisor: {sup}{' (' + tgt + ')' if tgt else ''}")
+exp, run = d.get('expectedCommit',''), d.get('runningCommit','')
+if exp or run:
+    print(f"  expected:   {exp[:7] or '-'}")
+    print(f"  running:    {run[:7] or 'unknown'}")
+    if exp and run and exp != run:
+        print("  [!] the serving process is NOT on the expected commit")
+steps = [f"{k}={d.get(k)}" for k in ('stopped','migrated','started','verified')
+         if d.get(k) not in (None, 'unknown')]
+if steps:
+    print("  steps:      " + ", ".join(steps))
+if d.get('reason'):
+    print(f"  reason:     {d['reason']}")
+print(f"  at:         {d.get('at','')}")
+STATUSPY
     else
       echo "  not running — start with './espress0 serve' or './espress0 update'"
+    fi
+    echo "── running process ───────────────────────────────"
+    ST_PORT2="$(awk -F= '/^PORT=/{print $2}' .env 2>/dev/null)"; ST_PORT2="${ST_PORT2:-3000}"
+    HEALTH="$(curl -fsS -m 3 "http://127.0.0.1:$ST_PORT2/api/health" 2>/dev/null || true)"
+    if [ -n "$HEALTH" ]; then
+      SERVING="$(printf '%s' "$HEALTH" | sed -n 's/.*"commit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+      DISK="$(git rev-parse HEAD 2>/dev/null)"
+      echo "  serving commit: ${SERVING:0:7}"
+      echo "  on-disk commit: ${DISK:0:7}"
+      if [ -n "$SERVING" ] && [ -n "$DISK" ] && [ "$SERVING" != "$DISK" ]; then
+        echo "  [!] the app is serving OLD code — restart it to pick up ${DISK:0:7}"
+      fi
+    else
+      echo "  the app is not answering on :$ST_PORT2"
     fi ;;
   version|--version|-v)
     git log --oneline -1 2>/dev/null && git rev-parse --abbrev-ref HEAD ;;

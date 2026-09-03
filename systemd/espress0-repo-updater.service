@@ -1,16 +1,25 @@
 [Unit]
-Description=espress0's repo - git auto-updater (staged build, swap, health-checked restart)
+Description=espress0's repo - git auto-updater (staged build, swap, health-verified restart)
 After=network-online.target espress0-repo.service
 Wants=network-online.target
 
 [Service]
 Type=simple
 # Runs as the app user. It stops the unit before swapping files and starts it
-# afterwards, so it needs the unit controlled from the outside; one sudoers line
-# grants that (see SETUP.md): stop, restart and start on espress0-repo.
+# afterwards, so it needs the unit controlled from the outside; one narrow
+# sudoers line grants exactly that (stop, restart and start on espress0-repo).
+# `deploy-ubuntu.sh` installs and validates that rule automatically.
+#
+# Every path below is a placeholder: deploy-ubuntu.sh regenerates this unit
+# from the real installation directory, so a checkout in /home/<user>/... is
+# just as supported as /opt. Do not assume /opt/espress0s-repo is where this
+# runs.
 User=espress0
 Group=espress0
 WorkingDirectory=/opt/espress0s-repo
+# --service is what makes the updater's restart target explicit. Without a
+# restart target the updater refuses to deploy at all, rather than swapping
+# files under a process that keeps serving the old commit.
 ExecStart=/opt/espress0s-repo/scripts/auto-update.sh --interval 300 --service espress0-repo
 Restart=always
 RestartSec=30

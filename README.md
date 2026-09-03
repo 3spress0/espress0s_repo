@@ -234,7 +234,9 @@ You can also attach directly to the tmux session:
 tmux attach -t espress0
 ```
 
-The repository also includes an automatic updater that can fetch new commits, build them, run migrations, restart the application, perform a health check, and roll back a failed update.
+The repository also includes an automatic updater that fetches new commits, builds them off to the side, runs migrations, restarts the application, and rolls back a failed update — including the database, which is snapshotted before forward-only migrations run.
+
+The updater will not deploy over an application it cannot restart. It detects the supervisor (systemd unit for this checkout, or a tmux session) before touching anything, and aborts if it finds none, because swapping files under a still-running process leaves the code on disk and the code in memory on different commits. It confirms success by reading the commit that `/api/health` reports — captured when the process started — so an old process cannot pass the check just because the files changed. Use `--no-restart` for a deliberate offline, file-only deploy.
 
 ## Project structure
 

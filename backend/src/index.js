@@ -10,6 +10,7 @@ import fsSync from 'fs';
 import pathSync from 'path';
 import { fileURLToPath } from 'url';
 import { getDb } from './db/index.js';
+import { COMMIT, COMMIT_SHORT, STARTED_AT } from './lib/buildInfo.js';
 
 // Routes
 import { itemsRoutes } from './routes/items.js';
@@ -209,8 +210,25 @@ fastify.addHook('onResponse', async (request, reply) => {
 
 getDb();
 
+/**
+ * Health, and the proof of which release is actually serving it.
+ *
+ * `commit` is captured when this process starts (see lib/buildInfo.js), not
+ * read per request, so an old Node process cannot answer with the new commit
+ * just because the files on disk were swapped underneath it. The auto-updater
+ * relies on exactly that: it compares this value to the commit it deployed and
+ * refuses to call an update successful until they match.
+ */
 fastify.get('/api/health', async () => {
-  return { status: 'ok', service: "espress0's repo", version: '1.0.0', timestamp: new Date().toISOString() };
+  return {
+    status: 'ok',
+    service: "espress0's repo",
+    version: '1.0.0',
+    commit: COMMIT,
+    commitShort: COMMIT_SHORT,
+    startedAt: STARTED_AT,
+    timestamp: new Date().toISOString(),
+  };
 });
 
 await fastify.register(async (api) => {
