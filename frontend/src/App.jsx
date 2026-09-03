@@ -19,7 +19,6 @@ import AdminStorage from './pages/admin/Storage';
 import AdminSettings from './pages/admin/Settings';
 import UserManager from './components/UserManager';
 import Encryption from './pages/Encryption';
-import Security from './pages/Security';
 import NotFound from './pages/NotFound';
 import Account from './pages/Account';
 import Monitoring from './components/Monitoring';
@@ -64,7 +63,6 @@ function AppContent() {
             <Route path="monitoring" element={<Monitoring />} />
           </Route>
           <Route path="/encryption" element={<Encryption />} />
-          <Route path="/security" element={<Security />} />
           <Route path="/monitoring" element={<div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"><Monitoring /></div>} />
           <Route path="*" element={<NotFound />} />
         </Routes>

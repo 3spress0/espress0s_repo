@@ -139,14 +139,9 @@ export default function Login() {
               </div>
             )}
 
-            <div className="flex items-center justify-center gap-4 text-xs">
+            <div className="flex items-center justify-center text-xs">
               <Link to="/" className="text-textMuted hover:text-primary transition-colors">
                 Back
-              </Link>
-              <span className="text-border">•</span>
-              <Link to="/security" className="text-primary hover:text-primaryHover flex items-center gap-1">
-                <Shield className="w-3 h-3" />
-                Security Tests
               </Link>
             </div>
           </div>
