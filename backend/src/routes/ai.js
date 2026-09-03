@@ -100,3 +100,4 @@ export async function aiRoutes(fastify) {
     return reply.code(201).send(newFaq);
   });
 }
+
