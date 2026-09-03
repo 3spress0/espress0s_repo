@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Coffee, Send, Database, AlertCircle, ExternalLink, Lightbulb, Search, Loader2, Sparkles } from 'lucide-react';
+import { Coffee, Send, Database, AlertCircle, ExternalLink, Lightbulb, Search, Sparkles } from 'lucide-react';
 import { aiApi, describeApiError } from '../lib/api';
+import { LoadingDots } from '../components/Loading';
 import StarryBackground from '../components/StarryBackground';
 
 export default function Ask() {
@@ -205,7 +206,7 @@ export default function Ask() {
                   <Coffee className="w-4 h-4 text-white" />
                 </div>
                 <div className="bg-surface border border-border rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-2 text-sm text-textMuted">
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <LoadingDots size={16} />
                   Barista is searching metadata...
                 </div>
               </div>

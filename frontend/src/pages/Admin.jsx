@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { Shield, Database, HardDrive, FolderTree, Folder, Users, Activity, ExternalLink, Settings, Archive, FileArchive } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import Loading from '../components/Loading';
 
 /**
  * Admin layout. Each area is its own route (see App.jsx) rather than a tab
@@ -30,7 +31,7 @@ export default function Admin() {
   }, [loading, isAdmin, navigate]);
 
   if (loading) {
-    return <div className="max-w-7xl mx-auto px-4 py-20 text-center text-textMuted">Loading...</div>;
+    return <Loading fullScreen text="Checking admin access…" />;
   }
 
   if (!isAdmin) {

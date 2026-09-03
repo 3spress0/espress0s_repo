@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
 import ItemCard from '../components/ItemCard';
+import Loading from '../components/Loading';
 import { searchApi, categoriesApi, foldersApi } from '../lib/api';
 
 const fileTypes = ['iso', 'exe', 'zip', 'msi', 'pdf', 'img', 'tar', 'gz', 'appimage', '7z'];
@@ -245,10 +246,13 @@ export default function Browse() {
 
       {/* Results */}
       {loading ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {[...Array(9)].map((_, i) => (
-            <div key={i} className="h-24 rounded-xl bg-surface border border-border animate-pulse" />
-          ))}
+        <div>
+          <Loading size={32} text="Searching the catalogue…" className="mb-6" />
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {[...Array(9)].map((_, i) => (
+              <div key={i} className="h-24 rounded-xl bg-surface border border-border animate-pulse" />
+            ))}
+          </div>
         </div>
       ) : results.length > 0 ? (
         <>

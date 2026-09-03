@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { History, RotateCcw, Loader2, AlertCircle, ChevronDown, ChevronUp, Link2 } from 'lucide-react';
 import { adminApi } from '../../lib/api';
 import { formatBytes } from '../../lib/utils';
+import { LoadingDots } from '../Loading';
 
 /**
  * Version history for an item page: every save snapshots the page (name,
@@ -68,7 +69,7 @@ export default function VersionHistory({ item, onRestored }) {
   }
 
   if (!versions) {
-    return <div className="text-sm text-textMuted flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading history...</div>;
+    return <div className="text-sm text-textMuted flex items-center gap-2"><LoadingDots size={16} /> Loading history...</div>;
   }
 
   if (versions.length === 0) {
@@ -126,7 +127,7 @@ export default function VersionHistory({ item, onRestored }) {
             {expanded === v.version_num && (
               <div className="px-4 pb-4 text-xs">
                 {!preview ? (
-                  <div className="text-textMuted flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading snapshot...</div>
+                  <div className="text-textMuted flex items-center gap-2"><LoadingDots size={14} /> Loading snapshot...</div>
                 ) : (
                   <div className="space-y-2 rounded-lg bg-surface border border-border p-3">
                     <div><span className="text-textMuted">Name:</span> <span className="text-textPrimary">{preview.name}</span></div>

@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { Shield, Eye, EyeOff, Lock, User, Mail, AlertCircle, Check, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import Captcha from '../components/Captcha';
+import { LoadingDots } from '../components/Loading';
 
 export default function Register() {
   const [formData, setFormData] = useState({
@@ -203,8 +204,8 @@ export default function Register() {
               </ul>
             </div>
 
-            <button type="submit" disabled={loading || (formData.password && formData.password !== formData.confirmPassword)} className="w-full py-3 bg-gradient-primary hover:bg-gradient-primary-hover disabled:opacity-50 text-white rounded-xl font-medium shadow-lg shadow-purple-500/20 transition-all">
-              {loading ? 'Creating account...' : 'Create Account'}
+            <button type="submit" disabled={loading || (formData.password && formData.password !== formData.confirmPassword)} className="w-full py-3 bg-gradient-primary hover:bg-gradient-primary-hover disabled:opacity-50 text-white rounded-xl font-medium shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-2">
+              {loading ? <><LoadingDots size={16} /> Creating account...</> : 'Create Account'}
             </button>
           </form>
 

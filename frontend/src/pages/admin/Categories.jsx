@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Loader2, AlertCircle, Check } from 'lucide-react';
+import { AlertCircle, Check } from 'lucide-react';
 import { categoriesApi } from '../../lib/api';
+import Loading from '../../components/Loading';
 
 /**
  * Read-only category overview. Categories drive the browse filters and the
@@ -9,12 +10,14 @@ import { categoriesApi } from '../../lib/api';
  */
 export default function AdminCategories() {
   const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
     categoriesApi.list()
       .then(d => setCategories(d.categories || []))
-      .catch(e => setError(e.response?.data?.error || 'Failed to load categories'));
+      .catch(e => setError(e.response?.data?.error || 'Failed to load categories'))
+      .finally(() => setLoading(false));
   }, []);
 
   if (error) {
@@ -25,8 +28,16 @@ export default function AdminCategories() {
     );
   }
 
+  if (loading) {
+    return <Loading size={28} text="Loading categories..." />;
+  }
+
   if (!categories.length) {
-    return <div className="text-sm text-textMuted flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading categories...</div>;
+    return (
+      <p className="text-sm text-textMuted">
+        No categories yet. They are created by the catalogue seed and appear here once items use them.
+      </p>
+    );
   }
 
   return (

@@ -7,6 +7,7 @@ import { ItemPlaceholder } from '../components/Logo';
 import ItemEditor from '../components/admin/ItemEditor';
 import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
+import Loading, { LoadingDots } from '../components/Loading';
 
 export default function ItemDetail() {
   const { slug } = useParams();
@@ -89,6 +90,7 @@ export default function ItemDetail() {
   if (loading) {
     return (
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Loading size={36} text="Loading this page…" className="mb-8" />
         <div className="animate-pulse space-y-6">
           <div className="h-8 bg-surface rounded w-1/4" />
           <div className="h-64 bg-surface rounded-3xl" />
@@ -226,7 +228,7 @@ export default function ItemDetail() {
             <div className="md:w-72 flex-shrink-0 space-y-3">
               {authLoading ? (
                 <div className="glass rounded-2xl border border-white/5 p-4 text-center">
-                  <img src="/loading_dots_white.gif" alt="loading" className="w-8 h-8 mx-auto mb-2 opacity-70" />
+                  <LoadingDots size={32} className="mb-2" />
                   <p className="text-xs text-textMuted">Checking login...</p>
                 </div>
               ) : !isAuthenticated ? (

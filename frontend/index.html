@@ -37,6 +37,37 @@
       } catch (e) { /* no stored theme, the CSS defaults apply */ }
     </script>
     <div id="root"></div>
+    <!--
+      Boot screen: shown from first paint until React commits its first frame
+      (see src/main.jsx). Without it a cold load is a blank page, because the
+      bundle is ~570 kB and has to parse before anything renders. It reuses the
+      site's own loading dots so the wait looks like every other wait here, and
+      inherits the body colour the theme script above already set.
+    -->
+    <div id="boot">
+      <img src="/loading_dots_white.gif" alt="" width="44" height="44" />
+      <span>Loading espress0's repo</span>
+    </div>
+    <style>
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        font-family: Inter, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+        font-size: 13px;
+        font-weight: 500;
+        pointer-events: none;
+      }
+      #boot img { opacity: .8 }
+      #boot span { opacity: .55; animation: boot-pulse 1.6s ease-in-out infinite }
+      @keyframes boot-pulse { 0%, 100% { opacity: .55 } 50% { opacity: .3 } }
+      @media (prefers-reduced-motion: reduce) { #boot span { animation: none } }
+    </style>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

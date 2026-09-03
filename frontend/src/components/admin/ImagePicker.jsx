@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Upload, Link2, Image as ImageIcon, X, Check, Loader2 } from 'lucide-react';
 import { uploadsApi } from '../../lib/api';
+import { LoadingDots } from '../Loading';
 
 /**
  * Image field for the item editor.
@@ -170,7 +171,7 @@ export default function ImagePicker({ label, value, onChange, hint }) {
       {tab === 'library' && (
         <div>
           {libraryLoading ? (
-            <div className="text-sm text-textMuted flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
+            <div className="text-sm text-textMuted flex items-center gap-2"><LoadingDots size={16} /> Loading library...</div>
           ) : library.length === 0 ? (
             <p className="text-sm text-textMuted">Nothing uploaded yet. Use the Upload tab to add images.</p>
           ) : (

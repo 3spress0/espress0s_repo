@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { RefreshCw, Shield, Calculator, Eye } from 'lucide-react';
 import api from '../lib/api';
+import { LoadingDots } from './Loading';
 
 export default function Captcha({ onVerified, onChange, required = true }) {
   const [captcha, setCaptcha] = useState(null);
@@ -42,8 +43,8 @@ export default function Captcha({ onVerified, onChange, required = true }) {
 
   if (loading) {
     return (
-      <div className="glass rounded-xl p-4 border border-white/5 animate-pulse">
-        <div className="h-12 bg-surface rounded" />
+      <div className="glass rounded-xl p-4 border border-white/5 flex items-center justify-center gap-2 text-sm text-textMuted">
+        <LoadingDots size={16} /> Preparing challenge…
       </div>
     );
   }

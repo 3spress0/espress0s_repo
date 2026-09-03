@@ -4,6 +4,7 @@ import { Shield, Eye, EyeOff, Lock, User, AlertCircle, Bug } from 'lucide-react'
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import Captcha from '../components/Captcha';
+import { LoadingDots } from '../components/Loading';
 
 export default function Login() {
   const { get } = useSettings();
@@ -103,9 +104,9 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-gradient-primary hover:bg-gradient-primary-hover disabled:opacity-50 text-white rounded-xl font-medium shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 transition-all"
+              className="w-full py-3 bg-gradient-primary hover:bg-gradient-primary-hover disabled:opacity-50 text-white rounded-xl font-medium shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 transition-all flex items-center justify-center gap-2"
             >
-              {loading ? 'Signing in...' : 'Sign In'}
+              {loading ? <><LoadingDots size={16} /> Signing in...</> : 'Sign In'}
             </button>
           </form>
 

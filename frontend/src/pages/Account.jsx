@@ -7,6 +7,7 @@ import StarryBackground from '../components/StarryBackground';
 import ThemePicker from '../components/ThemePicker';
 import { useTheme } from '../context/ThemeContext';
 import Logo from '../components/Logo';
+import { LoadingPanel } from '../components/Loading';
 
 export default function Account() {
   const themeCtx = useTheme();
@@ -145,12 +146,7 @@ export default function Account() {
   };
 
   if (authLoading || loading) {
-    return (
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
-        <img src="/loading_dots_white.gif" alt="Loading" className="w-12 h-12 mx-auto mb-4 opacity-70" />
-        <p className="text-textMuted">Loading account...</p>
-      </div>
-    );
+    return <LoadingPanel text="Loading account…" size={48} />;
   }
 
   if (!user) return null;
