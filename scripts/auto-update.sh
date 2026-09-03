@@ -192,7 +192,9 @@ start_app() {
   elif [ -n "$SERVICE" ]; then
     log "starting systemd service: $SERVICE"
     systemctl restart "$SERVICE" 2>/dev/null || sudo -n systemctl restart "$SERVICE" 2>/dev/null || {
-      log "could not restart $SERVICE - grant it with: echo \"$(id -un) ALL=(root) NOPASSWD: $(command -v systemctl) restart $SERVICE\" > /etc/sudoers.d/espress0-updater"
+      log "could not restart $SERVICE - grant the three verbs it needs with:"
+      log "  echo \"$(id -un) ALL=(root) NOPASSWD: $(command -v systemctl) stop $SERVICE, $(command -v systemctl) restart $SERVICE, $(command -v systemctl) start $SERVICE\" \\"
+      log "    > /etc/sudoers.d/espress0-updater   (visudo -cf it before installing)"
       return 1
     }
   elif tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
@@ -275,11 +277,40 @@ carry_runtime_state() {
   return 0
 }
 
-# Install in the staged tree only if the dependency manifests actually moved.
-# When they did not, the live node_modules survives the swap untouched and the
-# staging copy is just for the build.
 deps_changed() {
   ! git diff --quiet "$1..$2" -- backend/package.json backend/package-lock.json frontend/package.json frontend/package-lock.json 2>/dev/null
+}
+
+# A fresh clone has no node_modules, so installing in the staged tree means a
+# full `npm install` of both packages on EVERY cycle: minutes of CPU on a small
+# VM, and a native rebuild (better-sqlite3) that has nothing to do with the
+# release. When the manifests are identical between the running commit and the
+# incoming one, the staged tree does not need its own dependency set - point it
+# at the installed one and let the build and the migration rehearsal use it.
+# Only a symlink is created, and it is dropped again before the swap, so the live
+# tree is never written through it - the only thing a build puts in node_modules
+# is a regenerable .vite cache. A tree that already has real dependencies
+# installed is left alone rather than shadowed by a link.
+reuse_live_deps() {
+  local pkg
+  for pkg in backend frontend; do
+    [ -d "$ROOT/$pkg/node_modules" ] || continue
+    [ -d "$STAGE_DIR/$pkg" ] || continue
+    if [ -e "$STAGE_DIR/$pkg/node_modules" ] && [ ! -L "$STAGE_DIR/$pkg/node_modules" ] \
+       && [ -n "$(ls -A "$STAGE_DIR/$pkg/node_modules" 2>/dev/null)" ]; then
+      continue
+    fi
+    ln -sfn "$ROOT/$pkg/node_modules" "$STAGE_DIR/$pkg/node_modules"
+  done
+  log "reuse: staged tree points at the live node_modules (manifests unchanged)"
+}
+
+release_live_deps() {
+  local pkg
+  for pkg in backend frontend; do
+    [ -L "$STAGE_DIR/$pkg/node_modules" ] && rm -f -- "$STAGE_DIR/$pkg/node_modules"
+  done
+  return 0
 }
 
 install_deps_in() { # <dir>
@@ -301,7 +332,7 @@ swap_tree() {
   if command -v rsync >/dev/null 2>&1; then
     rsync -a --delete \
       --exclude '.git/' --exclude "$STAGE_ROOT/" --exclude 'data/' --exclude 'backups/' \
-      --exclude 'uploads/' --exclude '.env' --exclude 'node_modules/' \
+      --exclude 'uploads/' --exclude '.env' --exclude 'node_modules' \
       "$STAGE_DIR/" "$ROOT/" || return 1
   else
     ( cd "$STAGE_DIR" && tar cf - \
@@ -395,6 +426,11 @@ deploy_via_clone() { # <local_sha> <remote_sha>
   fi
 
   carry_runtime_state
+  if deps_changed "$1" "$2"; then
+    log "dependency manifests changed - staged tree gets its own install"
+  else
+    reuse_live_deps
+  fi
   if ! install_deps_in "$STAGE_DIR"; then
     write_state error "Dependency install failed in the staged tree - live tree untouched"
     return 1
@@ -410,6 +446,7 @@ deploy_via_clone() { # <local_sha> <remote_sha>
   fi
 
   # Everything above ran with the site up and the live tree untouched.
+  release_live_deps
   log "staged build is good - stopping the app to swap"
   stop_app
   save_dist_snapshot

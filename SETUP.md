@@ -59,8 +59,9 @@ sudo -u espress0 /opt/espress0s-repo/espress0 update --once --service espress0-r
 # or permanent, as a service (unit ships in systemd/):
 sudo cp systemd/espress0-repo-updater.service /etc/systemd/system/
 sudo systemctl enable --now espress0-repo-updater
-# let the (unprivileged) updater restart the app:
-echo 'espress0 ALL=(root) NOPASSWD: /bin/systemctl restart espress0-repo' \
+# let the (unprivileged) updater control the app unit - it stops before the
+# swap and starts after, so all three verbs are needed, not just restart:
+echo 'espress0 ALL=(root) NOPASSWD: /bin/systemctl stop espress0-repo, /bin/systemctl restart espress0-repo, /bin/systemctl start espress0-repo' \
   | sudo tee /etc/sudoers.d/espress0-updater
 ```
 
@@ -139,9 +140,11 @@ tmux attach -t espress0            # watch live logs (Ctrl-B D detaches)
 ```
 
 The updater window runs `scripts/auto-update.sh`: every 5 minutes it fetches
-the tracked branch, and if there is a new commit it pulls (fast-forward only),
-reinstalls what changed, rebuilds the frontend and restarts the app. To bike
-the updater into cron or systemd instead, see
+the tracked branch, and if there is a new commit it clones and builds that
+commit under `.auto-update/next`, then stops the app, swaps the files in, runs
+migrations, restarts and health-checks it - rolling back if the site stays
+down. `--mode pull` keeps the older fast-forward-in-place behaviour. To run
+the updater in cron or systemd instead, see
 `systemd/espress0-repo-updater.service` and `./espress0 update --help`.
 Live status is written to `data/.auto-update-status` and shows up in the admin
 UI (Settings -> Auto-update). `touch data/.auto-update-disabled` pauses it.

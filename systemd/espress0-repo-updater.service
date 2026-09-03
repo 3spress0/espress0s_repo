@@ -1,12 +1,13 @@
 [Unit]
-Description=espress0's repo - git auto-updater (pull + rebuild + restart)
+Description=espress0's repo - git auto-updater (staged build, swap, health-checked restart)
 After=network-online.target espress0-repo.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Runs as the app user; it cannot restart the systemd service itself without
-# one sudoers line (optional):   espress0 ALL=(root) NOPASSWD: /bin/systemctl restart espress0-repo
+# Runs as the app user. It stops the unit before swapping files and starts it
+# afterwards, so it needs the unit controlled from the outside; one sudoers line
+# grants that (see SETUP.md): stop, restart and start on espress0-repo.
 User=espress0
 Group=espress0
 WorkingDirectory=/opt/espress0s-repo
