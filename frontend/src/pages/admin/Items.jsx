@@ -119,7 +119,15 @@ export default function AdminItems() {
     setError('');
     const t = setTimeout(async () => {
       try {
-        const res = await catalogAdminApi.search({ ...filters, limit: PAGE_SIZE });
+        // `folder: 'all'` is this page's sentinel for "every folder" (the
+        // default option of the folder select), so it must not reach the
+        // server's slug filter.
+        const { folder, ...rest } = filters;
+        const res = await catalogAdminApi.search({
+          ...rest,
+          ...(folder && folder !== 'all' ? { folder } : null),
+          limit: PAGE_SIZE,
+        });
         if (cancelled) return;
         setItems(res.items || []);
         setTotal(res.total || 0);
@@ -132,6 +140,14 @@ export default function AdminItems() {
     }, 250);
     return () => { cancelled = true; clearTimeout(t); };
   }, [filters]);
+
+  // A ticked row stayed ticked across a filter change, and the bulk bar only
+  // reports "N selected" — so a batch could quietly include pages that are no
+  // longer on screen or no longer match the filter. Changing the filter set
+  // clears the selection; paging within the same result set keeps it, so a
+  // batch can still be built across pages.
+  const filterSignature = JSON.stringify({ ...filters, page: '' });
+  useEffect(() => { setSelected([]); }, [filterSignature]);
 
   useEffect(() => {
     catalogAdminApi.facets().then(setFacets).catch(() => {});
@@ -169,6 +185,16 @@ export default function AdminItems() {
   // came back.
   const visible = items;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // `items` is only the current page, so an empty array means either "the
+  // catalogue is empty" or "this filter matched nothing" - two states that want
+  // different advice. `total` and the filter set tell them apart.
+  const isNarrowed = useMemo(
+    () => Object.entries(DEFAULT_FILTERS).some(([key, fallback]) =>
+      key !== 'page' && key !== 'sort' && key !== 'order'
+      && String(filters[key] ?? '') !== String(fallback ?? '')),
+    [filters],
+  );
 
   const allVisibleSelected = visible.length > 0 && visible.every(i => selected.includes(i.id));
 
@@ -271,11 +297,16 @@ export default function AdminItems() {
       notify('error', `Enter a value for ${label}`);
       return;
     }
-    // The endpoint takes the new value under a generic `value` key (folder
-    // keeps its own `folderId` so null can mean "remove from folder").
+    // Most actions take the new value under a generic `value` key, but two of
+    // them read a typed key instead: `folderId` (so null can mean "remove from
+    // folder") and `categoryId`. Sending the category under `value` made the
+    // server apply NULL and wipe the category from every selected page while
+    // still reporting success.
     const payload = field === 'folder'
       ? { folderId: trimmed === 'none' ? null : Number(trimmed) }
-      : { value: trimmed };
+      : field === 'category'
+        ? { categoryId: Number(trimmed) }
+        : { value: trimmed };
     runBulk(field, payload, label);
   };
 
@@ -311,6 +342,14 @@ export default function AdminItems() {
       setBusy(false);
     }
   };
+
+  // Shared by the filter panel's "Clear filters" and the empty-state button:
+  // both drop the whole filter set and, with it, the query string that seeded
+  // it (deep links from the dashboard live in the URL).
+  const clearFilters = useCallback(() => {
+    setFilters(DEFAULT_FILTERS);
+    setSearchParams(new URLSearchParams(), { replace: true });
+  }, [setSearchParams]);
 
   const showEditor = creating || !!editing;
 
@@ -390,10 +429,7 @@ export default function AdminItems() {
           if (next.q) sp.set('q', next.q); else sp.delete('q');
           setSearchParams(sp, { replace: true });
         }}
-        onReset={() => {
-          setFilters(DEFAULT_FILTERS);
-          setSearchParams(new URLSearchParams(), { replace: true });
-        }}
+        onReset={clearFilters}
         resultCount={total}
         loading={loading}
       />
@@ -576,19 +612,29 @@ export default function AdminItems() {
                 <tr>
                   <td colSpan={9} className="p-10 text-center">
                     <p className="text-sm text-textSecondary mb-1">
-                      {items.length === 0 ? 'No file pages yet.' : 'No pages match this filter.'}
+                      {isNarrowed ? 'No pages match this filter.' : 'No file pages yet.'}
                     </p>
                     <p className="text-xs text-textMuted mb-4">
-                      {items.length === 0
-                        ? 'Start from a template — it fills in the type, tags and a description outline for you.'
-                        : 'Try a different filter or clear the search.'}
+                      {isNarrowed
+                        ? 'Try a different filter or clear the search.'
+                        : 'Start from a template — it fills in the type, tags and a description outline for you.'}
                     </p>
-                    <button
-                      onClick={() => { setCreating(true); setEditing(null); }}
-                      className="px-4 py-2 bg-gradient-primary text-white rounded-xl text-sm font-medium inline-flex items-center gap-2"
-                    >
-                      <Plus className="w-4 h-4" /> Create a page
-                    </button>
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => { setCreating(true); setEditing(null); }}
+                        className="px-4 py-2 bg-gradient-primary text-white rounded-xl text-sm font-medium inline-flex items-center gap-2"
+                      >
+                        <Plus className="w-4 h-4" /> Create a page
+                      </button>
+                      {isNarrowed && (
+                        <button
+                          onClick={clearFilters}
+                          className="px-4 py-2 bg-surface border border-border rounded-xl text-sm text-textSecondary hover:border-primary/30"
+                        >
+                          Clear filters
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )}

@@ -55,6 +55,8 @@ export default function AdminSettings() {
   const [originals, setOriginals] = useState({});
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null);
+  const [confirmReset, setConfirmReset] = useState(null);
+  const [resetting, setResetting] = useState(null);
 
   useEffect(() => {
     adminApi.settings()
@@ -94,12 +96,22 @@ export default function AdminSettings() {
   };
 
   const resetOne = async (key) => {
+    setResetting(key);
+    setStatus(null);
     try {
       const d = await adminApi.resetSetting(key);
-      setSettings(s => ({ ...s, ...d.updated }));
+      const updated = d.updated || {};
+      setSettings(s => ({ ...s, ...updated }));
+      // Keep the dirty marker in step: a reset value is the new saved value,
+      // not an unsaved edit the admin still has to press Save for.
+      setOriginals(o => ({ ...o, ...updated }));
       setStatus({ type: 'ok', text: `Reset ${key} to its default.` });
+      setConfirmReset(null);
+      await refresh(); // the running site reads these too
     } catch (e) {
       setStatus({ type: 'error', text: e.response?.data?.error || 'Reset failed' });
+    } finally {
+      setResetting(null);
     }
   };
 
@@ -210,15 +222,48 @@ export default function AdminSettings() {
                 </div>
                 <div>
                   {renderControl(m)}
-                  {settings[m.key] !== originals[m.key] && (
-                    <button
-                      type="button"
-                      onClick={() => set(m.key, originals[m.key])}
-                      className="mt-1.5 text-xs text-textMuted hover:text-primary flex items-center gap-1"
-                    >
-                      <RotateCcw className="w-3 h-3" /> Undo
-                    </button>
-                  )}
+                  <div className="mt-1.5 flex items-center gap-3">
+                    {settings[m.key] !== originals[m.key] && (
+                      <button
+                        type="button"
+                        onClick={() => set(m.key, originals[m.key])}
+                        className="text-xs text-textMuted hover:text-primary flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3 h-3" /> Undo
+                      </button>
+                    )}
+                    {/* Nothing else in the UI reached `resetOne`, so
+                        POST /admin/settings/reset/:key was unreachable and a
+                        setting could only be restored by hand. Two-step so a
+                        mis-click cannot wipe an API key. */}
+                    {confirmReset === m.key ? (
+                      <span className="flex items-center gap-2 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => resetOne(m.key)}
+                          disabled={resetting === m.key}
+                          className="text-red-400 hover:underline disabled:opacity-50"
+                        >
+                          {resetting === m.key ? 'Resetting…' : 'Confirm reset'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmReset(null)}
+                          className="text-textMuted hover:text-textPrimary"
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmReset(m.key)}
+                        className="text-xs text-textMuted hover:text-primary flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3 h-3" /> Reset to default
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

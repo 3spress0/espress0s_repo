@@ -359,7 +359,13 @@ export async function adminRoutes(fastify) {
     if (action === 'delete') {
       // No value to validate; handled below inside its own transaction.
     } else if (action === 'folder') {
-      const fid = folderId === null || folderId === undefined || folderId === '' ? null : Number(folderId);
+      // Same shape as `category` below: an explicit null means "take it out of
+      // its folder", a missing key is a caller bug, not a request to clear.
+      const rawFolder = folderId !== undefined ? folderId : value;
+      if (rawFolder === undefined) {
+        return reply.code(400).send({ error: 'folder needs folderId (or value); send null to remove the folder' });
+      }
+      const fid = rawFolder === null || rawFolder === '' ? null : Number(rawFolder);
       if (fid !== null && (!Number.isInteger(fid) || fid <= 0)) {
         return reply.code(400).send({ error: 'folderId must be a positive integer or null' });
       }
@@ -373,7 +379,18 @@ export async function adminRoutes(fastify) {
       args = [fid, now];
       summary = { folder: folderName };
     } else if (action === 'category') {
-      const cid = categoryId === null || categoryId === undefined || categoryId === '' ? null : Number(categoryId);
+      // `value` is the generic key the admin UI sends for every field action;
+      // `categoryId` is the explicit one. Accepting only categoryId meant a
+      // request carrying `value` fell through to "null" and silently *cleared*
+      // the category on every selected page while reporting success.
+      const rawCategory = categoryId !== undefined ? categoryId : value;
+      // Naming the action without a value used to fall through to NULL and
+      // silently strip the category from every selected page while reporting
+      // success. Clearing is a deliberate act: ask for it with null.
+      if (rawCategory === undefined) {
+        return reply.code(400).send({ error: 'category needs categoryId (or value); send null to clear the category' });
+      }
+      const cid = rawCategory === null || rawCategory === '' ? null : Number(rawCategory);
       if (cid !== null && (!Number.isInteger(cid) || cid <= 0)) {
         return reply.code(400).send({ error: 'categoryId must be a positive integer or null' });
       }
