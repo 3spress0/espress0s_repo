@@ -5,6 +5,7 @@ import { authenticate, optionalAuthenticate, requireAdmin } from '../middleware/
 import { storageManager } from '../services/storage/index.js';
 import { encryptionService, ENCRYPTED_ITEM_FIELDS } from '../services/encryptionService.js';
 import { recordItemVersion } from '../services/versionService.js';
+import { getFavorite, countItemFavorites, getPublicFavoritedBy } from '../services/favoritesService.js';
 
 function decryptItem(item) {
   if (!item) return item;
@@ -186,6 +187,11 @@ export async function itemsRoutes(fastify) {
     const links = getItemLinks(item.id);
     const availableLinks = links.filter(l => !l.is_down && l.status !== 'down');
 
+    // Favourite state for the signed-in viewer. Anonymous visitors get false
+    // rather than an error, so the star can render as "not starred" instead of
+    // the page having to branch on auth before it knows what to draw.
+    const ownFavorite = request.user ? getFavorite(request.user.id, item.id) : null;
+
     return {
       ...decrypted,
       file_size_formatted: formatBytes(decrypted.file_size),
@@ -198,6 +204,15 @@ export async function itemsRoutes(fastify) {
       available_links_count: availableLinks.length,
       has_multiple_mirrors: links.length > 1,
       has_down_mirrors: links.some(l => l.is_down),
+      // How many accounts starred this file, and whether this visitor is one
+      // of them. The count is public; `favorite_is_public` is the viewer's own
+      // row, so it only ever describes their own choice.
+      favorites_count: countItemFavorites(item.id),
+      // Only the accounts that made their star public, so this row is a set of
+      // links to profiles people chose to publish - not a list of everyone.
+      shared_by: getPublicFavoritedBy(item.id),
+      is_favorite: Boolean(ownFavorite),
+      favorite_is_public: Boolean(ownFavorite?.favorite?.is_public),
       primary_download: availableLinks.find(l => l.is_primary) || availableLinks[0] || links.find(l => l.is_primary) || links[0] || null,
       encryption: { atRest: 'storage_path, download_url, external_url, license_notes encrypted', version: item.encryption_version || 'v1' }
     };

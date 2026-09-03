@@ -34,6 +34,10 @@ const ALL_TABLES = [
   'site_settings',
   'users',
   'uploads',
+  // Last: it references both users and items, so it goes back after them.
+  // (Catalogue-only rollbacks keep it untouched on purpose - the item ids are
+  // restored as they were, so everyone's stars still point somewhere real.)
+  'favorites',
 ];
 
 /** A snapshot path is only valid if it stays inside the backup directory. */
@@ -137,6 +141,17 @@ export function restoreFromSnapshot(filePath, options = {}) {
       };
     }
 
+    // Favourites belong to users, not to the catalogue - but every row points
+    // at an item, and this rollback deletes and re-creates the item rows.
+    // `PRAGMA foreign_keys` cannot be switched off inside a transaction (it is
+    // a no-op there), so the ON DELETE CASCADE fires and would take everyone's
+    // stars with it. Keep them aside and put back the ones whose file and
+    // account still exist afterwards. An 'all' restore does not need this:
+    // favourites come from the snapshot like every other table.
+    const keepFavorites = scope === 'catalogue'
+      ? db.prepare('SELECT user_id, item_id, is_public, created_at FROM favorites').all()
+      : [];
+
     const restored = {};
     // One transaction for the whole rollback: a failure partway through leaves
     // the database untouched rather than half-restored.
@@ -153,6 +168,20 @@ export function restoreFromSnapshot(filePath, options = {}) {
           const list = columns.map((c) => `"${c}"`).join(', ');
           db.prepare(`INSERT INTO ${table} (${list}) SELECT ${list} FROM restore_src.${table}`).run();
           restored[table] = db.prepare(`SELECT COUNT(*) c FROM ${table}`).get().c;
+        }
+
+        if (keepFavorites.length) {
+          const itemExists = db.prepare('SELECT 1 FROM items WHERE id = ?');
+          const userExists = db.prepare('SELECT 1 FROM users WHERE id = ?');
+          const reinsert = db.prepare(
+            'INSERT OR IGNORE INTO favorites (user_id, item_id, is_public, created_at) VALUES (?, ?, ?, ?)'
+          );
+          for (const fav of keepFavorites) {
+            // A file the rollback removed leaves no favourite behind - the row
+            // would dangle, and listing it would drop it silently anyway.
+            if (!itemExists.get(fav.item_id) || !userExists.get(fav.user_id)) continue;
+            reinsert.run(fav.user_id, fav.item_id, fav.is_public, fav.created_at);
+          }
         }
       } finally {
         db.pragma('foreign_keys = ON');

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Users, Shield, Edit, Trash2, Search, Plus, AlertTriangle, Lock, Mail, Crown, Eye, UserCheck } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Users, Shield, Edit, Trash2, Search, Plus, AlertTriangle, Lock, Mail, Crown, Eye, UserCheck, ExternalLink } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import { LoadingDots } from './Loading';
@@ -250,6 +251,15 @@ export default function UserManager() {
                           <option value="editor">editor</option>
                           <option value="admin">admin</option>
                         </select>
+                        {/* The visitor-facing side of the account: what this
+                            user has chosen to share. */}
+                        <Link
+                          to={`/u/${user.username}`}
+                          title={`View ${user.username}'s public profile`}
+                          className="p-2 hover:bg-surfaceHover rounded-lg text-textMuted hover:text-primary"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </Link>
                         <button
                           onClick={() => { setEditingUser(user); setFormData({ username: user.username, email: user.email, password: '', role: user.role }); }}
                           className="p-2 hover:bg-surfaceHover rounded-lg text-textMuted hover:text-primary"

@@ -17,8 +17,12 @@ class CaptchaService {
     this.expiryMs = 5 * 60 * 1000; // 5 min expiry
     this.maxAttempts = 3;
 
-    // Cleanup expired every 5 min
-    setInterval(() => this.cleanup(), this.cleanupInterval);
+    // Cleanup expired every 5 min. unref() because this is a best-effort
+    // sweep: it must never be the reason a Node process stays alive when the
+    // real work is finished (a test run, a one-off CLI call that imports the
+    // auth routes).
+    const cleanupTimer = setInterval(() => this.cleanup(), this.cleanupInterval);
+    if (typeof cleanupTimer.unref === 'function') cleanupTimer.unref();
 
     this.type = process.env.CAPTCHA_TYPE || 'math'; // math, svg, turnstile, hcaptcha, disabled
     this.turnstileSecret = process.env.TURNSTILE_SECRET_KEY || '';

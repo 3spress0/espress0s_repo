@@ -40,6 +40,11 @@ export function getDb() {
     if (!hasTheme) dbInstance.exec("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'");
     const hasAuthVersion = userCols.some(c => c.name === 'auth_version');
     if (!hasAuthVersion) dbInstance.exec("ALTER TABLE users ADD COLUMN auth_version INTEGER DEFAULT 0");
+    // Favourites default to private; this only stores the user's chosen
+    // starting point for new ones. Added with ALTER as well as in SCHEMA_SQL
+    // because existing databases were created before the column existed.
+    const hasFavDefault = userCols.some(c => c.name === 'favorites_default_public');
+    if (!hasFavDefault) dbInstance.exec("ALTER TABLE users ADD COLUMN favorites_default_public INTEGER NOT NULL DEFAULT 0");
 
     const itemCols = dbInstance.prepare("PRAGMA table_info(items)").all();
     const hasItemEncVersion = itemCols.some(c => c.name === 'encryption_version');

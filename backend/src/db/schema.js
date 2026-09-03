@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS users (
   avatar_url TEXT, -- encrypted
   bio TEXT, -- encrypted
   theme TEXT DEFAULT 'dark' CHECK(theme IN ('dark', 'light', 'auto')),
+  -- Profile default for new favourites. 0 = private (the safe default), 1 =
+  -- public. Individual favourites can still be flipped either way.
+  favorites_default_public INTEGER NOT NULL DEFAULT 0,
   encryption_version TEXT DEFAULT 'v1',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -261,6 +264,27 @@ CREATE TABLE IF NOT EXISTS item_relations (
 
 CREATE INDEX IF NOT EXISTS idx_item_relations_item ON item_relations(item_id);
 CREATE INDEX IF NOT EXISTS idx_item_relations_related ON item_relations(related_item_id);
+
+-- Personal favourites ("starred files"). One row per user+item.
+--
+-- is_public is opt-in: a favourite is private by default and only appears on
+-- the owner's public profile once they flip it. Visibility lives on the row
+-- rather than only on the profile so a user can share a single file without
+-- publishing the whole list.
+CREATE TABLE IF NOT EXISTS favorites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  is_public INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id, created_at DESC);
+-- Public profile listing: the favourites one user chose to share.
+CREATE INDEX IF NOT EXISTS idx_favorites_public ON favorites(user_id, is_public);
+-- "How many people starred this file" and the cascade when an item is deleted.
+CREATE INDEX IF NOT EXISTS idx_favorites_item ON favorites(item_id);
 
 -- One row per catalogue import, dry runs included, so an admin can see what
 -- was loaded, when, by whom, and what was rejected. The full error list is

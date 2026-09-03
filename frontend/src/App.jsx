@@ -29,6 +29,7 @@ import { ThemeProvider } from './context/ThemeContext';
  * first download "Backup".
  */
 const Admin = lazy(() => import('./pages/Admin'));
+const Profile = lazy(() => import('./pages/Profile'));
 const AdminOverview = lazy(() => import('./pages/admin/Overview'));
 const AdminItems = lazy(() => import('./pages/admin/Items'));
 const AdminCategories = lazy(() => import('./pages/admin/Categories'));
@@ -66,6 +67,8 @@ function AppContent() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/account" element={<Account />} />
+            {/* Public account page: what someone chose to share. */}
+            <Route path="/u/:username" element={<Profile />} />
             {/* Admin: layout + one route per area, each with a real URL */}
             <Route path="/admin" element={<Admin />}>
               <Route index element={<AdminOverview />} />

@@ -19,6 +19,8 @@ import { foldersRoutes } from './routes/folders.js';
 import { searchRoutes } from './routes/search.js';
 import { statsRoutes } from './routes/stats.js';
 import { authRoutes } from './routes/auth.js';
+import { usersRoutes } from './routes/users.js';
+import { favoritesRoutes } from './routes/favorites.js';
 import { aiRoutes } from './routes/ai.js';
 import { adminRoutes } from './routes/admin.js';
 import { captchaRoutes } from './routes/captcha.js';
@@ -238,6 +240,8 @@ await fastify.register(async (api) => {
   await api.register(searchRoutes);
   await api.register(statsRoutes);
   await api.register(authRoutes);
+  await api.register(usersRoutes);
+  await api.register(favoritesRoutes);
   await api.register(aiRoutes);
   await api.register(adminRoutes);
   await api.register(captchaRoutes);
