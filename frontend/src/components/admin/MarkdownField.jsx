@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
 import {
   Bold, Italic, Heading2, List, ListOrdered, Link2, Code, Quote,
-  Eye, Pencil, Sparkles, Loader2, AlertCircle,
+  Eye, Pencil, Sparkles, AlertCircle,
 } from 'lucide-react';
 import Markdown from '../../lib/markdown.jsx';
+import { LoadingDots } from '../Loading';
 
 /**
  * Markdown body editor for a file page.
@@ -103,7 +104,7 @@ export default function MarkdownField({
               disabled={generating}
               className="px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 disabled:opacity-50"
             >
-              {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {generating ? <LoadingDots size={14} /> : <Sparkles className="w-3.5 h-3.5" />}
               {generating ? 'Writing...' : generateLabel}
             </button>
           )}

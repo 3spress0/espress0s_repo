@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Save, RotateCcw, Loader2, Check, AlertCircle, RefreshCw, Sparkles } from 'lucide-react';
+import { Save, RotateCcw, Check, AlertCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { adminApi, autoUpdateApi } from '../../lib/api';
 import { useSettings } from '../../context/SettingsContext';
 import { DARK_THEMES, LIGHT_THEMES, getTheme } from '../../themes';
 import { ThemeSwatch } from '../../components/ThemePicker';
+import { LoadingDots } from '../../components/Loading';
 
 const GROUP_LABELS = {
   general: 'General',
@@ -182,7 +183,7 @@ export default function AdminSettings() {
           disabled={!dirtyKeys.length || saving}
           className="px-5 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium flex items-center gap-2 disabled:opacity-40"
         >
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          {saving ? <LoadingDots size={16} /> : <Save className="w-4 h-4" />}
           {dirtyKeys.length ? `Save ${dirtyKeys.length} change${dirtyKeys.length > 1 ? 's' : ''}` : 'No changes'}
         </button>
       </div>
@@ -299,7 +300,7 @@ function AiCard() {
           disabled={testing}
           className="px-4 py-2 bg-surface border border-border rounded-xl text-sm font-medium flex items-center gap-2 hover:border-primary/40 disabled:opacity-50"
         >
-          {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          {testing ? <LoadingDots size={16} /> : <RefreshCw className="w-4 h-4" />}
           {testing ? 'Testing…' : 'Send a test prompt'}
         </button>
         <button

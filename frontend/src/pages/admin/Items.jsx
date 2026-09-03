@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Search, Plus, Edit, Trash2, Eye, X, Link2, ImageIcon, Copy,
-  EyeOff, Loader2, AlertTriangle, CheckCircle2, Star, Folder,
+  EyeOff, AlertTriangle, CheckCircle2, Star, Folder,
 } from 'lucide-react';
 import { adminApi, itemsApi, foldersApi, categoriesApi, catalogAdminApi } from '../../lib/api';
 import ItemEditor from '../../components/admin/ItemEditor';
@@ -61,7 +61,7 @@ function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel, busy })
             disabled={busy}
             className="px-4 py-2.5 bg-red-500/15 border border-red-500/40 text-red-400 rounded-xl text-sm font-medium flex items-center gap-2 disabled:opacity-50"
           >
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            {busy ? <LoadingDots size={16} /> : <Trash2 className="w-4 h-4" />}
             {confirmLabel}
           </button>
         </div>
@@ -658,7 +658,9 @@ export default function AdminItems() {
               <X className="w-4 h-4" />
             </button>
             {loadingId ? (
-              <div className="bg-surface border border-border rounded-2xl p-10 text-center text-textMuted text-sm">Loading page...</div>
+              <div className="bg-surface border border-border rounded-2xl p-10">
+                <Loading text="Loading page…" />
+              </div>
             ) : (
               <ItemEditor item={creating ? null : editing} onSaved={onSaved} onClose={closeEditor} />
             )}

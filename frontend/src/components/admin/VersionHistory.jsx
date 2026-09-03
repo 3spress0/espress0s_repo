@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { History, RotateCcw, Loader2, AlertCircle, ChevronDown, ChevronUp, Link2 } from 'lucide-react';
+import { History, RotateCcw, AlertCircle, ChevronDown, ChevronUp, Link2 } from 'lucide-react';
 import { adminApi } from '../../lib/api';
 import { formatBytes } from '../../lib/utils';
 import { LoadingDots } from '../Loading';
@@ -173,7 +173,7 @@ export default function VersionHistory({ item, onRestored }) {
                 disabled={busy}
                 className="px-4 py-2.5 bg-amber-500/15 border border-amber-500/40 text-amber-300 rounded-xl text-sm font-medium flex items-center gap-2 disabled:opacity-50"
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                {busy ? <LoadingDots size={16} /> : <RotateCcw className="w-4 h-4" />}
                 Restore v{confirmRestore}
               </button>
             </div>

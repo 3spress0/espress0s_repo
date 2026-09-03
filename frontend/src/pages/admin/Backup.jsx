@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, Upload, FileJson, Loader2, AlertTriangle, CheckCircle2, ShieldAlert, History, Undo2, RefreshCw } from 'lucide-react';
+import { Download, Upload, FileJson, AlertTriangle, CheckCircle2, ShieldAlert, History, Undo2, RefreshCw } from 'lucide-react';
 import { backupApi, snapshotApi } from '../../lib/api';
-import Loading from '../../components/Loading';
+import Loading, { LoadingDots } from '../../components/Loading';
 
 /**
  * Backup page: export the whole archive (categories, folders, items + mirrors,
@@ -165,7 +165,7 @@ export default function AdminBackup() {
           disabled={exporting}
           className="px-5 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium flex items-center gap-2 disabled:opacity-50"
         >
-          {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+          {exporting ? <LoadingDots size={16} /> : <Download className="w-4 h-4" />}
           Download export (.json)
         </button>
       </div>
@@ -208,7 +208,7 @@ export default function AdminBackup() {
                 disabled={busy}
                 className="px-5 py-2.5 bg-surface border border-border rounded-xl text-sm hover:border-primary/30 flex items-center gap-2 disabled:opacity-50"
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {busy ? <LoadingDots size={16} /> : null}
                 {report ? 'Re-run dry run' : 'Preview changes (dry run)'}
               </button>
               {report?.dryRun && (
@@ -309,7 +309,7 @@ export default function AdminBackup() {
                   disabled={snapshotBusy}
                   className="ml-auto px-2.5 py-1 rounded-md bg-surface border border-border text-textMuted hover:text-primary disabled:opacity-40 flex items-center gap-1.5"
                 >
-                  {snapshotBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />}
+                  {snapshotBusy ? <LoadingDots size={12} /> : <Undo2 className="w-3 h-3" />}
                   Roll back to this
                 </button>
               </li>

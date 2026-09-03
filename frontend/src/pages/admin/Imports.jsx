@@ -4,7 +4,7 @@ import {
   RefreshCw, History, Trash2, Undo2,
 } from 'lucide-react';
 import { catalogApi } from '../../lib/api';
-import Loading from '../../components/Loading';
+import Loading, { LoadingDots } from '../../components/Loading';
 import Progress from '../../components/Progress';
 
 /**
@@ -199,7 +199,7 @@ export default function AdminImports() {
           </p>
 
           <label className="ml-auto px-5 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium shadow-lg shadow-purple-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-40">
-            <Upload className="w-4 h-4" />
+            {busy ? <LoadingDots size={16} /> : <Upload className="w-4 h-4" />}
             {busy ? 'Working…' : 'Choose catalog.zip'}
             <input
               ref={fileRef}

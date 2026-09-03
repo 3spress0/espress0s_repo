@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Plus, Trash2, Star, GripVertical, AlertTriangle, ClipboardPaste, Activity, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Star, GripVertical, AlertTriangle, ClipboardPaste, Activity } from 'lucide-react';
 import { linkHealthApi } from '../../lib/api';
+import { LoadingDots } from '../Loading';
 
 /** Small badge for the health checker's verdict on a saved mirror. */
 function HealthBadge({ link }) {
@@ -348,7 +349,7 @@ export default function DownloadLinksEditor({ links, onChange }) {
                     disabled={checking === link.id}
                     className="px-2.5 py-1 rounded-lg bg-surface border border-border text-[11px] text-textSecondary hover:border-primary/40 flex items-center gap-1.5 disabled:opacity-50"
                   >
-                    {checking === link.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
+                    {checking === link.id ? <LoadingDots size={12} /> : <Activity className="w-3 h-3" />}
                     Check now
                   </button>
                   {link.check_error && link.status !== 'up' && (

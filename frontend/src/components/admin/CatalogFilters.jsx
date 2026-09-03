@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { SlidersHorizontal, X } from 'lucide-react';
+import { LoadingDots } from '../Loading';
 
 /**
  * Catalogue filter + sort panel for Admin -> File pages.
@@ -99,8 +100,8 @@ export default function CatalogFilters({ facets = {}, value, onChange, onReset, 
 
         <div className="ml-auto flex items-center gap-3">
           {typeof resultCount === 'number' && (
-            <span className="text-xs text-textMuted tabular-nums">
-              {loading ? 'Searching…' : `${resultCount.toLocaleString()} match${resultCount === 1 ? '' : 'es'}`}
+            <span className="inline-flex items-center gap-1.5 text-xs text-textMuted tabular-nums">
+              {loading ? <><LoadingDots size={12} /> Searching…</> : `${resultCount.toLocaleString()} match${resultCount === 1 ? '' : 'es'}`}
             </span>
           )}
           {activeCount > 0 && (
