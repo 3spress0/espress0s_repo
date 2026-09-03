@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import cookie from '@fastify/cookie';
+import compress from '@fastify/compress';
 import { config, assertProductionSecrets } from './config.js';
 import crypto from 'crypto';
 import fsSync from 'fs';
@@ -73,6 +74,20 @@ const fastify = Fastify({
 
 await fastify.register(cookie, {
   secret: config.security.jwtSecret, // for signed cookies
+});
+
+// gzip/brotli on the way out. Behind nginx (gzip is on in nginx.conf.example)
+// or Caddy (compresses by default) the proxy already does this, but `./espress0
+// dev --build`, the tmux runner and the plain Docker profile serve straight from
+// this process — and there the ~570 kB bundle was going out byte for byte.
+// Must be registered before @fastify/static. The plugin's own 1 kB threshold and
+// brotli quality 4 keep it cheap on a 1 vCPU box, and assets are now hashed and
+// cached for a year, so each visitor pays for it at most once.
+await fastify.register(compress, {
+  encodings: ['br', 'gzip'],
+  // Uploads arrive as multipart bodies and nothing here needs a compressed
+  // request, so leave inbound bytes untouched.
+  globalDecompression: false,
 });
 
 // Content-Security-Policy. Cover images and mirrors legitimately point at
@@ -232,7 +247,22 @@ await fastify.register(async (api) => {
 
   if (hasDist) {
     const fastifyStatic = (await import('@fastify/static')).default;
-    await fastify.register(fastifyStatic, { root: frontendDist, prefix: '/', wildcard: false });
+    await fastify.register(fastifyStatic, {
+      root: frontendDist,
+      prefix: '/',
+      wildcard: false,
+      // Vite fingerprints everything it emits under /assets/ (index-<hash>.js),
+      // so those URLs change whenever the bytes do and can be pinned for a year.
+      // Unhashed files — index.html, the logo, the loading gif — keep the same
+      // URL across deploys, so they must be revalidated or a release sticks.
+      setHeaders: (reply, path) => {
+        if (/[\\/]assets[\\/]/.test(path)) {
+          reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          reply.header('Cache-Control', 'no-cache');
+        }
+      },
+    });
     fastify.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'API route not found' });
       return reply.sendFile('index.html');

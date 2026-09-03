@@ -22,7 +22,7 @@ export default function ItemCard({ item, featured = false }) {
     >
       <div className="shrink-0 w-11 h-11 rounded-lg bg-surfaceHover border border-border flex items-center justify-center overflow-hidden">
         {item.icon_url ? (
-          <img src={item.icon_url} alt="" className="w-7 h-7 object-contain" onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.dataset.empty = '1'; }} />
+          <img src={item.icon_url} alt="" loading="lazy" decoding="async" className="w-7 h-7 object-contain" onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.dataset.empty = '1'; }} />
         ) : (
           <FileTypeBadge type={item.file_type} size={18} />
         )}

@@ -88,10 +88,37 @@ export class UnsafeUrlError extends Error {
 }
 
 /**
- * Parse + validate a URL, resolving DNS and rejecting anything internal.
- * @returns {Promise<URL>}
+ * Addresses no endpoint can ever legitimately be, on any network: the "this"
+ * network and link-local, which is where every cloud's metadata service lives.
+ * Used as the floor below `allowPrivate` policies.
  */
-export async function assertPublicUrl(rawUrl) {
+export function isMetadataIp(ip) {
+  const version = net.isIP(ip);
+  if (version === 4) return inCidr(ip, '0.0.0.0/8') || inCidr(ip, '169.254.0.0/16');
+  if (version !== 6) return true;
+
+  const addr = String(ip).toLowerCase().replace(/^\[|\]$/g, '');
+  const mapped = addr.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/) || addr.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isMetadataIp(mapped[1]);
+  if (addr === '::') return true;
+  if (/^fe[89ab][0-9a-f]:/.test(addr)) return true; // fe80::/10 link-local
+  if (addr === 'fd00:ec2::254') return true;        // AWS instance metadata over IPv6
+  return false;
+}
+
+/** Loopback is where a self-hosted model server lives, so it is judged apart. */
+function isLoopbackIp(ip) {
+  const version = net.isIP(ip);
+  if (version === 4) return inCidr(ip, '127.0.0.0/8');
+  if (version !== 6) return false;
+  const addr = String(ip).toLowerCase().replace(/^\[|\]$/g, '');
+  if (addr === '::1') return true;
+  const mapped = addr.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/) || addr.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
+  return mapped ? isLoopbackIp(mapped[1]) : false;
+}
+
+/** Shared body of the two policies below. */
+async function validateTarget(rawUrl, { rejectAddress, allowInternalNames }) {
   let url;
   try {
     url = new URL(String(rawUrl));
@@ -113,11 +140,12 @@ export async function assertPublicUrl(rawUrl) {
 
   // Literal IP: check directly. Hostname: check every resolved record.
   if (net.isIP(host)) {
-    if (isBlockedIp(host)) throw new UnsafeUrlError('URL resolves to a non-public address');
+    if (rejectAddress(host)) throw new UnsafeUrlError('URL resolves to a non-public address');
     return url;
   }
 
-  if (/^localhost$/i.test(host) || /\.(localhost|local|internal|home|lan)$/i.test(host)) {
+  if (!allowInternalNames
+    && (/^localhost$/i.test(host) || /\.(localhost|local|internal|home|lan)$/i.test(host))) {
     throw new UnsafeUrlError('URL resolves to a non-public address');
   }
 
@@ -129,9 +157,49 @@ export async function assertPublicUrl(rawUrl) {
   }
   if (!records.length) throw new UnsafeUrlError('Could not resolve host');
   for (const rec of records) {
-    if (isBlockedIp(rec.address)) throw new UnsafeUrlError('URL resolves to a non-public address');
+    if (rejectAddress(rec.address)) throw new UnsafeUrlError('URL resolves to a non-public address');
   }
   return url;
+}
+
+/**
+ * Parse + validate a URL, resolving DNS and rejecting anything internal.
+ * @returns {Promise<URL>}
+ */
+export async function assertPublicUrl(rawUrl) {
+  return validateTarget(rawUrl, { rejectAddress: isBlockedIp, allowInternalNames: false });
+}
+
+/**
+ * Policy for an endpoint an operator configured on purpose: an AI base URL, a
+ * self-hosted gateway. The tiers, widest first:
+ *
+ *   allowPrivate   anything but the metadata floor (the whole LAN is reachable)
+ *   allowLoopback  loopback too, since "run Ollama on this box" is the single
+ *                  most common request - but no further into the network
+ *   neither        public addresses only, i.e. assertPublicUrl
+ *
+ * Default is loopback-only-widened: `http://127.0.0.1:11434/v1` works out of
+ * the box, while `http://192.168.0.7:11434/v1` needs AI_ALLOW_PRIVATE_BASE_URL.
+ * That split is not paranoia: the setting is admin-only today, but any way to
+ * point the server at an arbitrary host is also a way to knock on doors inside
+ * the network, and a response body gets pasted into a model prompt.
+ *
+ * Redirects stay the caller's problem, and both callers refuse them.
+ *
+ * @param {string} rawUrl
+ * @param {{allowPrivate?: boolean, allowLoopback?: boolean}} [opts]
+ * @returns {Promise<URL>}
+ */
+export async function assertConfiguredEndpoint(rawUrl, { allowPrivate = false, allowLoopback = true } = {}) {
+  if (allowPrivate) {
+    return validateTarget(rawUrl, { rejectAddress: isMetadataIp, allowInternalNames: true });
+  }
+  if (!allowLoopback) return assertPublicUrl(rawUrl);
+  return validateTarget(rawUrl, {
+    allowInternalNames: true,
+    rejectAddress: (ip) => !isLoopbackIp(ip) && (isBlockedIp(ip) || isMetadataIp(ip)),
+  });
 }
 
 /**

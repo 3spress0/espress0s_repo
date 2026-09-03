@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Users, Shield, Edit, Trash2, Search, Plus, AlertTriangle, Lock, Mail, Crown, Eye, UserCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
+import { LoadingDots } from './Loading';
 
 export default function UserManager() {
   const { isAuthenticated, loading: authLoading } = useAuth();
@@ -189,8 +190,16 @@ export default function UserManager() {
             <tbody>
               {loading ? (
                 [...Array(5)].map((_, i) => (
-                  <tr key={i} className="border-b border-white/5 animate-pulse">
-                    <td colSpan={6} className="p-4"><div className="h-8 bg-surface rounded" /></td>
+                  <tr key={i} className="border-b border-white/5">
+                    <td colSpan={6} className="p-4">
+                      {i === 0 ? (
+                        <div className="flex items-center gap-2 text-sm text-textMuted">
+                          <LoadingDots size={16} /> Loading users…
+                        </div>
+                      ) : (
+                        <div className="h-8 bg-surface rounded animate-pulse" />
+                      )}
+                    </td>
                   </tr>
                 ))
               ) : users.length ? users.map(user => {

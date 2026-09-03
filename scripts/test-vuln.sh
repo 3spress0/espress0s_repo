@@ -158,5 +158,5 @@ fi
 echo ""
 echo "================================================"
 echo "Security testing complete!"
-echo "Visit http://localhost:3000/security for interactive tests"
+echo "Visit http://localhost:3000/ for the site; run 'cd backend && npm test' for the security unit tests"
 echo "All tests use safe dummy payloads - no actual exploitation"

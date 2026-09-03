@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Activity, Cpu, HardDrive, Database, Clock, AlertTriangle, Check, Zap, Download, Users, Shield, RefreshCw, Terminal, BarChart3 } from 'lucide-react';
 import api from '../lib/api';
+import Loading from './Loading';
 
 export default function Monitoring() {
   const [metrics, setMetrics] = useState(null);
@@ -49,6 +50,7 @@ export default function Monitoring() {
   if (loading) {
     return (
       <div className="space-y-4">
+        <Loading size={32} text="Loading metrics…" />
         {[...Array(6)].map((_, i) => (
           <div key={i} className="h-24 glass rounded-2xl border border-white/5 animate-pulse" />
         ))}

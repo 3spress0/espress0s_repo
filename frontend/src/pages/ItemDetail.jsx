@@ -1,12 +1,16 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Download, HardDrive, Calendar, Tag, Shield, Cpu, Monitor, FileType, Hash, ExternalLink, ArrowLeft, Eye, Clock, Music, Video, Play, Image as ImageIcon, Disc, File, Link2, Star, Lock, AlertTriangle, Pencil, Folder } from 'lucide-react';
 import { itemsApi } from '../lib/api';
 import { formatBytes, formatDate, startDownload } from '../lib/utils';
 import { ItemPlaceholder } from '../components/Logo';
-import ItemEditor from '../components/admin/ItemEditor';
 import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
+import Loading, { LoadingDots } from '../components/Loading';
+
+// The editor is ~1k lines and only appears when an admin clicks "Edit this
+// page", so it is not worth putting in the bundle every visitor parses.
+const ItemEditor = lazy(() => import('../components/admin/ItemEditor'));
 
 export default function ItemDetail() {
   const { slug } = useParams();
@@ -89,6 +93,7 @@ export default function ItemDetail() {
   if (loading) {
     return (
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Loading size={36} text="Loading this page…" className="mb-8" />
         <div className="animate-pulse space-y-6">
           <div className="h-8 bg-surface rounded w-1/4" />
           <div className="h-64 bg-surface rounded-3xl" />
@@ -162,6 +167,7 @@ export default function ItemDetail() {
             <Pencil className="w-4 h-4 flex-shrink-0" />
             <span>You are editing this page. Changes are visible to all visitors as soon as you save.</span>
           </div>
+          <Suspense fallback={<Loading text="Loading the editor…" />}>
           <ItemEditor
             item={item}
             onClose={() => setEditing(false)}
@@ -171,6 +177,7 @@ export default function ItemDetail() {
               if (fresh) setItem(fresh);
             }}
           />
+          </Suspense>
         </div>
       )}
 
@@ -178,7 +185,7 @@ export default function ItemDetail() {
         <div className="h-1 w-full bg-gradient-primary" />
         {(item.image_url || item.icon_url) && (
           <div className="relative h-64 sm:h-80 overflow-hidden bg-surfaceHover">
-            <img src={item.image_url || item.icon_url} alt={item.name} className="w-full h-full object-cover" onError={(e) => e.target.style.display = 'none'} />
+            <img src={item.image_url || item.icon_url} alt={item.name} decoding="async" className="w-full h-full object-cover" onError={(e) => e.target.style.display = 'none'} />
             <div className="absolute inset-0 bg-gradient-to-t from-surface via-surface/50 to-transparent" />
             <div className="absolute bottom-4 left-8 right-8">
               <h1 className="text-3xl sm:text-4xl font-bold text-white leading-tight drop-shadow-lg">{item.name}</h1>
@@ -226,7 +233,7 @@ export default function ItemDetail() {
             <div className="md:w-72 flex-shrink-0 space-y-3">
               {authLoading ? (
                 <div className="glass rounded-2xl border border-white/5 p-4 text-center">
-                  <img src="/loading_dots_white.gif" alt="loading" className="w-8 h-8 mx-auto mb-2 opacity-70" />
+                  <LoadingDots size={32} className="mb-2" />
                   <p className="text-xs text-textMuted">Checking login...</p>
                 </div>
               ) : !isAuthenticated ? (
@@ -349,7 +356,7 @@ export default function ItemDetail() {
             <div className="space-y-3">
               {isAudio && <audio controls src={previewUrl} className="w-full" />}
               {isVideo && <video controls src={previewUrl} className="w-full rounded-xl max-h-96" />}
-              {isImage && <img src={previewUrl} alt="Preview" className="w-full rounded-xl max-h-96 object-contain" />}
+              {isImage && <img src={previewUrl} alt="Preview" loading="lazy" decoding="async" className="w-full rounded-xl max-h-96 object-contain" />}
               <p className="text-xs text-textMuted">Preview from {item.storage_provider} (max 50MB, login required). <button onClick={() => { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }} className="ml-2 text-primary hover:underline">Close</button></p>
             </div>
           )}

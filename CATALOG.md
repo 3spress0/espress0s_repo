@@ -323,12 +323,19 @@ and note instead of failing.
 
 ### Loading and progress
 
-Searches, filters, bulk actions, health checks, dashboard loads and forms all
-use the same loading treatment (`frontend/src/components/Loading.jsx`, which
-drives `loading_dots_white.gif`). Long operations — bulk edits, autofill,
-imports — report progress through `frontend/src/components/Progress.jsx`, which
-shows a determinate bar when the caller knows the percentage and the standard
-dots plus a pulsing track when it only knows that work is still running.
+Everything that waits uses the same treatment: `frontend/src/components/Loading.jsx`
+drives `loading_dots_white.gif`, and its three exports cover the cases —
+`Loading` (inline or `fullScreen` overlay), `LoadingDots` (inside buttons, table
+rows and captions) and `LoadingPanel` (a full page's worth of centred dots and a
+label). Searches, filters, bulk actions, health checks, dashboard loads, login
+and registration all go through them. `frontend/index.html` carries the same dots
+into the pre-React boot screen, so a cold load shows the loader instead of a
+blank page; `src/main.jsx` drops it once React has committed its first frame.
+
+Long operations — bulk edits, autofill, imports — report progress through
+`frontend/src/components/Progress.jsx`, which shows a determinate bar when the
+caller knows the percentage and the standard dots plus a pulsing track when it
+only knows that work is still running.
 
 ## Quality checks
 

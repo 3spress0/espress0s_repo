@@ -19,7 +19,9 @@
 #   ./scripts/setup.sh --start               # ... and start the dev servers
 #   ./scripts/setup.sh --build --start       # ... single origin on :3000
 #   ./scripts/setup.sh --admin-password 'S3cret!'
-#   ./scripts/setup.sh --with-tgpt           # also install tgpt (AI drafting)
+#   ./scripts/setup.sh --with-tgpt           # also install tgpt (free AI fallback)
+#   ./scripts/setup.sh --gemini-key KEY      # use the Gemini API for Barista
+#   ./scripts/setup.sh --gemini-key KEY --gemini-model gemini-2.5-pro
 #   ./scripts/setup.sh --reset-db            # drop and recreate the database
 #   ./scripts/setup.sh --skip-install        # dependencies already installed
 #   ./scripts/setup.sh --skip-db             # do not touch the database
@@ -38,6 +40,8 @@ cd "$ROOT_DIR"
 BUILD=0
 START=0
 WITH_TGPT=0
+GEMINI_KEY=""
+GEMINI_MODEL=""
 SKIP_INSTALL=0
 SKIP_DB=0
 SKIP_SEED=0
@@ -68,6 +72,10 @@ while [ $# -gt 0 ]; do
     --build)            BUILD=1 ;;
     --start)            START=1 ;;
     --with-tgpt)        WITH_TGPT=1 ;;
+    --gemini-key)       GEMINI_KEY="${2:-}"; shift ;;
+    --gemini-key=*)     GEMINI_KEY="${1#*=}" ;;
+    --gemini-model)     GEMINI_MODEL="${2:-}"; shift ;;
+    --gemini-model=*)   GEMINI_MODEL="${1#*=}" ;;
     --skip-install)     SKIP_INSTALL=1 ;;
     --skip-db)          SKIP_DB=1 ;;
     --skip-seed)        SKIP_SEED=1 ;;
@@ -249,10 +257,21 @@ if [ "$RUN_WIZARD" -eq 1 ]; then
   fi
 
   # AI --------------------------------------------------------------------
-  if command -v tgpt >/dev/null 2>&1; then
-    ok "tgpt already installed."
-  elif ask_yn "Install tgpt now (free AI used by Ask-AI and admin drafting)" "n"; then
-    WITH_TGPT=1
+  # A key is the good path: no binary to install, no scraping a third-party
+  # free tier under a rate limit. Offer it before falling back to tgpt.
+  if [ -n "$(env_value AI_API_KEY)" ]; then
+    ok "AI_API_KEY is already set in .env — keeping it."
+  elif ask_yn "Use a Gemini API key for Barista (recommended; Ask AI + drafting)" "n"; then
+    # Hidden input, like the password prompt above: a key pasted at a terminal
+    # should not sit on screen or land in shell history.
+    printf '  %s?%s Gemini API key %s: ' "$C_BLUE$C_BOLD" "$C_RESET" "(paste; Enter to leave AI_API_KEY empty)" >&2
+    read -rs WZ_KEY || WZ_KEY=""; printf '\n' >&2
+    [ -n "$WZ_KEY" ] && GEMINI_KEY="$WZ_KEY"
+  fi
+  if [ -z "$GEMINI_KEY" ] && ! command -v tgpt >/dev/null 2>&1; then
+    if ask_yn "No key given — install tgpt instead (free, no key, lower quality)" "n"; then
+      WITH_TGPT=1
+    fi
   fi
 
   # How to run afterwards ---------------------------------------------------
@@ -445,20 +464,52 @@ else
 fi
 
 # ==============================================================================
-step "Checking the AI drafting backend (tgpt)"
+step "Configuring the AI backend (Barista)"
 
-if command -v tgpt >/dev/null 2>&1; then
-  ok "tgpt found: $(command -v tgpt)"
+# Order of preference: a key given here, a key already in .env, then the two
+# names Google's own SDKs document, then the key an older tgpt setup used. The
+# exported names are read from .env only - not the caller's environment - so a
+# stray shell variable cannot silently become a persisted secret.
+[ -n "$GEMINI_KEY" ] || GEMINI_KEY="$(env_value AI_API_KEY)"
+[ -n "$GEMINI_KEY" ] || GEMINI_KEY="$(env_value GEMINI_API_KEY)"
+[ -n "$GEMINI_KEY" ] || GEMINI_KEY="$(env_value GOOGLE_API_KEY)"
+[ -n "$GEMINI_KEY" ] || GEMINI_KEY="$(env_value TGPT_API_KEY)"
+
+if [ -n "$GEMINI_KEY" ]; then
+  set_env_value AI_API_KEY "$GEMINI_KEY"
+  set_env_value AI_PROVIDER gemini
+  [ -n "$GEMINI_MODEL" ] && set_env_value AI_MODEL "$GEMINI_MODEL"
+  ok "AI_PROVIDER=gemini with an API key: Ask AI and admin drafting use the Gemini API."
+  ok "Nothing to install; key rotation is just editing AI_API_KEY and restarting."
 elif [ "$WITH_TGPT" -eq 1 ]; then
-  if [ -x "$SCRIPT_DIR/install-tgpt.sh" ]; then
+  set_env_value AI_PROVIDER auto
+  if command -v tgpt >/dev/null 2>&1; then
+    ok "tgpt already installed: $(command -v tgpt)"
+  elif [ -x "$SCRIPT_DIR/install-tgpt.sh" ]; then
     "$SCRIPT_DIR/install-tgpt.sh" || warn "tgpt install failed — the admin AI button will fall back to a template outline."
   else
     warn "scripts/install-tgpt.sh is missing; skipping."
   fi
 else
-  warn "tgpt is not installed. Everything works without it: 'Ask AI' falls back to"
-  warn "metadata search, and the admin 'Draft with AI' button produces a filled-in"
-  warn "outline instead of prose. Install later with ./scripts/setup.sh --with-tgpt"
+  set_env_value AI_PROVIDER auto
+  warn "No AI backend configured. Everything still works: 'Ask AI' answers from"
+  warn "repository metadata and the admin 'Draft with AI' button produces a"
+  warn "filled-in outline instead of prose."
+  warn "For model-written answers, either add a key to .env:"
+  warn "  AI_API_KEY=<your Gemini key from https://aistudio.google.com/apikey>"
+  warn "or install the free CLI:  ./scripts/setup.sh --with-tgpt"
+fi
+
+# Warn about a stale .env that would silently degrade the provider. config.js
+# prefers AI_* and falls back to TGPT_*, so both are honoured; what bites people
+# is TGPT_PROVIDER=openai (etc.) with no key, which used to fail every call.
+if [ -z "$(env_value AI_API_KEY)" ] && [ -n "$(env_value TGPT_PROVIDER)" ]; then
+  case "$(env_value TGPT_PROVIDER)" in
+    openai|deepseek|groq|gemini|mistral|anthropic)
+      warn "TGPT_PROVIDER=$(env_value TGPT_PROVIDER) needs a key. AI_PROVIDER=auto now"
+      warn "falls back to tgpt's free provider instead of failing every request."
+      ;;
+  esac
 fi
 
 # ==============================================================================

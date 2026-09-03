@@ -1,116 +1,60 @@
-import { execFile, spawn } from 'child_process';
-import { promisify } from 'util';
-import fs from 'fs';
 import { config } from '../config.js';
 import { getDb } from '../db/index.js';
 import { searchService } from './searchService.js';
-
-const execFileAsync = promisify(execFile);
-
-// Provider names are pasted into an argv slot; keep them boring.
-const PROVIDER_PATTERN = /^[a-zA-Z0-9_.-]{1,32}$/;
-// Models may contain slashes (meta-llama/…) and colons (ollama llama3:8b).
-const MODEL_PATTERN = /^[a-zA-Z0-9_.:/-]{1,64}$/;
-
-// Providers that cannot answer anything without a key; tgpt just errors out.
-const KEY_PROVIDERS = new Set(['openai', 'deepseek', 'groq', 'gemini', 'mistral', 'anthropic']);
-let warnedAboutKeylessProvider = false;
-
-function providerArgs() {
-  const provider = config.ai.provider;
-  if (!provider) return [];
-  if (!PROVIDER_PATTERN.test(provider)) {
-    console.warn(`[ai] Ignoring invalid TGPT_PROVIDER value: ${provider}`);
-    return [];
-  }
-  if (KEY_PROVIDERS.has(provider) && !config.ai.apiKey) {
-    // A .env from before the defaults changed says TGPT_PROVIDER=openai
-    // without a key, which makes every AI call fail. Fall back to tgpt's
-    // built-in free provider and say so once.
-    if (!warnedAboutKeylessProvider) {
-      warnedAboutKeylessProvider = true;
-      console.warn(`[ai] TGPT_PROVIDER=${provider} needs TGPT_API_KEY in .env; using tgpt's free default provider instead.`);
-    }
-    return [];
-  }
-  return ['--provider', provider];
-}
-
-function modelArgs() {
-  const model = config.ai.model;
-  if (!model) return [];
-  // Model names are provider-specific ('gpt-3.5-turbo' means nothing to
-  // phind). Only forward one when a provider was explicitly chosen.
-  if (!config.ai.provider) {
-    if (!warnedAboutKeylessProvider) {
-      warnedAboutKeylessProvider = true;
-      console.warn('[ai] TGPT_MODEL is set but TGPT_PROVIDER is empty; ignoring the model (provider default will be used).');
-    }
-    return [];
-  }
-  if (!MODEL_PATTERN.test(model)) {
-    console.warn(`[ai] Ignoring invalid TGPT_MODEL value: ${model}`);
-    return [];
-  }
-  return ['--model', model];
-}
+import { describeAi, describeAiForAdmin, resolveAi } from './aiConfig.js';
+import { findTgpt, generate, redact, tgptRuns } from './aiProviders.js';
 
 /**
- * Run tgpt with the prompt on stdin.
- *
- * Replaces the previous `cat /tmp/tgpt-prompt-<timestamp>.txt | tgpt ...`
- * shell pipeline, which (a) invoked a shell with interpolated values, and
- * (b) wrote predictable filenames into a world-writable directory, so any
- * local user could pre-create a symlink there and have us clobber a file or
- * feed the model their own prompt.
- *
- * The API key (when the chosen provider needs one) goes in via the
- * AI_API_KEY environment variable, never on the command line where other
- * local users could read it from ps(1).
+ * The rules that make an answer safe. They live in the system prompt so they
+ * apply identically to every backend - Gemini, an OpenAI-compatible endpoint
+ * or tgpt - and so a proxy that ignores the user message still gets them.
  */
-function runTgpt(binary, prompt, { timeoutMs = config.ai.timeoutMs, maxBytes = 1024 * 1024 } = {}) {
-  const env = { ...process.env };
-  if (config.ai.apiKey) env.AI_API_KEY = config.ai.apiKey;
-  return new Promise((resolve, reject) => {
-    const child = spawn(binary, [...providerArgs(), ...modelArgs(), '--quiet'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
-      env,
-    });
+const SYSTEM_PROMPT = `You are Barista, the personal file finder for espress0's repo.
 
-    let out = '';
-    let err = '';
-    let settled = false;
-    const finish = (fn, value) => { if (!settled) { settled = true; fn(value); } };
+Your purpose: easily find files in a personal software archive for the user.
+You are named Barista — like a coffee barista, but you serve ISOs, tools, and docs.
 
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      finish(reject, Object.assign(new Error('tgpt timed out'), { code: 'ETIMEDOUT' }));
-    }, timeoutMs);
-
-    child.stdout.on('data', (chunk) => {
-      out += chunk;
-      if (out.length > maxBytes) { child.kill('SIGKILL'); out = out.slice(0, maxBytes); }
-    });
-    child.stderr.on('data', (chunk) => { if (err.length < 8192) err += chunk; });
-    child.on('error', (e) => { clearTimeout(timer); finish(reject, e); });
-    child.on('close', () => {
-      clearTimeout(timer);
-      if (!out.trim() && err.trim()) return finish(reject, new Error(err.trim().slice(0, 500)));
-      finish(resolve, out);
-    });
-
-    child.stdin.on('error', () => {}); // tgpt may exit before we finish writing
-    child.stdin.end(prompt);
-  });
-}
+STRICT RULES:
+- Only mention files that are listed in the repository data below
+- Never invent file names, versions, or download links
+- If information is not in repository data, say "I don't have that file in the repository"
+- Prefer repository metadata over general knowledge
+- You can link to items using their slug: /file/{slug}
+- Do not fabricate checksums or sizes
+- Your purpose is to easily find files — be helpful, concise, and accurate`;
 
 /**
- * AI Service using tgpt as backend
- * - Searches repository metadata first
- * - Uses tgpt CLI if available
- * - Falls back to rule-based answering
- * - Never hallucinates files
+ * Rules for the admin drafting helper. Kept separate from SYSTEM_PROMPT: that
+ * one is about not inventing files for a visitor, this one is about writing
+ * publishable copy from a fixed fact list.
+ */
+const DRAFT_SYSTEM_PROMPT = `You are writing the catalogue page for a file in a personal software archive.
+
+Rules:
+- Never invent version numbers, checksums, file sizes or download links.
+- If you are unsure about a detail, leave a placeholder in square brackets, e.g. [confirm minimum RAM].
+- Neutral, factual, technical tone. No marketing hype.
+
+Reply with exactly this structure and nothing else:
+SUMMARY: <one sentence, max 160 characters>
+BODY:
+<markdown body, 120-250 words, using "## " headings such as Overview, What's included, Requirements, Notes, plus bullet lists>`;
+
+/** Appended to the catalogue data instead of the system prompt: it is per-question. */
+const ANSWER_TAIL = `Answer helpfully based ONLY on the repository data above. If no relevant items, say so clearly and suggest how to browse categories. Keep it under 300 words and link to relevant items as /file/{slug} where they apply.`;
+
+export const BARISTA_SYSTEM_PROMPT = SYSTEM_PROMPT;
+
+/**
+ * Barista: repository search first, an AI answer second, metadata-only as the
+ * last resort.
+ *
+ * Which model answers is configurable (see services/aiConfig.js) - a Gemini
+ * key, any OpenAI-compatible endpoint, or the free tgpt CLI. Whichever it is,
+ * this file decides the same three things: what gets sent, what happens to the
+ * answer, and what the visitor is told when the provider is unavailable. The
+ * fallback is not decorative: a personal archive with no matching file should
+ * say so, and does, without a model in the loop at all.
  */
 
 export class AIService {
@@ -121,12 +65,13 @@ export class AIService {
   }
 
   /**
-   * Decide once which tgpt binary we use, preferring TGPT_BINARY_PATH but
-   * falling back to a tgpt on PATH, and answer whether it actually runs.
-   * Previously a tgpt found via PATH marked us available while the fixed
-   * default path (/usr/local/bin/tgpt) was what got spawned — install via a
-   * package manager (~/go/bin, ~/.local/bin) and every AI call died with
-   * ENOENT even though `tgpt` worked fine in a shell.
+   * Decide once whether a usable tgpt binary exists, so `auto` can fall back to
+   * it and a broken install is reported instead of silently ignored.
+   *
+   * A tgpt found on PATH must also be the thing that gets spawned: earlier
+   * versions probed PATH but spawned a fixed default path, so installing via a
+   * package manager (~/go/bin, ~/.local/bin) marked the service available while
+   * every call died with ENOENT.
    */
   async checkTgptAvailable() {
     if (this.tgptAvailable !== null) return this.tgptAvailable;
@@ -136,39 +81,71 @@ export class AIService {
       return false;
     }
 
-    const configured = config.ai.binaryPath;
-    let binary = null;
-    if (configured && fs.existsSync(configured)) {
-      binary = configured;
-    } else if (configured && configured !== 'tgpt') {
-      // Configured path missing — try PATH before giving up.
-      try { binary = (await execFileAsync('which', ['tgpt'])).stdout.trim() || 'tgpt'; }
-      catch { binary = null; }
-    } else {
-      try { binary = (await execFileAsync('which', ['tgpt'])).stdout.trim() || 'tgpt'; }
-      catch { binary = null; }
-    }
-
+    const binary = await findTgpt(config.ai.tgpt.binaryPath);
     if (!binary) {
       this.tgptAvailable = false;
-      this.lastError = 'tgpt binary not found (./espress0 ai installs it)';
+      this.lastError = 'no AI provider configured (set AI_API_KEY in .env, or run ./espress0 ai for the free tgpt CLI)';
       return false;
     }
-    try {
-      await execFileAsync(binary, ['--version']);
+    if (await tgptRuns(binary)) {
       this.tgptBinary = binary;
       this.tgptAvailable = true;
       return true;
-    } catch (e) {
-      this.tgptAvailable = false;
-      this.lastError = `tgpt found at ${binary} but failed to run: ${e.message}`.slice(0, 200);
-      return false;
     }
+    this.tgptAvailable = false;
+    this.lastError = `tgpt found at ${binary} but failed to run`;
+    return false;
   }
 
-  async tgptSpawnTarget() {
-    if (await this.checkTgptAvailable()) return this.tgptBinary;
-    return fs.existsSync(config.ai.binaryPath) ? config.ai.binaryPath : 'tgpt';
+  /** Effective settings for one call: .env, then admin overrides, then the probe. */
+  async aiConfig() {
+    await this.checkTgptAvailable();
+    return resolveAi({
+      tgptAvailable: this.tgptAvailable === true,
+      tgptBinary: this.tgptBinary,
+    });
+  }
+
+  /** What a visitor may know about the AI backend: enough to explain a fallback. */
+  async status() {
+    return describeAi(await this.aiConfig());
+  }
+
+  /** What only an admin may know: the resolved endpoint and the last failure. */
+  async adminStatus() {
+    const cfg = await this.aiConfig();
+    return describeAiForAdmin(cfg, this.lastError);
+  }
+
+  /**
+   * Live round-trip for the admin Settings "test" button: proves the key, the
+   * model name and the endpoint all agree, without guessing from config.
+   */
+  async testProvider() {
+    const cfg = await this.aiConfig();
+    const base = {
+      provider: cfg.provider,
+      format: cfg.format,
+      model: cfg.provider === 'tgpt' ? (cfg.tgpt.model || cfg.tgpt.provider || 'tgpt default') : cfg.model,
+      baseUrl: cfg.baseUrl,
+      keyConfigured: cfg.keyConfigured,
+      notes: cfg.notes,
+    };
+    if (!cfg.enabled) return { ok: false, ...base, error: 'AI features are switched off (Settings -> AI).' };
+    if (cfg.provider === 'none') return { ok: false, ...base, error: 'No usable provider. Set AI_API_KEY in .env or install tgpt.' };
+
+    const started = Date.now();
+    try {
+      const out = await generate({
+        system: 'You are a connectivity check. Reply with exactly: OK',
+        prompt: 'Reply with exactly: OK',
+        cfg,
+        kind: 'ask',
+      });
+      return { ok: true, ...base, ms: Date.now() - started, sample: out.text.slice(0, 120) };
+    } catch (e) {
+      return { ok: false, ...base, ms: Date.now() - started, error: redact(e.message, cfg.apiKey).slice(0, 300) };
+    }
   }
 
   /**
@@ -176,8 +153,9 @@ export class AIService {
    */
   async ask(question, options = {}) {
     const { limit = 5 } = options;
-    
-    // 1. Search repository metadata first - this is mandatory
+
+    // 1. Search repository metadata first - this is mandatory, and it is what
+    //    the answer is checked against.
     const searchResults = searchService.search({
       q: question,
       published: 1,
@@ -193,40 +171,53 @@ export class AIService {
       LIMIT 3
     `).all({ q: `%${question.toLowerCase()}%` });
 
-    const context = this.buildContext(searchResults.results, faqResults, question);
-
-    // 2. If tgpt available, use it with strict context
-    const tgptAvailable = await this.checkTgptAvailable();
-    
-    if (tgptAvailable) {
+    // 2. Ask the configured provider, with only catalogue data in front of it.
+    const cfg = await this.aiConfig();
+    if (cfg.enabled && cfg.provider !== 'none') {
       try {
-        const answer = await this.askWithTgpt(question, context);
+        const answer = await this.askWithProvider(question, searchResults.results, faqResults, cfg);
         this.lastError = null;
-        return this.askResponse(answer, searchResults, true);
+        return this.askResponse(answer, searchResults, cfg.provider);
       } catch (e) {
-        this.lastError = `tgpt ${e.code === 'ETIMEDOUT'
-          ? `timed out after ${config.ai.timeoutMs} ms`
-          : 'failed'}: ${e.message}`.slice(0, 200);
-        console.warn('tgpt failed, falling back to rule-based:', e.message);
-        // Fall through to rule-based
+        this.lastError = redact(`[${cfg.provider}] ${e.code === 'timeout'
+          ? `timed out after ${cfg.timeoutMs} ms`
+          : 'failed'}: ${e.message}`, cfg.apiKey).slice(0, 200);
+        console.warn('[ai] provider failed, falling back to rule-based:', redact(e.message, cfg.apiKey));
       }
     }
 
-    // 3. Fallback: rule-based answering using only metadata
+    // 3. Fallback: rule-based answering using only metadata.
     const fallback = this.askResponse(
       this.ruleBasedAnswer(question, searchResults.results, faqResults),
-      searchResults, false);
+      searchResults, null);
     // Say *why* this answer is metadata-only. Without it an admin watching a
-    // degraded answer has no way to tell tgpt is broken, as opposed to the
-    // repository simply having nothing matching the question.
-    if (this.lastError) fallback.tgptError = this.lastError;
+    // degraded answer cannot tell a broken provider from a repository that
+    // simply has nothing matching the question.
+    if (this.lastError) fallback.aiError = this.lastError;
+    if (cfg.notes.length) fallback.aiNotes = cfg.notes;
     return fallback;
   }
 
+  async askWithProvider(question, items, faqs, cfg) {
+    const out = await generate({
+      system: SYSTEM_PROMPT,
+      prompt: this.buildContext(items, faqs, question),
+      cfg,
+      kind: 'ask',
+    });
+    const answer = this.sanitizeAnswer(String(out.text || '').trim());
+    return answer || this.ruleBasedAnswer(question, items, faqs);
+  }
+
   /** Uniform ask() payload: answer + the verified items backing it. */
-  askResponse(answer, searchResults, usedTgpt) {
+  askResponse(answer, searchResults, provider = null) {
     return {
       answer,
+      // `usedAI`/`provider` replaced a tgpt-specific pair; nothing outside this
+      // repo consumes them, and the frontend only needs to know whether a model
+      // answered or the catalogue did.
+      usedAI: !!provider,
+      provider: provider || null,
       sources: searchResults.results.slice(0, 3).map(item => ({
         id: item.id,
         name: item.name,
@@ -234,27 +225,13 @@ export class AIService {
         category: item.category_slug,
       })),
       relatedItems: searchResults.results,
-      usedTgpt,
       metadata: { totalFound: searchResults.total },
     };
   }
 
+  /** The per-question message: catalogue data the model is allowed to mention. */
   buildContext(items, faqs, question) {
-    let ctx = `You are Barista, the personal file finder for espress0's repo.
-
-Your purpose: easily find files in a personal software archive for the user.
-You are named Barista — like a coffee barista, but you serve ISOs, tools, and docs.
-
-STRICT RULES:
-- Only mention files that are listed in the repository data below
-- Never invent file names, versions, or download links
-- If information is not in repository data, say "I don't have that file in the repository"
-- Prefer repository metadata over general knowledge
-- You can link to items using their slug: /file/{slug}
-- Do not fabricate checksums or sizes
-- Your purpose is to easily find files — be helpful, concise, and accurate
-
-`;
+    let ctx = '';
 
     if (faqs.length > 0) {
       ctx += `\nRELEVANT FAQ:\n`;
@@ -283,29 +260,9 @@ STRICT RULES:
       ctx += `\nNo matching items found in repository for query "${question}". You should say you don't have that file.`;
     }
 
-    ctx += `\nUSER QUESTION: ${question}\n\nAnswer helpfully based ONLY on the repository data above. If no relevant items, say so clearly and suggest how to browse categories.`;
+    ctx += `\nUSER QUESTION: ${question}\n\n${ANSWER_TAIL}`;
 
     return ctx;
-  }
-
-  async askWithTgpt(question, context) {
-    const binary = await this.tgptSpawnTarget();
-    
-    // Build prompt - we use context + question
-    // tgpt usage: echo "prompt" | tgpt --provider openai
-    // We need to escape properly
-    
-    const fullPrompt = `${context}\n\nProvide a concise, helpful answer (max 300 words). Include links to relevant items as /file/{slug} if applicable.`;
-
-    const stdout = await runTgpt(binary, fullPrompt, { timeoutMs: config.ai.timeoutMs });
-
-    // Clean output - tgpt may include extra formatting
-    let answer = stdout.trim();
-
-    // Basic sanitization: remove any potential hallucinated download URLs that aren't in our DB
-    answer = this.sanitizeAnswer(answer);
-
-    return answer || this.ruleBasedAnswer(question, [], []);
   }
 
   ruleBasedAnswer(question, items, faqs) {
@@ -398,13 +355,13 @@ STRICT RULES:
    *
    * This is a *writing* helper, not the visitor-facing Q&A path: it produces a
    * one-line summary plus a markdown body the admin can edit before saving.
-   * tgpt is used when available; otherwise a deterministic markdown skeleton is
-   * generated from the same metadata so the button always does something useful
-   * on a VM without tgpt installed.
+   * The configured provider is used when one is available; otherwise a
+   * deterministic markdown skeleton is generated from the same metadata so the
+   * button always does something useful on a box with no key and no tgpt.
    *
    * @param {object} meta  { name, version, category, platform, architecture,
    *                         file_type, file_size, tags[], links[], notes }
-   * @returns {{description: string, long_description: string, usedTgpt: boolean}}
+   * @returns {{description: string, long_description: string, usedAI: boolean, provider?: string, aiError?: string}}
    */
   async describeItem(meta = {}) {
     const clean = {
@@ -422,23 +379,29 @@ STRICT RULES:
 
     if (!clean.name) throw new Error('name is required to draft a description');
 
-    if (await this.checkTgptAvailable()) {
+    const cfg = await this.aiConfig();
+    if (cfg.enabled && cfg.provider !== 'none') {
       try {
-        const draft = await this.draftWithTgpt(clean);
-        if (draft) return { ...draft, usedTgpt: true };
+        const draft = await this.draftWithProvider(clean, cfg);
+        if (draft) return { ...draft, usedAI: true, provider: cfg.provider };
+        // An empty or unparsable answer is not an error worth a warning: the
+        // template below is the documented outcome for it.
       } catch (e) {
-        console.warn('tgpt draft failed, falling back to template:', e.message);
-        this.lastError = String(e.message || e).slice(0, 200);
-        return { ...this.templateDraft(clean), usedTgpt: false, tgptError: this.lastError };
+        this.lastError = redact(`[${cfg.provider}] draft failed: ${e.message}`, cfg.apiKey).slice(0, 200);
+        console.warn('[ai] draft failed, falling back to template:', redact(e.message, cfg.apiKey));
+        return { ...this.templateDraft(clean), usedAI: false, provider: cfg.provider, aiError: this.lastError };
       }
     }
 
-    return { ...this.templateDraft(clean), usedTgpt: false, tgptError: this.lastError };
+    const template = { ...this.templateDraft(clean), usedAI: false, provider: null };
+    // Without this the admin sees a skeleton and no reason, which reads as
+    // "the button is broken" rather than "no model is configured".
+    if (this.lastError) template.aiError = this.lastError;
+    else if (cfg.notes.length) template.aiError = cfg.notes[cfg.notes.length - 1];
+    return template;
   }
 
-  async draftWithTgpt(meta) {
-    const binary = await this.tgptSpawnTarget();
-
+  async draftWithProvider(meta, cfg) {
     const facts = [
       `Name: ${meta.name}`,
       meta.version && `Version: ${meta.version}`,
@@ -452,30 +415,18 @@ STRICT RULES:
       meta.notes && `Admin notes: ${meta.notes}`,
     ].filter(Boolean).join('\n');
 
-    const prompt = `You are writing the catalogue page for a file in a personal software archive.
-
-FACTS (the only things you know for certain):
+    const prompt = `FACTS (the only things you know for certain):
 ${facts}
 
-Write the page copy. Rules:
-- Never invent version numbers, checksums, file sizes or download links.
-- If you are unsure about a detail, leave a placeholder in square brackets, e.g. [confirm minimum RAM].
-- Neutral, factual, technical tone. No marketing hype.
-
-Reply with exactly this structure and nothing else:
-SUMMARY: <one sentence, max 160 characters>
-BODY:
-<markdown body, 120-250 words, using "## " headings such as Overview, What's included, Requirements, Notes, plus bullet lists>`;
+Write the page copy for this catalogue entry.`;
 
     try {
       // Was a hard-coded 45000 ms, i.e. longer than the browser's request
-      // budget - the admin pressed "generate", tgpt was still thinking, and
-      // axios had already cancelled. config.ai.draftTimeoutMs is deliberately
-      // below AI_TIMEOUT in the frontend for the same reason as ask().
-      const stdout = await runTgpt(binary, prompt, { timeoutMs: config.ai.draftTimeoutMs });
-
-      const out = (stdout || '').trim();
-      if (!out) return null;
+      // budget - the admin pressed "generate", the model was still writing, and
+      // axios had already cancelled. cfg.draftTimeoutMs is deliberately below
+      // AI_TIMEOUT in the frontend for the same reason as ask().
+      const out = (await generate({ system: DRAFT_SYSTEM_PROMPT, prompt, cfg, kind: 'draft' }).then(r => r.text)) || '';
+      if (!out.trim()) return null;
 
       const summaryMatch = out.match(/SUMMARY:\s*(.+)/i);
       const bodyMatch = out.match(/BODY:\s*([\s\S]+)/i);
@@ -490,8 +441,8 @@ BODY:
         long_description: long_description || this.templateDraft(meta).long_description,
       };
     } catch (e) {
-      console.warn('[ai] describe failed:', e.message);
-      return null;
+      console.warn('[ai] describe failed:', redact(e.message, cfg.apiKey));
+      throw e;
     }
   }
 

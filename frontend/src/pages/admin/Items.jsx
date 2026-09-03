@@ -501,7 +501,7 @@ export default function AdminItems() {
                   </td>
                   <td className="p-4">
                     {item.image_url || item.icon_url ? (
-                      <img src={item.image_url || item.icon_url} alt="" className="w-6 h-6 rounded object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+                      <img src={item.image_url || item.icon_url} alt="" loading="lazy" decoding="async" className="w-6 h-6 rounded object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
                     ) : (
                       <ImageIcon className="w-4 h-4 text-textMuted" />
                     )}

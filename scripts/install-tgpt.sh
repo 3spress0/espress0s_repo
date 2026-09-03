@@ -1,6 +1,10 @@
 #!/bin/bash
-# Install tgpt for Barista AI backend
+# Install tgpt for Barista — the keyless AI backend
 # https://github.com/aandrew-me/tgpt
+#
+# Optional. If .env has AI_API_KEY (or GEMINI_API_KEY), Barista calls that API
+# over HTTPS and needs no binary at all; install-tgpt.sh only matters for
+# AI_PROVIDER=tgpt / auto-without-a-key, i.e. a box with no key to spend.
 set -e
 
 echo "Installing tgpt for Barista (espress0's repo AI file finder)..."

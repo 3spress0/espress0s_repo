@@ -12,7 +12,7 @@ import Markdown from '../../lib/markdown.jsx';
  *  - a toolbar that wraps the selection, so nobody has to remember syntax
  *  - a preview tab that renders exactly what the public page will render
  *  - "Draft with AI", which turns the metadata already in the form into a
- *    starting body (falls back to a filled-in skeleton when tgpt is absent)
+ *    starting body (falls back to a filled-in skeleton when no model answers)
  */
 
 const TOOLBAR = [

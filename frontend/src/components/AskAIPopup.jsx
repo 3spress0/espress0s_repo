@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Coffee, Send, Database, AlertCircle, ExternalLink, Lightbulb, Search, Loader2, X, Sparkles } from 'lucide-react';
-import { aiApi, describeApiError } from '../lib/api';
+import { aiApi, describeAi, describeApiError } from '../lib/api';
 
 export default function AskAIPopup({ isOpen, onClose }) {
   const [query, setQuery] = useState('');
@@ -38,7 +38,8 @@ export default function AskAIPopup({ isOpen, onClose }) {
         content: result.answer,
         sources: result.sources || [],
         relatedItems: result.relatedItems || [],
-        usedTgpt: result.usedTgpt,
+        usedAI: result.usedAI,
+        provider: result.provider || null,
         metadata: result.metadata,
         timestamp: new Date(),
       };
@@ -74,7 +75,7 @@ export default function AskAIPopup({ isOpen, onClose }) {
             </div>
             <div>
               <h2 className="font-bold text-textPrimary">Barista — File Finder</h2>
-              <p className="text-xs text-textMuted">Easily find files • {status?.tgptAvailable ? 'tgpt ready' : 'metadata search'}</p>
+              <p className="text-xs text-textMuted">Easily find files • {describeAi(status).badge}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-xl bg-surface border border-border hover:border-primary/30 transition-colors">

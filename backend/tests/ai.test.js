@@ -36,6 +36,9 @@ fs.writeFileSync(
 );
 fs.chmodSync(slowTgpt, 0o755);
 
+// Deliberately the OLD variable names, with no AI_* equivalents set: that is a
+// .env from before the Gemini provider existed, and it has to keep working -
+// both the tuned budget and the binary path. The new names are covered below.
 process.env.TGPT_TIMEOUT_MS = String(ASK_BUDGET_MS);
 process.env.TGPT_BINARY_PATH = slowTgpt;
 
@@ -70,26 +73,30 @@ describe('Barista ask timeouts', () => {
     fs.rmSync(binDir, { recursive: true, force: true });
   });
 
-  it('keeps the server tgpt budget below the browser request budget', () => {
+  it('keeps the server provider budget below the browser request budget', () => {
     const client = clientAiTimeout();
     assert.ok(
       config.ai.timeoutMs < client,
-      `tgpt ask budget (${config.ai.timeoutMs} ms) must stay below the client AI_TIMEOUT (${client} ms), or the fallback answer never arrives`
+      `ask budget (${config.ai.timeoutMs} ms) must stay below the client AI_TIMEOUT (${client} ms), or the fallback answer never arrives`
     );
     assert.ok(
       config.ai.draftTimeoutMs < client,
-      `tgpt draft budget (${config.ai.draftTimeoutMs} ms) must stay below the client AI_TIMEOUT (${client} ms)`
+      `draft budget (${config.ai.draftTimeoutMs} ms) must stay below the client AI_TIMEOUT (${client} ms)`
     );
   });
 
-  it('still answers from repository metadata when tgpt exceeds its budget', async () => {
+  it('still answers from repository metadata when the provider exceeds its budget', async () => {
     assert.equal(await aiService.checkTgptAvailable(), true, 'the tgpt stand-in should be detected as available');
+    // auto + no key + an installed tgpt has to land on tgpt, or this test would
+    // be exercising a provider that does not exist on a CI box.
+    assert.equal((await aiService.aiConfig()).provider, 'tgpt', 'AI_PROVIDER=auto should resolve to the installed tgpt');
 
     const started = Date.now();
     const result = await aiService.ask('What does this tool do?', { limit: 5 });
     const elapsed = Date.now() - started;
 
-    assert.equal(result.usedTgpt, false, 'should have fallen back to the rule-based answer');
+    assert.equal(result.usedAI, false, 'should have fallen back to the rule-based answer');
+    assert.equal(result.provider, null, 'a fallback answer must not claim a provider');
     assert.ok(result.answer && result.answer.length > 0, 'the fallback produced no answer text');
     assert.ok(
       elapsed >= ASK_BUDGET_MS,
@@ -100,15 +107,27 @@ describe('Barista ask timeouts', () => {
       `took ${elapsed} ms to produce the fallback, far more than the budget allows`
     );
     assert.match(
-      result.tgptError || '',
+      result.aiError || '',
       /timed out/,
-      'the metadata-only answer should say tgpt timed out'
+      'the metadata-only answer should say the provider timed out'
     );
+    // The key must not ride along in a string that reaches an admin-visible
+    // response body.
+    assert.ok(!/AIza|sk-/.test(result.aiError || ''), 'aiError leaked what looks like a key');
   });
 
-  it('ignores a malformed TGPT_TIMEOUT_MS instead of disabling the timeout', async () => {
+  it('still honours the older TGPT_TIMEOUT_MS name when AI_TIMEOUT_MS is absent', () => {
+    // A .env from before this change is exactly that case, and silently going
+    // back to the 20 s default would re-break the tuned budget an operator set.
+    assert.equal(config.ai.timeoutMs, ASK_BUDGET_MS,
+      'TGPT_TIMEOUT_MS alone must still set the budget, or an existing deployment silently regresses');
+    assert.equal(config.ai.tgpt.binaryPath, slowTgpt, 'TGPT_BINARY_PATH must still be read');
+  });
+
+  it('ignores a malformed timeout instead of disabling the timeout', async () => {
     for (const bogus of ['', 'not-a-number', '-5']) {
-      process.env.TGPT_TIMEOUT_MS = bogus;
+      process.env.AI_TIMEOUT_MS = bogus;
+      delete process.env.TGPT_TIMEOUT_MS; // so the fallback cannot satisfy the assertion
       // Cache-busted so config.js is re-evaluated with the new environment.
       const fresh = await import(`../src/config.js?bust=${encodeURIComponent(bogus)}-${Math.random()}`);
       assert.equal(
@@ -117,6 +136,6 @@ describe('Barista ask timeouts', () => {
         `TGPT_TIMEOUT_MS=${JSON.stringify(bogus)} should fall back to the 20000 ms default`
       );
     }
-    process.env.TGPT_TIMEOUT_MS = String(ASK_BUDGET_MS);
+    process.env.AI_TIMEOUT_MS = String(ASK_BUDGET_MS);
   });
 });

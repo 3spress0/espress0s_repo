@@ -319,6 +319,17 @@ export const DEFAULT_SETTINGS = [
   { key: 'require_captcha', value: 'true', type: 'boolean', group_name: 'auth', label: 'Require CAPTCHA on login', public: 0 },
   { key: 'show_dev_credentials_panel', value: 'false', type: 'boolean', group_name: 'auth', label: 'Show test-credentials panel on login', description: 'Development aid. Leave off in production.', public: 1 },
   { key: 'ai_enabled', value: 'true', type: 'boolean', group_name: 'ai', label: 'Enable Ask AI', description: 'Turns the AI entry points on or off.', public: 1 },
+  // Provider selection. Everything here overrides .env, except the key: an API
+  // key in this table would be readable through /api/admin/settings and shipped
+  // off in every DB backup, so AI_API_KEY stays in .env (see SETUP.md).
+  { key: 'ai_provider', value: '', type: 'text', group_name: 'ai', label: 'Provider', description: 'auto (Gemini if a key exists, else tgpt) | gemini | openai | tgpt | none. Empty = keep the .env value.', public: 0 },
+  { key: 'ai_model', value: '', type: 'text', group_name: 'ai', label: 'Model', description: 'For gemini: e.g. gemini-2.5-flash. For openai: any model the endpoint serves, e.g. gpt-4o-mini or llama3.1:8b. Empty = .env AI_MODEL, else the provider default.', public: 0 },
+  { key: 'ai_base_url', value: '', type: 'url', group_name: 'ai', label: 'API base URL', description: 'Point at any compatible endpoint: https://openrouter.ai/api/v1, http://127.0.0.1:11434/v1 (Ollama), an Azure gateway. Link-local and cloud-metadata addresses are always refused. Empty = provider default.', public: 0 },
+  { key: 'ai_format', value: '', type: 'text', group_name: 'ai', label: 'Wire format', description: 'gemini | openai. Only set it to talk to a proxy that speaks the other shape; it is derived from the provider otherwise.', public: 0 },
+  { key: 'ai_temperature', value: '', type: 'number', group_name: 'ai', label: 'Temperature', description: '0-2. Barista is a file finder, so the default is low (0.2).', public: 0 },
+  { key: 'ai_max_tokens', value: '', type: 'number', group_name: 'ai', label: 'Max output tokens', description: 'Ceiling for one answer. 1024 covers a 300-word reply plus links.', public: 0 },
+  { key: 'ai_timeout_ms', value: '', type: 'number', group_name: 'ai', label: 'Ask timeout (ms)', description: 'Must stay below the browser\u2019s 60 s request budget or the metadata fallback never arrives. Clamped for you.', public: 0 },
+  { key: 'ai_draft_timeout_ms', value: '', type: 'number', group_name: 'ai', label: 'Draft timeout (ms)', description: 'Budget for the admin \u201cDraft with AI\u201d button, which writes more text than an answer.', public: 0 },
   { key: 'maintenance_mode', value: 'false', type: 'boolean', group_name: 'general', label: 'Maintenance mode', description: 'Shows a maintenance banner across the site.', public: 1 },
   { key: 'maintenance_message', value: 'We are performing maintenance. Downloads may be temporarily unavailable.', type: 'textarea', group_name: 'general', label: 'Maintenance message', public: 1 },
   { key: 'uploads_max_bytes', value: '5242880', type: 'number', group_name: 'uploads', label: 'Max upload size (bytes)', public: 0 },

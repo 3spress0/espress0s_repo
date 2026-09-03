@@ -1,9 +1,8 @@
 import { aiQuerySchema } from '../utils/validation.js';
 import { aiService } from '../services/aiService.js';
 import { getDb } from '../db/index.js';
-import { config } from '../config.js';
 
-// Each ask can spawn a tgpt subprocess, so this endpoint is far more
+// Each ask can spawn a subprocess or call an external API, so this endpoint is far more
 // expensive than a normal read. Keep it well under the global limit.
 const askRateLimit = { config: { rateLimit: { max: 15, timeWindow: '5 minutes' } } };
 const MAX_QUESTION_LENGTH = 500;
@@ -51,21 +50,32 @@ export async function aiRoutes(fastify) {
     return { suggestions };
   });
 
-  fastify.get('/ai/status', async (request, reply) => {
-    const available = await aiService.checkTgptAvailable();
-    return {
-      tgptAvailable: available,
-      // Admin-only honesty about why AI features might fall back: lets the
-      // admin act ("tgpt not installed", bad provider, missing key) instead
-      // of silently getting template drafts. Reported even when the binary
-      // runs — a tgpt that starts fine but times out on every question looks
-      // identical to a healthy one otherwise.
-      tgptError: aiService.lastError,
-      provider: config.ai.provider || 'tgpt default (free, no key)',
-      fallback: 'rule-based metadata search',
-      enabled: true,
-    };
-  });
+  /**
+   * GET /ai/status - what a visitor needs in order to explain the badge on
+   * /ask: is a model answering, or is this metadata search? Resolved per call,
+   * because an admin can change the provider in Settings without a restart.
+   *
+   * It deliberately says nothing about *why* a provider is failing or which
+   * endpoint is configured - that is /admin/ai/status below. The version this
+   * replaced shipped internal error text to anonymous callers.
+   */
+  fastify.get('/ai/status', async () => aiService.status());
+
+  /** GET /admin/ai/status - resolved provider, endpoint and last failure. */
+  fastify.get('/admin/ai/status', {
+    preHandler: [(await import('../middleware/auth.js')).authenticate, (await import('../middleware/auth.js')).requireAdmin],
+  }, async () => aiService.adminStatus());
+
+  /**
+   * POST /admin/ai/test - one live round-trip against whatever is configured.
+   * "The config looks right" and "the endpoint answers" are different facts,
+   * and a wrong model name is otherwise discovered by a visitor quietly getting
+   * a metadata answer instead. Rate limited: it spends API quota.
+   */
+  fastify.post('/admin/ai/test', {
+    preHandler: [(await import('../middleware/auth.js')).authenticate, (await import('../middleware/auth.js')).requireAdmin],
+    config: { rateLimit: { max: 10, timeWindow: '5 minutes' } },
+  }, async () => aiService.testProvider());
 
   // FAQ endpoints
   fastify.get('/faq', async (request, reply) => {

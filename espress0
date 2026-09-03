@@ -18,15 +18,18 @@
 #   serve              Run in the background inside tmux (survives logout).
 #                      Serve flags: dev | --build | --no-updater |
 #                      stop | restart | status | logs
-#   update             Auto-updater: watches origin, pulls, rebuilds, restarts.
+#   update             Auto-updater: builds the next commit in .auto-update/next
+#                      while the site stays up, then stop -> swap -> migrate ->
+#                      restart -> health check, rolling back if it stays down.
 #                      (--once for cron/single-shot, --interval N, --service NAME,
-#                       --branch NAME — see ./espress0 update --help)
+#                       --branch NAME, --mode clone|pull — see ./espress0 update --help)
 #   deploy <args>      Full Ubuntu server deploy (root): systemd + nginx +
 #                      certbot. Needs sudo; same args as scripts/deploy-ubuntu.sh
 #                      (./espress0 deploy --repo <url> [--domain d] [--https] | --update)
 #   backup [dir]       Copy the database + uploads with a timestamp
 #   db                 (Re)run migrations + seed an empty database
-#   ai                 Install tgpt so the admin "Draft with AI" button works
+#   ai                 Install the tgpt CLI (the keyless AI backend). With a
+#                      Gemini/OpenAI endpoint configured you do not need it.
 #   scan               Security probe of the RUNNING app on BASE_URL
 #   scan --full        Full audit: secrets, deps, tests, and HTTP probes
 #   test               Run the backend test suite

@@ -1,32 +1,44 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
+import Loading from './components/Loading';
 import Home from './pages/Home';
 import Browse from './pages/Browse';
 import ItemDetail from './pages/ItemDetail';
 import Ask from './pages/Ask';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import Admin from './pages/Admin';
-import AdminOverview from './pages/admin/Overview';
-import AdminItems from './pages/admin/Items';
-import AdminCategories from './pages/admin/Categories';
-import AdminFolders from './pages/admin/Folders';
-import AdminBackup from './pages/admin/Backup';
-import AdminImports from './pages/admin/Imports';
-import AdminStorage from './pages/admin/Storage';
-import AdminSettings from './pages/admin/Settings';
-import UserManager from './components/UserManager';
-import Encryption from './pages/Encryption';
-import Security from './pages/Security';
 import NotFound from './pages/NotFound';
 import Account from './pages/Account';
-import Monitoring from './components/Monitoring';
 import AskAIPopup from './components/AskAIPopup';
 import { AuthProvider } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { ThemeProvider } from './context/ThemeContext';
+
+/**
+ * The admin panel, the inline item editor and the encryption explainer are
+ * loaded on demand. Together they are ~4.4k lines of JSX plus the charting and
+ * management code that hangs off them, and a visitor browsing the catalogue
+ * never touches any of it — so they should not be in the bundle that is parsed
+ * before the homepage paints. Everything above stays eager because it is what
+ * an arrival actually needs.
+ *
+ * Each admin area is its own chunk as well, so opening "File pages" does not
+ * first download "Backup".
+ */
+const Admin = lazy(() => import('./pages/Admin'));
+const AdminOverview = lazy(() => import('./pages/admin/Overview'));
+const AdminItems = lazy(() => import('./pages/admin/Items'));
+const AdminCategories = lazy(() => import('./pages/admin/Categories'));
+const AdminFolders = lazy(() => import('./pages/admin/Folders'));
+const AdminBackup = lazy(() => import('./pages/admin/Backup'));
+const AdminImports = lazy(() => import('./pages/admin/Imports'));
+const AdminStorage = lazy(() => import('./pages/admin/Storage'));
+const AdminSettings = lazy(() => import('./pages/admin/Settings'));
+const UserManager = lazy(() => import('./components/UserManager'));
+const Monitoring = lazy(() => import('./components/Monitoring'));
+const Encryption = lazy(() => import('./pages/Encryption'));
 
 function ItemRedirect() {
   const { slug } = useParams();
@@ -40,34 +52,37 @@ function AppContent() {
     <div className="min-h-screen bg-background text-textPrimary flex flex-col transition-colors duration-300">
       <Navbar onAskOpen={() => setAskOpen(true)} />
       <main className="flex-1">
-        <Routes>
-          <Route path="/" element={<Home onAskOpen={() => setAskOpen(true)} />} />
-          <Route path="/browse" element={<Browse />} />
-          <Route path="/file/:slug" element={<ItemDetail />} />
-          <Route path="/item/:slug" element={<ItemRedirect />} />
-          <Route path="/ask" element={<Ask />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/account" element={<Account />} />
-          {/* Admin: layout + one route per area, each with a real URL */}
-          <Route path="/admin" element={<Admin />}>
-            <Route index element={<AdminOverview />} />
-            <Route path="items" element={<AdminItems />} />
-            <Route path="items/:id" element={<AdminItems />} />
-            <Route path="categories" element={<AdminCategories />} />
-            <Route path="folders" element={<AdminFolders />} />
-            <Route path="users" element={<div className="glass rounded-2xl border border-white/5 p-6"><UserManager /></div>} />
-            <Route path="storage" element={<AdminStorage />} />
-            <Route path="imports" element={<AdminImports />} />
-            <Route path="backup" element={<AdminBackup />} />
-            <Route path="settings" element={<AdminSettings />} />
-            <Route path="monitoring" element={<Monitoring />} />
-          </Route>
-          <Route path="/encryption" element={<Encryption />} />
-          <Route path="/security" element={<Security />} />
-          <Route path="/monitoring" element={<div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"><Monitoring /></div>} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        {/* One fallback for the split routes: the same dots the rest of the app
+            uses, full-screen, so a chunk fetch looks like every other wait. */}
+        <Suspense fallback={<Loading fullScreen text="Loading…" />}>
+          <Routes>
+            <Route path="/" element={<Home onAskOpen={() => setAskOpen(true)} />} />
+            <Route path="/browse" element={<Browse />} />
+            <Route path="/file/:slug" element={<ItemDetail />} />
+            <Route path="/item/:slug" element={<ItemRedirect />} />
+            <Route path="/ask" element={<Ask />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/account" element={<Account />} />
+            {/* Admin: layout + one route per area, each with a real URL */}
+            <Route path="/admin" element={<Admin />}>
+              <Route index element={<AdminOverview />} />
+              <Route path="items" element={<AdminItems />} />
+              <Route path="items/:id" element={<AdminItems />} />
+              <Route path="categories" element={<AdminCategories />} />
+              <Route path="folders" element={<AdminFolders />} />
+              <Route path="users" element={<div className="glass rounded-2xl border border-white/5 p-6"><UserManager /></div>} />
+              <Route path="storage" element={<AdminStorage />} />
+              <Route path="imports" element={<AdminImports />} />
+              <Route path="backup" element={<AdminBackup />} />
+              <Route path="settings" element={<AdminSettings />} />
+              <Route path="monitoring" element={<Monitoring />} />
+            </Route>
+            <Route path="/encryption" element={<Encryption />} />
+            <Route path="/monitoring" element={<div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"><Monitoring /></div>} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
       </main>
       <Footer />
       <AskAIPopup isOpen={askOpen} onClose={() => setAskOpen(false)} />

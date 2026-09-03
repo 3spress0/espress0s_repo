@@ -59,15 +59,48 @@ sudo -u espress0 /opt/espress0s-repo/espress0 update --once --service espress0-r
 # or permanent, as a service (unit ships in systemd/):
 sudo cp systemd/espress0-repo-updater.service /etc/systemd/system/
 sudo systemctl enable --now espress0-repo-updater
-# let the (unprivileged) updater restart the app:
-echo 'espress0 ALL=(root) NOPASSWD: /bin/systemctl restart espress0-repo' \
+# let the (unprivileged) updater control the app unit - it stops before the
+# swap and starts after, so all three verbs are needed, not just restart:
+echo 'espress0 ALL=(root) NOPASSWD: /bin/systemctl stop espress0-repo, /bin/systemctl restart espress0-repo, /bin/systemctl start espress0-repo' \
   | sudo tee /etc/sudoers.d/espress0-updater
 ```
 
-Behaviour notes: fast-forward pulls only (local commits are never reset away),
-a dirty working tree postpones updates, and `touch data/.auto-update-disabled`
-pauses everything. The current status is visible in the admin UI under
+Behaviour notes: by default the next commit is cloned and built in
+`.auto-update/next` while the site keeps running, its migrations are rehearsed
+against a *copy* of the database, and only once that is proven does the updater
+stop the app, swap the files, run the real migrations, restart and poll
+`/api/health`. If the site does not come back, the previous commit **and** the
+previous `frontend/dist` are restored and the app is started again — so a bad
+release costs seconds rather than uptime. `git reset` cannot undo a gitignored
+build directory, which is why the snapshot exists.
+
+`--mode pull` keeps the in-place fast-forward behaviour (local commits are never
+reset away, a dirty working tree postpones updates) with the same stop-first
+ordering and health check. `touch data/.auto-update-disabled` pauses everything.
+Restart target is explicit: `--service NAME` for systemd, `--tmux-session NAME`
+for the tmux runner, or `--stop-cmd`/`--start-cmd` for anything else (Docker, a
+custom supervisor). The current status is visible in the admin UI under
 **Admin -> Settings -> Auto-update** and in `data/.auto-update-status`.
+
+**AI backend (Barista).** Optional, and configurable without a deploy. Put a
+Gemini key in `.env` and the Ask page plus the admin drafter call it directly:
+
+```bash
+AI_PROVIDER=gemini
+AI_API_KEY=<your key>          # GEMINI_API_KEY / GOOGLE_API_KEY are read too
+AI_MODEL=gemini-2.5-flash      # optional
+```
+
+Any other endpoint works via `AI_PROVIDER=openai` + `AI_BASE_URL` (OpenRouter,
+Ollama on `127.0.0.1:11434`, a company gateway). `AI_PROVIDER=auto` — the
+default — uses the key when there is one and the free tgpt CLI when there is
+not, so an existing install does not change behaviour. Admin → Settings → AI
+edits provider, model, endpoint, temperature and budgets live (no restart) and
+has a **Send a test prompt** button; the key is not in that list on purpose,
+because that table is plaintext and ends up in every backup. `setup.sh` also
+takes `--gemini-key <k>` / `--gemini-model <m>`, and `deploy-ubuntu.sh` accepts
+them on `--update` so an older server can gain the key in the same command that
+brings it up to date.
 
 Other flags: `--port <n>` (default 80), `--user <name>`, `--with-tgpt` (AI
 backend), `--skip-firewall`. Run `sudo ./espress0 deploy --help` for the
@@ -96,7 +129,7 @@ rather keep nginx as the only thing on 80.
 ### Quick start (one command)
 
 ```bash
-./espress0 setup        # wizard: admin login, port, exposure, tgpt, run mode
+./espress0 setup        # wizard: admin login, port, exposure, AI key, run mode
 ```
 
 The wizard asks which **port** to expose and whether to bind `0.0.0.0`
@@ -127,9 +160,11 @@ tmux attach -t espress0            # watch live logs (Ctrl-B D detaches)
 ```
 
 The updater window runs `scripts/auto-update.sh`: every 5 minutes it fetches
-the tracked branch, and if there is a new commit it pulls (fast-forward only),
-reinstalls what changed, rebuilds the frontend and restarts the app. To bike
-the updater into cron or systemd instead, see
+the tracked branch, and if there is a new commit it clones and builds that
+commit under `.auto-update/next`, then stops the app, swaps the files in, runs
+migrations, restarts and health-checks it - rolling back if the site stays
+down. `--mode pull` keeps the older fast-forward-in-place behaviour. To run
+the updater in cron or systemd instead, see
 `systemd/espress0-repo-updater.service` and `./espress0 update --help`.
 Live status is written to `data/.auto-update-status` and shows up in the admin
 UI (Settings -> Auto-update). `touch data/.auto-update-disabled` pauses it.
@@ -144,7 +179,8 @@ re-run: existing secrets, database and uploads are never overwritten.
 ./espress0 setup --start                    # ... then start the dev servers
 ./espress0 setup --build --start            # ... single origin on :3000
 ./espress0 setup --admin-password 'S3cret!' # choose the password yourself
-./espress0 setup --with-tgpt                # also install tgpt (AI drafting)
+./espress0 setup --gemini-key <k>           # Barista uses the Gemini API
+./espress0 setup --with-tgpt                # ...or install tgpt (free, no key)
 ./espress0 setup --reset-db                 # back up and recreate the database
 ./espress0 setup --help                     # every flag
 ```

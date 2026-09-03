@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Upload, Link2, Image as ImageIcon, X, Check, Loader2 } from 'lucide-react';
 import { uploadsApi } from '../../lib/api';
+import { LoadingDots } from '../Loading';
 
 /**
  * Image field for the item editor.
@@ -80,7 +81,7 @@ export default function ImagePicker({ label, value, onChange, hint }) {
       <div className="flex items-start gap-3 mb-3">
         <div className="w-20 h-20 rounded-xl bg-surface border border-border flex items-center justify-center overflow-hidden flex-shrink-0">
           {value ? (
-            <img src={value} alt="" className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+            <img src={value} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
           ) : (
             <ImageIcon className="w-6 h-6 text-textMuted" />
           )}
@@ -170,7 +171,7 @@ export default function ImagePicker({ label, value, onChange, hint }) {
       {tab === 'library' && (
         <div>
           {libraryLoading ? (
-            <div className="text-sm text-textMuted flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
+            <div className="text-sm text-textMuted flex items-center gap-2"><LoadingDots size={16} /> Loading library...</div>
           ) : library.length === 0 ? (
             <p className="text-sm text-textMuted">Nothing uploaded yet. Use the Upload tab to add images.</p>
           ) : (
@@ -185,7 +186,7 @@ export default function ImagePicker({ label, value, onChange, hint }) {
                     value === u.url ? 'border-primary ring-2 ring-primary/30' : 'border-border hover:border-primary/40'
                   }`}
                 >
-                  <img src={u.url} alt={u.original_name} className="w-full h-full object-cover" />
+                  <img src={u.url} alt={u.original_name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>
