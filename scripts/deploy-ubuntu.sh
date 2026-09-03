@@ -52,6 +52,8 @@ APP_PORT=80
 DOMAIN=""
 WANT_HTTPS=0
 WITH_TGPT=0
+GEMINI_KEY=""
+GEMINI_MODEL=""
 UPDATE_ONLY=0
 RESUME=0
 START_ONLY=0
@@ -94,6 +96,10 @@ while [ $# -gt 0 ]; do
     --branch)          BRANCH="${2:-}"; shift ;;
     --branch=*)        BRANCH="${1#*=}" ;;
     --with-tgpt)       WITH_TGPT=1 ;;
+    --gemini-key)      GEMINI_KEY="${2:-}"; shift ;;
+    --gemini-key=*)    GEMINI_KEY="${1#*=}" ;;
+    --gemini-model)    GEMINI_MODEL="${2:-}"; shift ;;
+    --gemini-model=*)  GEMINI_MODEL="${1#*=}" ;;
     --skip-firewall)   SKIP_FIREWALL=1 ;;
     -h|--help)         usage; exit 0 ;;
     *)                 die "Unknown option: $1 (try --help)" ;;
@@ -312,6 +318,63 @@ if [ "$START_ONLY" -eq 1 ]; then
   exit 1
 fi
 
+# --- AI backend configuration -----------------------------------------------
+# Used by BOTH paths: a fresh deploy writes it next to the other secrets, and
+# `--update --gemini-key ...` can add the key to a server that predates the AI
+# settings without a re-deploy. Upsert rather than append, because .env survives
+# every update: an older file has no AI_* lines at all, and a duplicated key
+# would leave the first (empty) one winning for anyone reading it by eye.
+env_upsert() { # <file> <key> <value>
+  # Replaces (or appends) KEY=VALUE without the shell or sed interpreting
+  # '/', '&' and '\' in the value - an API key is full of them.
+  local file="$1" key="$2" value="$3"
+  if KEY="$key" awk 'BEGIN{k=ENVIRON["KEY"]} index($0,k"=")==1{found=1} END{exit !found}' "$file"; then
+    KEY="$key" VALUE="$value" awk '
+      BEGIN { k = ENVIRON["KEY"]; v = ENVIRON["VALUE"] }
+      index($0, k "=") == 1 && !done { print k "=" v; done = 1; next }
+      { print }
+    ' "$file" > "$file.tmp" || { rm -f "$file.tmp"; return 1; }
+    $SUDO tee "$file" >/dev/null < "$file.tmp"
+    rm -f "$file.tmp"
+  else
+    printf '%s=%s\n' "$key" "$value" | $SUDO tee -a "$file" >/dev/null
+  fi
+  $SUDO chmod 600 "$file"
+}
+
+configure_ai_env() {
+  local envfile="$ROOT_DIR/.env"
+  [ -f "$envfile" ] || return 0
+
+  # Same preference order the backend uses: flag, then Google's documented
+  # export names, then whatever .env already carries.
+  local key="$GEMINI_KEY"
+  [ -n "$key" ] || key="${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}"
+
+  if [ -n "$key" ]; then
+    step "Configuring the AI backend (Gemini)"
+    if [ "$GEMINI_KEY" = "$key" ]; then
+      warn "A --gemini-key value is visible in ps(1) and shell history on a shared"
+      warn "box. GEMINI_API_KEY=<key> sudo -E $0 --update ... avoids both."
+    fi
+    env_upsert "$envfile" AI_API_KEY "$key"
+    env_upsert "$envfile" AI_PROVIDER gemini
+    [ -n "$GEMINI_MODEL" ] && env_upsert "$envfile" AI_MODEL "$GEMINI_MODEL"
+    ok "AI_PROVIDER=gemini - Barista calls the Gemini API; no CLI to install."
+    ok "Prove it after the restart: Admin -> Settings -> AI -> Send a test prompt."
+  elif [ "$WITH_TGPT" -eq 1 ]; then
+    step "Configuring the AI backend (tgpt)"
+    env_upsert "$envfile" AI_PROVIDER auto
+    ok "No key given: with AI_PROVIDER=auto the free tgpt CLI answers when installed."
+    bash "$SCRIPT_DIR/install-tgpt.sh" || warn "tgpt install failed - AI falls back to metadata search."
+  elif [ -n "$GEMINI_MODEL" ]; then
+    step "AI backend"
+    env_upsert "$envfile" AI_MODEL "$GEMINI_MODEL"
+    warn "AI_MODEL set but no key - add AI_API_KEY to $envfile to use it."
+  fi
+  return 0
+}
+
 # --- update path -------------------------------------------------------------
 if [ "$UPDATE_ONLY" -eq 1 ] && [ "$RESUME" -eq 0 ]; then
   step "Updating $APP_NAME"
@@ -395,6 +458,10 @@ if [ "$UPDATE_ONLY" -eq 1 ] && [ "$RESUME" -eq 0 ]; then
       warn "Restored $keep after the sync"
     fi
   done
+
+  # New AI settings can arrive with this same update, so give the operator a way
+  # to store the key in the same command that pulls the code.
+  configure_ai_env
 
   AFTER="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   save_conf
@@ -534,10 +601,9 @@ step "Building frontend"
 [ -f frontend/dist/index.html ] || die "Frontend build produced no dist/index.html."
 ok "Built frontend/dist"
 
-if [ "$WITH_TGPT" -eq 1 ]; then
-  step "Installing tgpt (AI)"
-  bash "$SCRIPT_DIR/install-tgpt.sh" || warn "tgpt install failed - AI falls back to metadata search."
-fi
+# configure_ai_env already ran on the --update path; on a fresh deploy this is
+# where .env first exists, so this is the one that actually writes anything.
+configure_ai_env
 
 # --- 6. ownership ------------------------------------------------------------
 step "Setting ownership"

@@ -82,6 +82,26 @@ for the tmux runner, or `--stop-cmd`/`--start-cmd` for anything else (Docker, a
 custom supervisor). The current status is visible in the admin UI under
 **Admin -> Settings -> Auto-update** and in `data/.auto-update-status`.
 
+**AI backend (Barista).** Optional, and configurable without a deploy. Put a
+Gemini key in `.env` and the Ask page plus the admin drafter call it directly:
+
+```bash
+AI_PROVIDER=gemini
+AI_API_KEY=<your key>          # GEMINI_API_KEY / GOOGLE_API_KEY are read too
+AI_MODEL=gemini-2.5-flash      # optional
+```
+
+Any other endpoint works via `AI_PROVIDER=openai` + `AI_BASE_URL` (OpenRouter,
+Ollama on `127.0.0.1:11434`, a company gateway). `AI_PROVIDER=auto` — the
+default — uses the key when there is one and the free tgpt CLI when there is
+not, so an existing install does not change behaviour. Admin → Settings → AI
+edits provider, model, endpoint, temperature and budgets live (no restart) and
+has a **Send a test prompt** button; the key is not in that list on purpose,
+because that table is plaintext and ends up in every backup. `setup.sh` also
+takes `--gemini-key <k>` / `--gemini-model <m>`, and `deploy-ubuntu.sh` accepts
+them on `--update` so an older server can gain the key in the same command that
+brings it up to date.
+
 Other flags: `--port <n>` (default 80), `--user <name>`, `--with-tgpt` (AI
 backend), `--skip-firewall`. Run `sudo ./espress0 deploy --help` for the
 list. Set `APP_CONFIG_DIR` to keep several deployments on one host.
@@ -109,7 +129,7 @@ rather keep nginx as the only thing on 80.
 ### Quick start (one command)
 
 ```bash
-./espress0 setup        # wizard: admin login, port, exposure, tgpt, run mode
+./espress0 setup        # wizard: admin login, port, exposure, AI key, run mode
 ```
 
 The wizard asks which **port** to expose and whether to bind `0.0.0.0`
@@ -159,7 +179,8 @@ re-run: existing secrets, database and uploads are never overwritten.
 ./espress0 setup --start                    # ... then start the dev servers
 ./espress0 setup --build --start            # ... single origin on :3000
 ./espress0 setup --admin-password 'S3cret!' # choose the password yourself
-./espress0 setup --with-tgpt                # also install tgpt (AI drafting)
+./espress0 setup --gemini-key <k>           # Barista uses the Gemini API
+./espress0 setup --with-tgpt                # ...or install tgpt (free, no key)
 ./espress0 setup --reset-db                 # back up and recreate the database
 ./espress0 setup --help                     # every flag
 ```

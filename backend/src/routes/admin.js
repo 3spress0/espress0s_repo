@@ -648,8 +648,9 @@ export async function adminRoutes(fastify) {
   /**
    * POST /admin/ai/describe
    * Drafts the page copy (summary + markdown body) from whatever metadata the
-   * admin has filled in. Admin-only: it shells out to tgpt, so it must not be
-   * reachable by visitors.
+   * admin has filled in. Admin-only: it spends the operator's API quota (and,
+   * on the tgpt backend, spawns a subprocess), so it must not be reachable by
+   * visitors.
    */
   fastify.post('/admin/ai/describe', {
     config: { rateLimit: { max: 20, timeWindow: '5 minutes' } },

@@ -28,7 +28,8 @@
 #                      (./espress0 deploy --repo <url> [--domain d] [--https] | --update)
 #   backup [dir]       Copy the database + uploads with a timestamp
 #   db                 (Re)run migrations + seed an empty database
-#   ai                 Install tgpt so the admin "Draft with AI" button works
+#   ai                 Install the tgpt CLI (the keyless AI backend). With a
+#                      Gemini/OpenAI endpoint configured you do not need it.
 #   scan               Security probe of the RUNNING app on BASE_URL
 #   scan --full        Full audit: secrets, deps, tests, and HTTP probes
 #   test               Run the backend test suite

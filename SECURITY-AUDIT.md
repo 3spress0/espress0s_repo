@@ -133,10 +133,22 @@ world-writable directory (a local user could pre-create a symlink and either
 clobber a file we write or swap the prompt), and the provider came from the
 environment straight into the command string.
 
-*Fix*: `runTgpt()` uses `spawn(binary, args, { shell: false })` and writes the
+*Fix*: the tgpt path uses `spawn(binary, args, { shell: false })` and writes the
 prompt to stdin — no shell, no temp file. The provider name is validated
 against `/^[a-zA-Z0-9_.-]{1,32}$/`, output is capped, and the child is
 SIGKILLed on timeout. `which tgpt` / `--version` use `execFile`.
+
+*Superseded in part*: tgpt is now only one of several backends
+(`AI_PROVIDER=gemini|openai|tgpt`). The HTTP transports
+(`backend/src/services/aiProviders.js`) remove the subprocess entirely for the
+default path, and carry the equivalent controls: no credentials in the URL (the
+key goes in `x-goog-api-key` / `Authorization`, so it cannot reach an access
+log), a byte ceiling on the response, an `AbortController` timeout, redirects
+refused rather than followed, `AI_BASE_URL` validated through the same
+`safeFetch.js` policy as user-supplied download links, and `redact()` on every
+message a provider error can produce so a key cannot surface in an admin-visible
+status string. Covered by `backend/tests/aiProviders.test.js`, which asserts
+the header/URL shape, the redaction, the metadata-address refusal and the cap.
 
 ### 10. Unauthenticated, unmetered AI endpoint — **low/medium**
 

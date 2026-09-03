@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Coffee, Send, Database, AlertCircle, ExternalLink, Lightbulb, Search, Sparkles } from 'lucide-react';
-import { aiApi, describeApiError } from '../lib/api';
+import { aiApi, describeAi, describeApiError } from '../lib/api';
 import { LoadingDots } from '../components/Loading';
 import StarryBackground from '../components/StarryBackground';
 
@@ -39,7 +39,8 @@ export default function Ask() {
         content: result.answer,
         sources: result.sources || [],
         relatedItems: result.relatedItems || [],
-        usedTgpt: result.usedTgpt,
+        usedAI: result.usedAI,
+        provider: result.provider || null,
         metadata: result.metadata,
         timestamp: new Date(),
       };
@@ -64,6 +65,8 @@ export default function Ask() {
     }
   };
 
+  const ai = describeAi(status);
+
   return (
     <div className="relative min-h-screen">
       <StarryBackground />
@@ -72,9 +75,9 @@ export default function Ask() {
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-gradient-subtle border border-purple-500/20 text-sm mb-4 backdrop-blur-sm">
             <Coffee className="w-4 h-4 text-primary" />
-            <span className="text-textSecondary font-medium">Barista • Powered by tgpt + metadata search</span>
+            <span className="text-textSecondary font-medium">Barista • {ai.headline}</span>
             {status && (
-              <span className={`ml-2 w-2 h-2 rounded-full ${status.tgptAvailable ? 'bg-green-400' : 'bg-amber-400'}`} title={status.tgptAvailable ? 'tgpt available' : 'Fallback mode'} />
+              <span className={`ml-2 w-2 h-2 rounded-full ${ai.ready ? 'bg-green-400' : 'bg-amber-400'}`} title={ai.blurb} />
             )}
           </div>
           
@@ -103,8 +106,8 @@ export default function Ask() {
                 <Coffee className="w-4 h-4 text-purple-400" />
               </div>
               <div>
-                <div className="font-medium text-textPrimary">Barista • tgpt Backend</div>
-                <div className="text-xs text-textMuted mt-1">Uses aandrew-me/tgpt CLI, auto-installed</div>
+                <div className="font-medium text-textPrimary">Barista • {ai.headline}</div>
+                <div className="text-xs text-textMuted mt-1">{ai.badge}</div>
               </div>
             </div>
             <div className="flex gap-3">
@@ -179,8 +182,10 @@ export default function Ask() {
                         )}
                         
                         <div className="mt-2 flex items-center gap-2 text-[11px] text-textMuted">
-                          <span className={`w-2 h-2 rounded-full ${msg.usedTgpt ? 'bg-green-400' : 'bg-blue-400'}`} />
-                          {msg.usedTgpt ? 'Barista answered with tgpt + metadata' : 'Barista answered with metadata search'}
+                          <span className={`w-2 h-2 rounded-full ${msg.usedAI ? 'bg-green-400' : 'bg-blue-400'}`} />
+                          {msg.usedAI
+                            ? `Barista answered with ${msg.provider || 'the model'} + catalogue data`
+                            : 'Barista answered from catalogue metadata'}
                           {msg.metadata && ` • ${msg.metadata.totalFound} files found`}
                         </div>
                       </>
@@ -242,8 +247,8 @@ export default function Ask() {
             <div className="mt-3 flex items-center justify-between text-[11px] text-textMuted">
               <span>Barista's purpose: easily find files • Press Enter to send</span>
               <span className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${status?.tgptAvailable ? 'bg-green-400' : 'bg-amber-400'}`} />
-                {status?.tgptAvailable ? 'tgpt ready' : 'Fallback mode'}
+                <span className={`w-2 h-2 rounded-full ${ai.ready ? 'bg-green-400' : 'bg-amber-400'}`} />
+                {ai.badge}
               </span>
             </div>
           </div>

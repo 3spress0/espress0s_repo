@@ -28,10 +28,11 @@ const api = axios.create({
 });
 
 /**
- * Budget for the AI endpoints, which run a `tgpt` subprocess on the server.
+ * Budget for the AI endpoints, which either spawn the `tgpt` CLI or wait on an
+ * external chat API.
  *
- * This has to be comfortably larger than the server's own tgpt budget
- * (TGPT_TIMEOUT_MS, 20s by default for a question and 30s for an admin
+ * This has to be comfortably larger than the server's own budget
+ * (AI_TIMEOUT_MS / AI_DRAFT_TIMEOUT_MS, 20s for a question and 30s for an admin
  * draft). Both were 30000 ms - the axios default - so a slow provider was
  * killed on the server at the exact moment the browser gave up: the
  * rule-based fallback answer was built for nobody and the visitor saw
@@ -40,6 +41,43 @@ const api = axios.create({
  * drift back into a tie.
  */
 export const AI_TIMEOUT = 60000;
+
+/**
+ * One label for "is a model answering, or just the catalogue?".
+ *
+ * Every Barista surface used to hardcode strings about tgpt, which stayed on
+ * screen after the backend could be a Gemini key or any other endpoint - and
+ * named a tool where the visitor only cares about the provenance of an answer.
+ * `status` is GET /api/ai/status: { enabled, ready, provider, model, fallback }.
+ */
+export function describeAi(status) {
+  if (!status) return { ready: false, badge: 'checking…', headline: 'checking the AI backend', blurb: 'Loading' };
+  if (!status.enabled) {
+    return { ready: false, badge: 'AI off', headline: 'answers come from the catalogue', blurb: 'The admin switched the AI entry points off in Settings.' };
+  }
+  if (!status.ready) {
+    return {
+      ready: false,
+      badge: 'metadata search',
+      headline: 'answers come from the catalogue',
+      blurb: 'No model is configured on this server, so answers are built directly from verified file metadata — nothing invented, nothing hallucinated.',
+    };
+  }
+  const who = status.model ? `${status.provider} · ${status.model}` : status.provider;
+  const blurbs = {
+    gemini: 'Answers are drafted by the Gemini API and then restricted to files that actually exist here.',
+    openai: 'Answers are drafted by your configured chat endpoint and then restricted to files that actually exist here.',
+    tgpt: 'Answers are drafted by the tgpt CLI and then restricted to files that actually exist here.',
+  };
+  return {
+    ready: true,
+    badge: `${status.provider} ready`,
+    headline: who,
+    blurb: blurbs[status.provider] || `Answers are drafted by ${status.provider} and then restricted to files that actually exist here.`,
+    provider: status.provider,
+    model: status.model,
+  };
+}
 
 /**
  * Turns an axios error into something a visitor can act on.
@@ -173,6 +211,11 @@ export const adminApi = {
   duplicateItem: (id) => api.post(`/admin/items/${id}/duplicate`).then(r => r.data),
   bulkItems: (action, ids, extra = {}) => api.post('/admin/items/bulk', { action, ids, ...extra }).then(r => r.data),
   describeItem: (meta) => api.post('/admin/ai/describe', meta, { timeout: AI_TIMEOUT }).then(r => r.data),
+  // Admin view of the AI backend: resolved provider, endpoint, last failure.
+  aiStatus: () => api.get('/admin/ai/status').then(r => r.data),
+  // One live round-trip, so a saved provider/model/base-URL edit can be proven
+  // instead of hoped for. Needs the long budget: it is a real generation.
+  aiTest: () => api.post('/admin/ai/test', {}, { timeout: AI_TIMEOUT }).then(r => r.data),
   /** Version history. */
   versions: (id) => api.get(`/admin/items/${id}/versions`).then(r => r.data),
   version: (id, num) => api.get(`/admin/items/${id}/versions/${num}`).then(r => r.data),

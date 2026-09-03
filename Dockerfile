@@ -13,18 +13,24 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 
-# Install sqlite deps + tgpt dependencies + go for tgpt
-RUN apk add --no-cache python3 make g++ sqlite wget bash curl go git
+# sqlite build deps (better-sqlite3) + the tools the entrypoint needs
+RUN apk add --no-cache python3 make g++ sqlite wget bash curl git
 
-# Install tgpt - https://github.com/aandrew-me/tgpt
-# Method 1: go install (more reliable in alpine)
-RUN go install github.com/aandrew-me/tgpt@latest && \
-    cp /root/go/bin/tgpt /usr/local/bin/tgpt || \
-    wget -qO- https://raw.githubusercontent.com/aandrew-me/tgpt/main/install | sh -s /usr/local/bin || \
-    echo "tgpt install failed, will use fallback mode"
-
-# Verify tgpt
-RUN /usr/local/bin/tgpt --version || tgpt --version || echo "tgpt not available, using fallback"
+# Barista's AI backend is HTTP-first: with AI_API_KEY set the app calls the
+# Gemini API directly, so the image needs no CLI. tgpt - the free, keyless
+# fallback - pulls in a whole Go toolchain, so it is opt-in:
+#   docker build --build-arg WITH_TGPT=true .
+# AI_PROVIDER=auto then picks tgpt on a container that has no key.
+ARG WITH_TGPT=false
+RUN if [ "$WITH_TGPT" = "true" ]; then \
+      apk add --no-cache go && \
+      { go install github.com/aandrew-me/tgpt@latest \
+        && cp /root/go/bin/tgpt /usr/local/bin/tgpt \
+        || wget -qO- https://raw.githubusercontent.com/aandrew-me/tgpt/main/install | sh -s /usr/local/bin; } && \
+      /usr/local/bin/tgpt --version; \
+    else \
+      echo "tgpt skipped (WITH_TGPT=false) - set AI_API_KEY to use the Gemini API"; \
+    fi
 
 # Copy backend
 COPY backend/package.json backend/package-lock.json* ./backend/

@@ -16,34 +16,59 @@ dotenv.config();
 export const DEV_JWT_SECRET = 'dev-secret-change-in-production-min-32-chars-long!';
 export const DEV_ADMIN_PASSWORD = 'ChangeMe123!';
 
+/** First non-empty value among `names`, so AI_TIMEOUT_MS can supersede the
+ * older TGPT_TIMEOUT_MS without an .env that still has the old key losing it. */
+function envFirst(names) {
+  for (const name of names) {
+    const raw = process.env[name];
+    if (raw !== undefined && raw.trim() !== '') return { name, value: raw.trim() };
+  }
+  return null;
+}
+
 /**
  * Parses a positive integer from the environment, falling back when the value
  * is missing, malformed or outside a sane range (an empty `TGPT_TIMEOUT_MS=`
  * in .env would otherwise become NaN and disable the subprocess timeout).
  */
-function intFromEnv(name, fallback, min, max) {
-  const raw = process.env[name];
-  if (raw === undefined || raw.trim() === '') return fallback;
-  const value = parseInt(raw, 10);
+function intFromEnv(names, fallback, min, max, unit = 'ms') {
+  const found = envFirst(Array.isArray(names) ? names : [names]);
+  if (!found) return fallback;
+  const value = parseInt(found.value, 10);
   if (!Number.isFinite(value) || value < min || value > max) {
-    console.warn(`[config] Ignoring ${name}=${raw} (expected ${min}-${max} ms); using ${fallback} ms.`);
+    console.warn(`[config] Ignoring ${found.name}=${found.value} (expected ${min}-${max} ${unit}); using ${fallback} ${unit}.`);
+    return fallback;
+  }
+  return value;
+}
+
+function floatFromEnv(name, fallback, min, max) {
+  const found = envFirst([name]);
+  if (!found) return fallback;
+  const value = Number(found.value);
+  if (!Number.isFinite(value) || value < min || value > max) {
+    console.warn(`[config] Ignoring ${found.name}=${found.value} (expected ${min}-${max}); using ${fallback}.`);
     return fallback;
   }
   return value;
 }
 
 /**
- * How long a single tgpt run may take before it is killed.
+ * How long a single AI call may take before it is killed - a tgpt subprocess or
+ * an HTTP round-trip alike.
  *
  * Both budgets must stay *below* the browser's request budget (AI_TIMEOUT in
  * frontend/src/lib/api.js). They used to both be 30000 ms - exactly the axios
- * default - so a slow provider killed tgpt at the same instant the browser
+ * default - so a slow provider killed the call at the same instant the browser
  * gave up: the rule-based fallback answer was computed for nobody and the
  * visitor saw a bare "timeout of 30000ms exceeded". backend/tests/ai.test.js
  * asserts the ordering so the two cannot drift back into a tie.
  */
-export const TGPT_ASK_TIMEOUT_MS = intFromEnv('TGPT_TIMEOUT_MS', 20000, 2000, 60000);
-export const TGPT_DRAFT_TIMEOUT_MS = intFromEnv('TGPT_DRAFT_TIMEOUT_MS', 30000, 2000, 120000);
+export const AI_ASK_TIMEOUT_MS = intFromEnv(['AI_TIMEOUT_MS', 'TGPT_TIMEOUT_MS'], 20000, 2000, 60000);
+export const AI_DRAFT_TIMEOUT_MS = intFromEnv(['AI_DRAFT_TIMEOUT_MS', 'TGPT_DRAFT_TIMEOUT_MS'], 30000, 2000, 120000);
+// Names the config block shipped under before the Gemini provider existed.
+export const TGPT_ASK_TIMEOUT_MS = AI_ASK_TIMEOUT_MS;
+export const TGPT_DRAFT_TIMEOUT_MS = AI_DRAFT_TIMEOUT_MS;
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PROD = NODE_ENV === 'production';
@@ -115,18 +140,42 @@ export const config = {
     }
   },
 
+  /**
+   * Environment half of the AI configuration. Everything here can be overridden
+   * per-key by an admin in Settings (site_settings) except `apiKey`, which is
+   * env-only on purpose - see services/aiConfig.js for the merge rules and
+   * services/aiProviders.js for the transports.
+   */
   ai: {
-    enabled: process.env.TGPT_ENABLED !== 'false',
-    binaryPath: process.env.TGPT_BINARY_PATH || '/usr/local/bin/tgpt',
-    // Empty = let tgpt use its own default provider (phind at the time of
-    // writing), which is free and needs no key. 'openai' etc. need TGPT_API_KEY.
-    provider: process.env.TGPT_PROVIDER || '',
-    apiKey: process.env.TGPT_API_KEY || process.env.AI_API_KEY || '',
-    model: process.env.TGPT_MODEL || '',
-    // Per-run subprocess budgets; see TGPT_ASK_TIMEOUT_MS above for why they
-    // must be smaller than the client's AI_TIMEOUT.
-    timeoutMs: TGPT_ASK_TIMEOUT_MS,
-    draftTimeoutMs: TGPT_DRAFT_TIMEOUT_MS,
+    enabled: (envFirst(['AI_ENABLED', 'TGPT_ENABLED'])?.value ?? 'true') !== 'false',
+    // auto = Gemini when a key exists, the tgpt CLI when it does not.
+    // gemini | openai | tgpt | none force one.
+    provider: envFirst(['AI_PROVIDER'])?.value || (process.env.TGPT_PROVIDER ? 'tgpt' : 'auto'),
+    // Wire format, derived from the provider unless you point at something that
+    // speaks the other one (a proxy that serves Gemini-style JSON, say).
+    format: envFirst(['AI_FORMAT'])?.value || '',
+    model: envFirst(['AI_MODEL'])?.value || '',
+    // Any endpoint: https://openrouter.ai/api/v1, http://127.0.0.1:11434/v1,
+    // an Azure-style gateway. Validated at request time by safeFetch.js.
+    baseUrl: envFirst(['AI_BASE_URL'])?.value || '',
+    // Google's SDKs read these two names, so a box that already exports one
+    // needs no .env edit. TGPT_API_KEY stays as the historical spelling.
+    apiKey: envFirst(['AI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'TGPT_API_KEY'])?.value || '',
+    temperature: floatFromEnv('AI_TEMPERATURE', 0.2, 0, 2),
+    maxTokens: intFromEnv(['AI_MAX_TOKENS'], 1024, 64, 32768, 'tokens'),
+    // Per-run budgets; see AI_ASK_TIMEOUT_MS above for why they must be
+    // smaller than the client's AI_TIMEOUT.
+    timeoutMs: AI_ASK_TIMEOUT_MS,
+    draftTimeoutMs: AI_DRAFT_TIMEOUT_MS,
+    // Off by default: a base URL is admin-set but the request leaves the box,
+    // so link-local/metadata addresses are refused whatever this is set to.
+    allowPrivateBaseUrl: process.env.AI_ALLOW_PRIVATE_BASE_URL === 'true',
+    tgpt: {
+      binaryPath: envFirst(['AI_TGPT_BINARY_PATH', 'TGPT_BINARY_PATH'])?.value || '/usr/local/bin/tgpt',
+      // tgpt's own sub-provider (phind by default: free, no key) and model.
+      provider: envFirst(['AI_TGPT_PROVIDER', 'TGPT_PROVIDER'])?.value || '',
+      model: envFirst(['AI_TGPT_MODEL', 'TGPT_MODEL'])?.value || '',
+    },
   },
 
   rateLimit: {

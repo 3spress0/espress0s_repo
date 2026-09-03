@@ -30,7 +30,7 @@ cd espress0s-repo
 | `serve` | Keeps the app running in tmux (survives logout), with an auto-update window. Options: `dev`, `status`, `stop`, `logs`. |
 | `update` | Auto-updater: builds the next commit off to the side, then stop → swap → migrate → restart → health check, rolling back if the site stays down. `--once` for cron. |
 | `deploy` | Full Ubuntu server install (root): systemd, nginx, certbot HTTPS. |
-| `backup`, `db`, `ai`, `scan`, `test`, `status` | Backup/seed/install tgpt/security probe/tests/dashboard. |
+| `backup`, `db`, `ai`, `scan`, `test`, `status` | Backup/seed/install the optional tgpt CLI/security probe/tests/dashboard. |
 
 `./espress0 help` prints the same list. Each command calls the matching
 script in `scripts/`, so direct script usage keeps working.
@@ -50,8 +50,9 @@ script in `scripts/`, so direct script usage keeps working.
 - Backup & restore: full JSON export, dry-run import preview, upsert by slug.
 - Admin panel for pages, categories, folders, users, settings, storage and
   monitoring.
-- AI helpers (optional tgpt binary): a metadata-first "Ask" assistant and a
-  one-click description drafter; both fall back to templates without tgpt.
+- AI helpers (Gemini key, any OpenAI-compatible endpoint, or the free tgpt
+  CLI): a metadata-first "Ask" assistant and a one-click description drafter;
+  both fall back to deterministic templates with no model configured.
 - Themes: 9 dark/light palettes switchable from the navbar, admin-set site
   default.
 - Seeded catalog (`backend/src/db/seed-catalog.js`, `seed-modern.js`,
@@ -112,14 +113,58 @@ item's provider:
 - `external` — any direct URL
 - `github` — release asset URL
 
-## AI (tgpt)
+## AI (Barista)
 
-Optional. `./espress0 ai` installs the [tgpt](https://github.com/aandrew-me/tgpt)
-binary. With no `TGPT_PROVIDER` set it uses tgpt's free, keyless default
-provider; `TGPT_PROVIDER=openai|groq|gemini|deepseek` plus `TGPT_API_KEY`
-picks a paid/free-signup provider (the key is passed via environment, never
-on a command line). Without tgpt, the Ask page and the admin drafter degrade
-to deterministic metadata matching — nothing breaks.
+Optional, and the backend is a plug, not a dependency. "Ask AI" and the admin
+"Draft with AI" button both go through one transport layer
+(`backend/src/services/aiProviders.js`); whichever you pick, the answer is
+still restricted to files that exist in the catalogue.
+
+| `AI_PROVIDER` | what it does |
+| --- | --- |
+| `auto` (default) | Gemini if a key exists, the tgpt CLI if it does not, metadata search if neither |
+| `gemini` | Google's `generateContent` REST API — needs a key, nothing to install |
+| `openai` | anything speaking `POST {AI_BASE_URL}/chat/completions` |
+| `tgpt` | the free [tgpt](https://github.com/aandrew-me/tgpt) CLI — `./espress0 ai` |
+| `none` | no model at all; deterministic metadata matching |
+
+```bash
+# .env — Gemini is one line, no binary, no Go toolchain in the image
+AI_PROVIDER=gemini
+AI_API_KEY=<key from https://aistudio.google.com/apikey>
+AI_MODEL=gemini-2.5-flash        # optional; this is the default
+```
+
+`AI_API_KEY`, `GEMINI_API_KEY` and `GOOGLE_API_KEY` are all read, in that order,
+so a box that already exports one of Google's names needs no edit. Note that
+Google now rejects *unrestricted* legacy API keys (auth keys are what AI Studio
+issues), so a key that returns 403 was probably created before that change and
+needs a restriction or a replacement.
+
+**Any other endpoint** works through the OpenAI-shaped client:
+
+```bash
+AI_PROVIDER=openai
+AI_BASE_URL=https://openrouter.ai/api/v1     # many models, one key
+AI_BASE_URL=http://127.0.0.1:11434/v1        # Ollama on this box
+AI_MODEL=llama3.1:8b
+```
+
+`AI_BASE_URL` is a server-side request the admin controls, so it is validated:
+loopback is fine, a LAN address needs `AI_ALLOW_PRIVATE_BASE_URL=true`, cloud
+metadata addresses are refused whatever you set, and redirects are never
+followed (see `backend/src/lib/safeFetch.js`, the same guard the download-link
+checker uses).
+
+Provider, model, endpoint, temperature, token ceiling and timeouts are also
+editable in **Admin → Settings → AI**, with a "Send a test prompt" button that
+proves the combination actually answers. The **key is deliberately not one of
+those settings**: `site_settings` is plaintext, readable through
+`/api/admin/settings` and copied into every database backup, so the key stays
+in `.env` beside `JWT_SECRET` and is never echoed by any endpoint or log line.
+
+Without a model configured, nothing breaks: Ask answers from metadata and the
+drafter produces a filled-in markdown skeleton with `[bracketed]` gaps.
 
 ## Layout
 

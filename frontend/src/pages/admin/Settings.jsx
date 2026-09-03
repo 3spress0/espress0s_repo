@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Save, RotateCcw, Loader2, Check, AlertCircle, RefreshCw } from 'lucide-react';
+import { Save, RotateCcw, Loader2, Check, AlertCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { adminApi, autoUpdateApi } from '../../lib/api';
 import { useSettings } from '../../context/SettingsContext';
 import { DARK_THEMES, LIGHT_THEMES, getTheme } from '../../themes';
@@ -14,6 +14,25 @@ const GROUP_LABELS = {
   uploads: 'Uploads',
   linkcheck: 'Link health checker',
   theme: 'Theme & effects',
+};
+
+// The AI backend is chosen from what the server understands rather than typed:
+// a typo in a provider name resolves to "no model answering", which is a quiet
+// failure an admin notices only when visitors get metadata answers.
+const AI_SELECTS = {
+  ai_provider: [
+    { value: '', label: 'Keep the .env value' },
+    { value: 'auto', label: 'auto — Gemini if a key is set, else tgpt' },
+    { value: 'gemini', label: 'gemini — Google Gemini API' },
+    { value: 'openai', label: 'openai — any /chat/completions endpoint' },
+    { value: 'tgpt', label: 'tgpt — free CLI, no key' },
+    { value: 'none', label: 'none — catalogue answers only' },
+  ],
+  ai_format: [
+    { value: '', label: 'Derive from the provider' },
+    { value: 'gemini', label: 'gemini — :generateContent' },
+    { value: 'openai', label: 'openai — /chat/completions' },
+  ],
 };
 
 // Scheme ids are picked from the registry rather than typed, so a typo can't
@@ -105,6 +124,25 @@ export default function AdminSettings() {
       );
     }
 
+    if (AI_SELECTS[m.key]) {
+      const options = [...AI_SELECTS[m.key]];
+      const current = value ?? '';
+      // A value saved by an older release (or typed into .env) still has to be
+      // visible, or editing another field would silently rewrite it.
+      if (current && !options.some(o => o.value === current)) {
+        options.splice(1, 0, { value: current, label: `${current} (from .env)` });
+      }
+      return (
+        <select
+          value={current}
+          onChange={(e) => set(m.key, e.target.value)}
+          className={common}
+        >
+          {options.map(o => <option key={o.value || 'keep'} value={o.value}>{o.label}</option>)}
+        </select>
+      );
+    }
+
     if (m.type === 'boolean') {
       return (
         <label className="flex items-center gap-2 text-sm text-textSecondary cursor-pointer">
@@ -187,7 +225,98 @@ export default function AdminSettings() {
         </div>
       ))}
 
+      <AiCard />
       <AutoUpdateCard />
+    </div>
+  );
+}
+
+/**
+ * What the server actually resolved for the AI backend, plus a live test.
+ *
+ * The generated form above edits individual keys; this shows the merged result
+ * (.env + these settings) and can fire one real request at it, because "saved"
+ * and "working" are different claims - a wrong model name or a revoked key
+ * otherwise surfaces as visitors quietly getting catalogue-only answers.
+ * The API key itself is intentionally absent: it lives in .env and never in
+ * the settings table, so there is nothing here to leak.
+ */
+function AiCard() {
+  const [info, setInfo] = useState(null);
+  const [result, setResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+
+  const load = () => adminApi.aiStatus().then(setInfo).catch(() => setInfo(null));
+  useEffect(() => { load(); }, []);
+
+  const test = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      setResult(await adminApi.aiTest());
+    } catch (e) {
+      setResult({ ok: false, error: e.response?.data?.error || e.message || 'Test request failed' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="glass rounded-2xl border border-white/5 p-6">
+      <div className="flex items-center gap-2 mb-3">
+        <Sparkles className="w-4 h-4 text-primary" />
+        <h3 className="font-semibold text-textPrimary">AI backend</h3>
+        {info?.provider && (
+          <span className="ml-auto text-xs text-textMuted font-mono">
+            {info.provider}{info.model ? ` · ${info.model}` : ''}
+          </span>
+        )}
+      </div>
+
+      {info ? (
+        <div className={`p-3 rounded-xl border text-sm ${info.ready ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}>
+          <div className="font-medium">{info.ready ? `Answering via ${info.format}` : 'Catalogue answers only'}</div>
+          <div className="mt-0.5 opacity-90 font-mono text-xs">{info.baseUrl || '—'}</div>
+          <div className="mt-1 text-xs opacity-90">API key: {info.keyHint}</div>
+          {info.tgptAvailable && <div className="mt-1 text-xs opacity-70">tgpt CLI: {info.tgptBinary}</div>}
+          {info.notes?.length > 0 && (
+            <ul className="mt-2 space-y-1 text-xs opacity-90 list-disc pl-4">
+              {info.notes.map(n => <li key={n}>{n}</li>)}
+            </ul>
+          )}
+          {info.error && <div className="mt-2 text-xs text-red-400">last failure: {info.error}</div>}
+        </div>
+      ) : (
+        <div className="p-3 rounded-xl border border-border bg-surfaceHover text-sm text-textSecondary">
+          Could not read the AI status from the server.
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={test}
+          disabled={testing}
+          className="px-4 py-2 bg-surface border border-border rounded-xl text-sm font-medium flex items-center gap-2 hover:border-primary/40 disabled:opacity-50"
+        >
+          {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          {testing ? 'Testing…' : 'Send a test prompt'}
+        </button>
+        <button
+          type="button"
+          onClick={load}
+          className="text-xs text-textMuted hover:text-primary flex items-center gap-1"
+        >
+          <RotateCcw className="w-3 h-3" /> Reload status
+        </button>
+        {result && (
+          <span className={`text-sm ${result.ok ? 'text-green-400' : 'text-red-400'}`}>
+            {result.ok
+              ? `OK in ${result.ms} ms — “${result.sample}”`
+              : `Failed: ${result.error}`}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

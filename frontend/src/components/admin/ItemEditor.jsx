@@ -428,9 +428,9 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
       long_description: draft.long_description || f.long_description,
       description: f.description.trim() ? f.description : (draft.description || ''),
     }));
-    setAiNotice(draft.usedTgpt
-      ? 'Drafted with tgpt — review it, the AI does not know your files.'
-      : `Outline only — tgpt is not usable (${draft.tgptError || 'not installed: run ./espress0 ai'}). Replace the [bracketed] parts.`);
+    setAiNotice(draft.usedAI
+      ? `Drafted with ${draft.provider || 'the model'} — review it, the AI does not know your files.`
+      : `Outline only — no model answered (${draft.aiError || 'configure one in Settings → AI, or run ./espress0 ai for the free CLI'}). Replace the [bracketed] parts.`);
   };
 
   const field = (label, key, opts = {}) => (
