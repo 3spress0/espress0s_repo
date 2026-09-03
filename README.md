@@ -98,7 +98,9 @@ sudo ./espress0 deploy --repo <url> --domain repo.example.com --https
 ```
 
 Docker works too (`docker compose up -d --build`; Caddy profile adds HTTPS).
-Details: `SETUP.md` (local and server), `DEPLOYMENT.md` (Azure-focused).
+Details: `SETUP.md`. For the catalogue import/export format see `CATALOG.md`,
+for palettes and brand defaults `THEME.md`, and for the hardening record
+`SECURITY-AUDIT.md`.
 
 ## Storage providers
 
