@@ -34,6 +34,7 @@ import { catalogRoutes } from './routes/catalog.js';
 import multipart from '@fastify/multipart';
 import { monitoringService } from './services/monitoringService.js';
 import { linkHealthService } from './services/linkHealthService.js';
+import { rateLimitKey, rateLimitMax } from './middleware/rateLimit.js';
 
 // Boot-time configuration audit. In production this throws; in development it
 // prints the same list so the gap is visible before deploy day.
@@ -187,8 +188,11 @@ await fastify.register(multipart, {
 
 await fastify.register(rateLimit, {
   global: true,
-  max: config.rateLimit.max,
   timeWindow: config.rateLimit.windowMs,
+  // Two buckets, not one: see rateLimitKey() in middleware/rateLimit.js for
+  // why an admin session cannot share the anonymous allowance.
+  keyGenerator: rateLimitKey,
+  max: (request, key) => rateLimitMax(key),
 });
 
 // Security: Block path traversal

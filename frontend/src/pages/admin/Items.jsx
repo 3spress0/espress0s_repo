@@ -608,7 +608,10 @@ export default function AdminItems() {
                   </td>
                 </tr>
               )}
-              {visible.length === 0 && !loading && (
+              {/* A failed request also leaves `items` empty, and claiming
+                  "no file pages yet" on a 429 or a 500 is worse than saying
+                  nothing: the error banner above already explains. */}
+              {visible.length === 0 && !loading && !error && (
                 <tr>
                   <td colSpan={9} className="p-10 text-center">
                     <p className="text-sm text-textSecondary mb-1">
