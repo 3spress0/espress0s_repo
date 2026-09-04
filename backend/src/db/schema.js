@@ -313,6 +313,7 @@ CREATE TABLE IF NOT EXISTS catalog_imports (
   items_skipped INTEGER DEFAULT 0,
   relations_created INTEGER DEFAULT 0,
   error_count INTEGER DEFAULT 0,
+  duplicate_count INTEGER NOT NULL DEFAULT 0,
   errors_json TEXT, -- JSON array; downloadable via the history endpoint
   backup_path TEXT, -- database backup taken before applying, when one was made
   catalog_format TEXT,

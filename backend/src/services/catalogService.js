@@ -13,6 +13,7 @@ import {
   serializeItem, getItemLinksForMany, encryptItemFields, encryptLinkFields,
 } from './itemSerializer.js';
 import { makeSlug } from '../utils/slug.js';
+import { loadExistingIndex } from './duplicateDetector.js';
 
 /**
  * Bulk catalogue import / export.
@@ -260,8 +261,14 @@ function newReport(mode, dryRun) {
     relations: { created: 0, unchanged: 0, skipped: 0 },
     errors: [],
     errorCount: 0,
+    // Possible duplicates among entries that would be CREATED: an existing
+    // row or an earlier archive entry with a near-identical name/slug/version.
+    duplicates: [],
+    duplicateCount: 0,
   };
 }
+
+export const MAX_STORED_DUPLICATES = 500;
 
 /**
  * Walk a catalogue and either report or write it.
@@ -270,11 +277,30 @@ function newReport(mode, dryRun) {
  * @param {{ mode: string, apply: boolean }} options
  * @returns {object} report
  */
-export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {}) {
+export function runCatalogPlan(catalog, { mode = 'upsert', apply = false, detectDuplicates = true } = {}) {
   if (!IMPORT_MODES.includes(mode)) throw new CatalogError(`Unknown import mode "${mode}"`, 'CATALOG_BAD_MODE');
 
   const db = getDb();
   const report = newReport(mode, !apply);
+
+  // Fuzzy duplicate check for entries about to be created. Slug identity
+  // stays the rule for what gets written; this only warns, it never blocks.
+  const dupIndex = detectDuplicates && mode !== 'update-only' ? loadExistingIndex(db) : null;
+  const noteDuplicates = (entry, slug) => {
+    if (!dupIndex) return;
+    const matches = dupIndex.find({ name: entry.name, slug, version: entry.version ?? null }, { exclude: (r) => r.slug === slug });
+    if (matches.length) {
+      report.duplicateCount++;
+      if (report.duplicates.length < MAX_STORED_DUPLICATES) {
+        report.duplicates.push({
+          slug, name: entry.name, version: entry.version ?? null,
+          matches: matches.map((m) => ({ slug: m.slug, name: m.name, version: m.version, level: m.level, reason: m.reason, existing: m.id !== null })),
+        });
+      }
+    }
+    // Later entries in the same archive are compared against this one too.
+    dupIndex.add({ id: null, slug, name: entry.name, version: entry.version ?? null });
+  };
 
   const noteError = (slug, message, field) => {
     report.errorCount++;
@@ -454,6 +480,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
 
         // --- create --------------------------------------------------------
         if (!existing) {
+          noteDuplicates(item, slug);
           report.items.created++;
           if (apply) {
             const now = new Date().toISOString();
@@ -640,14 +667,14 @@ export async function importCatalogArchive({ buffer, filename = 'catalog.zip', m
     db.prepare(`
       UPDATE catalog_imports SET
         status = ?, items_created = ?, items_updated = ?, items_unchanged = ?, items_skipped = ?,
-        relations_created = ?, error_count = ?, errors_json = ?, backup_path = ?,
+        relations_created = ?, error_count = ?, errors_json = ?, backup_path = ?, duplicate_count = ?,
         catalog_format = ?, catalog_version = ?, finished_at = ?
       WHERE id = ?
     `).run(
       status,
       report?.items.created ?? 0, report?.items.updated ?? 0, report?.items.unchanged ?? 0, report?.items.skipped ?? 0,
       report?.relations.created ?? 0, report?.errorCount ?? 0,
-      report ? JSON.stringify(report.errors) : null, backupPath,
+      report ? JSON.stringify(report.errors) : null, backupPath, report?.duplicateCount ?? 0,
       CATALOG_FORMAT, CATALOG_VERSION, new Date().toISOString(), historyId,
     );
     const row = db.prepare('SELECT * FROM catalog_imports WHERE id = ?').get(historyId);

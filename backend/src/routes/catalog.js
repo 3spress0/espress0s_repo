@@ -104,6 +104,9 @@ export async function catalogRoutes(fastify) {
         relations: report.relations,
         errorCount: report.errorCount,
         errors: inline,
+        duplicateCount: report.duplicateCount || 0,
+        duplicates: (report.duplicates || []).slice(0, MAX_INLINE_ERRORS),
+        duplicatesTruncated: (report.duplicateCount || 0) > Math.min(report.duplicates?.length || 0, MAX_INLINE_ERRORS),
         errorsTruncated: report.errorCount > inline.length,
         errorsUrl: report.errorCount
           ? `/api/admin/catalog/imports/${history.id}/errors`

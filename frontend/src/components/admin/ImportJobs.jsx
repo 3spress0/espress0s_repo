@@ -164,6 +164,11 @@ export default function ImportJobs({ onNotify }) {
           <div className="flex items-center justify-between"><span className="font-semibold text-textPrimary">Preview · {preview.job.name}</span><button onClick={() => setPreview(null)} className="text-textMuted"><X className="w-4 h-4" /></button></div>
           <div className="text-textSecondary">Would create <b>{preview.report.items.created}</b>, update <b>{preview.report.items.updated}</b>, leave <b>{preview.report.items.unchanged}</b> unchanged, skip <b>{preview.report.items.skipped}</b>{preview.report.errorCount ? <>, with <b className="text-amber-300">{preview.report.errorCount}</b> row error(s)</> : null}.</div>
           {preview.report.errors?.slice(0, 10).map((e, i) => <div key={i} className="text-xs text-amber-300 font-mono">{e.slug || '—'} · {e.field || '—'} · {e.error}</div>)}
+          {preview.report.duplicateCount > 0 && (
+            <div className="text-xs text-orange-300">{preview.report.duplicateCount} new entr{preview.report.duplicateCount === 1 ? 'y looks' : 'ies look'} like an existing one:
+              {preview.report.duplicates.slice(0, 10).map((d, i) => <div key={i} className="font-mono text-textSecondary">{d.slug} ≈ {d.matches.map(m => `${m.slug} (${m.reason})`).join(', ')}</div>)}
+            </div>
+          )}
         </div>
       )}
     </div>

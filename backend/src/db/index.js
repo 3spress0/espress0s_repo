@@ -130,6 +130,10 @@ export function getDb() {
       dbInstance.exec("ALTER TABLE items ADD COLUMN requirements TEXT");
     }
     const hasFolderId = itemCols.some(c => c.name === 'folder_id');
+    const importCols = dbInstance.prepare("PRAGMA table_info(catalog_imports)").all();
+    if (importCols.length && !importCols.some(c => c.name === 'duplicate_count')) {
+      dbInstance.exec("ALTER TABLE catalog_imports ADD COLUMN duplicate_count INTEGER NOT NULL DEFAULT 0");
+    }
     if (!hasFolderId) {
       dbInstance.exec("ALTER TABLE items ADD COLUMN folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL");
       dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_items_folder ON items(folder_id)");

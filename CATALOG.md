@@ -120,6 +120,18 @@ written — the rest of that entry still imports. Locally uploaded icons are als
 omitted from exports, because they would not resolve on another install; the
 export reports how many were left out.
 
+## Duplicate detection
+
+Identity is by slug, so an entry that arrives under a slightly different slug
+(`7zip-2301` vs `7-zip-23-01`) would be created a second time. Every entry an
+import is about to **create** is therefore compared - by normalised name,
+normalised version and punctuation-stripped slug - against the existing
+catalogue and against earlier entries in the same archive. Matches are listed
+in the preview as `duplicates` (`likely` / `possible`, with a reason) and the
+count is stored on the history row as `duplicate_count`. It is a warning only:
+fix the slug in the archive if it is the same software, or apply as-is if it is
+a legitimate sibling. Same name with a *different* version is not flagged.
+
 ## Errors
 
 One bad entry never fails the archive. Each problem becomes a row in

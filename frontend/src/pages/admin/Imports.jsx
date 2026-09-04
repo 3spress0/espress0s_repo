@@ -289,6 +289,26 @@ export default function AdminImports() {
               </div>
             )}
 
+            {preview.duplicateCount > 0 && (
+              <div className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-3">
+                <p className="text-xs text-orange-300 mb-2">
+                  {preview.duplicateCount} new entr{preview.duplicateCount === 1 ? 'y looks' : 'ies look'} like something already in the catalogue (or earlier in this archive).
+                  They will still be created - fix the slugs in the archive if they are the same software.
+                </p>
+                <ul className="text-[11px] text-textSecondary space-y-1 max-h-40 overflow-auto">
+                  {(preview.duplicates || []).map((d, i) => (
+                    <li key={i} className="font-mono">
+                      <span className="text-textPrimary">{d.slug}</span>{d.version ? ` (${d.version})` : ''} ≈{' '}
+                      {d.matches.map((m, j) => (
+                        <span key={j}>{j > 0 ? ', ' : ''}<span className={m.level === 'likely' ? 'text-orange-300' : ''}>{m.slug}</span>{m.version ? ` (${m.version})` : ''}{m.existing ? '' : ' [in archive]'} <span className="text-textMuted">- {m.reason}</span></span>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+                {preview.duplicatesTruncated && <p className="text-[11px] text-textMuted mt-1">…and more.</p>}
+              </div>
+            )}
+
             <div className="flex gap-2">
               <button
                 onClick={apply}
@@ -368,6 +388,7 @@ export default function AdminImports() {
                         ? counts(row).map(([label, n]) => `${n} ${label}`).join(' · ')
                         : '—'}
                       {row.relations_created > 0 && ` · ${row.relations_created} relations`}
+                      {row.duplicate_count > 0 && <span className="text-orange-300" title="Entries that looked like existing ones at import time"> · {row.duplicate_count} possible duplicate{row.duplicate_count === 1 ? '' : 's'}</span>}
                     </td>
                     <td className="p-3 text-right">
                       {row.error_count > 0 ? (
