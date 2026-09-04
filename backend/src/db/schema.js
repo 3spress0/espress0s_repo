@@ -323,6 +323,28 @@ CREATE TABLE IF NOT EXISTS catalog_imports (
 
 CREATE INDEX IF NOT EXISTS idx_catalog_imports_started ON catalog_imports(started_at DESC);
 
+-- Scheduled import jobs (services/importJobService.js). Each run goes through
+-- the normal catalogue import pipeline and leaves a catalog_imports row.
+CREATE TABLE IF NOT EXISTS import_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK(source_type IN ('catalog', 'github-releases')),
+  source_url TEXT NOT NULL, -- URL for 'catalog', owner/repo for 'github-releases'
+  mode TEXT NOT NULL DEFAULT 'upsert' CHECK(mode IN ('upsert', 'add-only', 'update-only')),
+  interval_minutes INTEGER NOT NULL DEFAULT 360,
+  options TEXT NOT NULL DEFAULT '{}', -- JSON, adapter-specific
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  next_run_at DATETIME,
+  last_run_at DATETIME,
+  last_status TEXT, -- ok | ok-with-errors | failed
+  last_error TEXT,
+  last_report TEXT, -- JSON summary of the last applied run
+  run_count INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Application event log (services/eventBus.js). Feeds webhooks, the RSS feed
 -- and per-user subscriptions. Pruned after 90 days.
 CREATE TABLE IF NOT EXISTS events (

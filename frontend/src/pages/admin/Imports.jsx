@@ -6,6 +6,7 @@ import {
 import { catalogApi } from '../../lib/api';
 import Loading, { LoadingDots } from '../../components/Loading';
 import Progress from '../../components/Progress';
+import ImportJobs from '../../components/admin/ImportJobs';
 
 /**
  * Admin -> Catalogue: import a catalog.zip, export the current catalogue,
@@ -410,6 +411,8 @@ export default function AdminImports() {
         <Undo2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
         Format reference: <span className="font-mono">CATALOG.md</span> at the repository root.
       </p>
+
+      <ImportJobs onNotify={notify} />
     </div>
   );
 }

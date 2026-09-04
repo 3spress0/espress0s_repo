@@ -330,6 +330,15 @@ export const webhooksApi = {
   events: (params) => api.get('/admin/events', { params }).then(r => r.data),
 };
 
+/** Scheduled imports (admin). */
+export const importJobsApi = {
+  list: () => api.get('/admin/import-jobs').then(r => r.data),
+  create: (data) => api.post('/admin/import-jobs', data).then(r => r.data),
+  update: (id, data) => api.put(`/admin/import-jobs/${id}`, data).then(r => r.data),
+  remove: (id) => api.delete(`/admin/import-jobs/${id}`).then(r => r.data),
+  run: (id, apply = true) => api.post(`/admin/import-jobs/${id}/run`, null, { params: { apply: apply ? 1 : 0 }, timeout: 120000 }).then(r => r.data),
+};
+
 export const catalogAdminApi = {
   /** FTS5 search with the admin filter set; sort is allow-listed server-side. */
   search: (params) => api.get('/admin/catalog/search', { params, timeout: AI_TIMEOUT }).then(r => r.data),

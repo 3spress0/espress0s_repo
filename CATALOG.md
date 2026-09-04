@@ -387,3 +387,16 @@ some entries store the function's source text instead of calling it. Roughly 680
 rows end up with an `external_url` like `(v) => \`https://github.com/…\``. The
 catalogue reports these on export and rejects those entries on import rather
 than rewriting them. Fixing the seed data is a separate change.
+
+## Scheduled imports
+
+**Admin → Catalogue → Scheduled imports** runs the same pipeline on a timer. Two sources:
+
+| Source | `source_url` | What it does |
+| --- | --- | --- |
+| `catalog` | URL of a `catalog.zip` or a bare `catalog.json` | Fetches and imports it with the job's mode |
+| `github-releases` | `owner/repo` or a github.com URL | Each release becomes one entry (`<prefix>-<tag>`), each asset one `github` download link |
+
+GitHub options: `category`, `folder`, `prefix`, `tags`, `asset_pattern` (regex on asset names), `include_prereleases`, `max_releases` (≤200), `platform`, `license_status`. Set `GITHUB_TOKEN` in `.env` to raise the API rate limit. Minimum interval is 15 minutes; "Preview" runs the dry run; every applied run appears in the import history with its report. Sources must be public hosts (same SSRF policy as the rest of the app).
+
+API: `GET/POST /api/admin/import-jobs`, `GET/PUT/DELETE /api/admin/import-jobs/:id`, `POST /api/admin/import-jobs/:id/run[?apply=0]`.
