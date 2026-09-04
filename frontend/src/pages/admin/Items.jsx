@@ -175,6 +175,8 @@ export default function AdminItems() {
   // Deep link: /admin/items/:id opens that item's editor directly.
   useEffect(() => {
     if (!id) { setEditing(null); return; }
+    // /admin/items/new opens an empty editor (used by the command palette).
+    if (id === 'new') { setEditing(null); setCreating(true); navigate('/admin/items', { replace: true }); return; }
     let cancelled = false;
     setLoadingId(Number(id));
     itemsApi.get(id)

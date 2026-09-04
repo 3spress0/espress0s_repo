@@ -77,6 +77,15 @@ export default function Navbar({ onAskOpen }) {
                 );
               })}
 
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('espress0:palette'))}
+                className="hidden lg:flex items-center gap-2 px-3 py-2 rounded-full text-sm text-textSecondary hover:text-textPrimary hover:bg-surfaceHover transition-all"
+                title="Search and commands (Ctrl/⌘ K)"
+              >
+                <Search className="w-4 h-4" />
+                <kbd className="px-1.5 py-0.5 rounded bg-surface border border-border text-[10px] font-mono text-textMuted">⌘K</kbd>
+              </button>
+
               <button onClick={onAskOpen} className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-textSecondary hover:text-textPrimary hover:bg-surfaceHover transition-all">
                 <Coffee className="w-4 h-4" />
                 Ask AI

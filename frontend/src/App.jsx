@@ -13,6 +13,7 @@ import Register from './pages/Register';
 import NotFound from './pages/NotFound';
 import Account from './pages/Account';
 import AskAIPopup from './components/AskAIPopup';
+import CommandPalette from './components/CommandPalette';
 import MaintenanceBanner from './components/MaintenanceBanner';
 import { AuthProvider } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
@@ -96,6 +97,7 @@ function AppContent() {
       </main>
       <Footer />
       <AskAIPopup isOpen={askOpen} onClose={() => setAskOpen(false)} />
+      <CommandPalette onAskOpen={() => setAskOpen(true)} />
     </div>
   );
 }

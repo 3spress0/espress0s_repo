@@ -212,6 +212,14 @@ Imports support:
 
 Backups can be used to restore catalogue data when necessary.
 
+## Keyboard shortcuts
+
+`Ctrl/⌘ K` (or `/`) opens the command palette: live catalogue search plus
+navigation, theme, language and admin commands filtered by role. `g` then
+`h` / `b` / `f` / `a` jumps to home, Browse, favourites, Admin; `?` lists all
+shortcuts. Nothing fires while typing in a field; `Ctrl/⌘ S` still saves in
+the item editor.
+
 ## Languages
 
 The interface has a small, dependency-free i18n layer (`frontend/src/i18n/`).
