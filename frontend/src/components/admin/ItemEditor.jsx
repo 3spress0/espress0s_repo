@@ -8,6 +8,7 @@ import { itemsApi, categoriesApi, foldersApi, adminApi, catalogAdminApi } from '
 import Loading, { LoadingDots } from '../Loading';
 import Progress from '../Progress';
 import RequirementsEditor from './RequirementsEditor';
+import PreviewLinkButton from './PreviewLinkButton';
 import ImagePicker from './ImagePicker';
 import DownloadLinksEditor from './DownloadLinksEditor';
 import MarkdownField from './MarkdownField';
@@ -1163,6 +1164,7 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
               <LinkIcon className="w-4 h-4" /> Save &amp; publish
             </button>
           )}
+          {isEdit && <PreviewLinkButton itemId={item.id} published={!!form.published} />}
         </div>
       </div>
     </form>

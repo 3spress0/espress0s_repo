@@ -8,6 +8,7 @@ import { encryptionService, ENCRYPTED_ITEM_FIELDS } from '../services/encryption
 import { recordItemVersion } from '../services/versionService.js';
 import { emitEvent, itemSummary } from '../services/eventBus.js';
 import { getFavorite, countItemFavorites, getPublicFavoritedBy } from '../services/favoritesService.js';
+import { createPreviewToken, verifyPreviewToken, DEFAULT_TTL_HOURS } from '../services/previewLinkService.js';
 
 function decryptItem(item) {
   if (!item) return item;
@@ -284,8 +285,10 @@ export async function itemsRoutes(fastify) {
     if (!item) return reply.code(404).send({ error: 'Item not found' });
 
     // Drafts are invisible to everyone but admins - 404, not 403, so the
-    // endpoint does not confirm that a hidden slug exists.
-    if (!item.published && !isAdmin(request)) {
+    // endpoint does not confirm that a hidden slug exists. A signed preview
+    // token (see previewLinkService) opens one draft to whoever holds it.
+    const previewing = !item.published && !isAdmin(request) && verifyPreviewToken(item.id, request.query?.preview);
+    if (!item.published && !isAdmin(request) && !previewing) {
       return reply.code(404).send({ error: 'Item not found' });
     }
 
@@ -301,7 +304,12 @@ export async function itemsRoutes(fastify) {
     `).all(item.category_id, item.id);
 
     const decrypted = decryptItem(item);
-    const links = getItemLinks(item.id);
+    let links = getItemLinks(item.id);
+    if (previewing) {
+      // Content review only: no URLs or paths leave the server on a preview.
+      for (const f of ['storage_path', 'download_url', 'external_url', 'license_notes']) decrypted[f] = null;
+      links = links.map(l => ({ ...l, storage_path: null, download_url: null }));
+    }
     const availableLinks = links.filter(l => !l.is_down && l.status !== 'down');
 
     // Favourite state for the signed-in viewer. Anonymous visitors get false
@@ -331,6 +339,7 @@ export async function itemsRoutes(fastify) {
       shared_by: getPublicFavoritedBy(item.id),
       is_favorite: Boolean(ownFavorite),
       favorite_is_public: Boolean(ownFavorite?.favorite?.is_public),
+      preview: previewing || undefined,
       primary_download: availableLinks.find(l => l.is_primary) || availableLinks[0] || links.find(l => l.is_primary) || links[0] || null,
       encryption: { atRest: 'storage_path, download_url, external_url, license_notes encrypted', version: item.encryption_version || 'v1' }
     };
@@ -508,6 +517,21 @@ export async function itemsRoutes(fastify) {
     const decrypted = decryptItem(updatedRaw);
     const links = getItemLinks(id);
     return { ...decrypted, download_links: links, download_links_count: links.length };
+  });
+
+  // POST /api/items/:id/preview-link - signed, expiring link to a draft.
+  fastify.post('/items/:id/preview-link', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
+    const db = getDb();
+    const item = db.prepare('SELECT id, slug, published FROM items WHERE id = ?').get(request.params.id);
+    if (!item) return reply.code(404).send({ error: 'Item not found' });
+    const ttlHours = request.body?.ttl_hours ?? DEFAULT_TTL_HOURS;
+    const { token, expires_at } = createPreviewToken(item.id, { ttlHours });
+    return {
+      path: `/file/${item.slug}?preview=${token}`,
+      expires_at,
+      published: !!item.published,
+      note: item.published ? 'This entry is already public; the link works but is not needed.' : 'Anyone with this link can read the draft (no downloads) until it expires or the entry is published.',
+    };
   });
 
   fastify.delete('/items/:id', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {

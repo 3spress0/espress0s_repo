@@ -167,6 +167,20 @@ The API:
 
 Favourites belong to the database rather than the catalogue, so a full snapshot restore rolls them back with everything else, while a catalogue-only rollback keeps them — an undo after a bad bulk edit does not cost everyone their stars.
 
+## Drafts and preview links
+
+An entry with *Published* off is a draft: invisible to visitors (404, not
+403), listed only for staff, never in the public API or feeds. Drafts already
+save version history, so staging edits on a draft and publishing later is the
+normal flow. To show a draft to someone without an account, editors use
+**Copy preview link** (on the entry page banner or in the editor): a signed,
+expiring link (`/file/<slug>?preview=<token>`, 7 days) that renders the page
+read-only - download URLs and paths are stripped, downloads still require a
+session, and preview views are not counted. Tokens are HMACs over the entry
+id and expiry keyed by `JWT_SECRET`, so nothing is stored and rotating the
+secret invalidates every link. API: `POST /api/items/:id/preview-link`
+`{ ttl_hours }` (max 720).
+
 ## Recently viewed
 
 The home page and Account → Favourites show the last twelve entries you

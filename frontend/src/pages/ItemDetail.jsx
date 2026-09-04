@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Download, HardDrive, Calendar, Tag, Shield, Cpu, Monitor, FileType, Hash, ExternalLink, ArrowLeft, Eye, Clock, Music, Video, Play, Image as ImageIcon, Disc, File, Link2, Star, Lock, AlertTriangle, Pencil, Folder } from 'lucide-react';
 import { itemsApi } from '../lib/api';
 import { formatBytes, formatDate, startDownload } from '../lib/utils';
@@ -8,6 +8,7 @@ import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
 import FavoriteButton from '../components/FavoriteButton';
 import FollowButton from '../components/FollowButton';
+import PreviewLinkButton from '../components/admin/PreviewLinkButton';
 import Loading, { LoadingDots } from '../components/Loading';
 import { useI18n } from '../i18n/index.jsx';
 import { recordView } from '../lib/recentlyViewed';
@@ -21,6 +22,8 @@ const ItemEditor = lazy(() => import('../components/admin/ItemEditor'));
 export default function ItemDetail() {
   const { slug } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const previewToken = searchParams.get('preview');
   const { t } = useI18n();
   const { isAuthenticated, isEditor, loading: authLoading } = useAuth();
   const [item, setItem] = useState(null);
@@ -34,11 +37,11 @@ export default function ItemDetail() {
 
   useEffect(() => {
     setLoading(true);
-    itemsApi.get(slug)
-      .then((data) => { setItem(data); recordView(data); })
+    itemsApi.get(slug, previewToken ? { preview: previewToken } : undefined)
+      .then((data) => { setItem(data); if (!data.preview) recordView(data); })
       .catch(err => setError(err.response?.data?.error || 'Failed to load'))
       .finally(() => setLoading(false));
-  }, [slug]);
+  }, [slug, previewToken]);
 
   // Auth is an httpOnly cookie - fetch() with credentials sends it for us;
   // no token ever touches JS-readable storage.
@@ -151,6 +154,17 @@ export default function ItemDetail() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-28 md:pb-8">
+      {(item.preview || (!item.published && isEditor)) && (
+        <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200 flex flex-wrap items-center gap-3">
+          <Eye className="w-4 h-4 flex-shrink-0" />
+          <span className="flex-1">
+            {item.preview
+              ? 'Draft preview - this page is not published. Download links are hidden and this view is not counted.'
+              : 'Draft - only staff can see this page. Share a read-only preview with anyone using a preview link.'}
+          </span>
+          {isEditor && <PreviewLinkButton itemId={item.id} published={!!item.published} onError={setFavoriteError} />}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <Link to="/browse" className="inline-flex items-center gap-2 text-sm text-textSecondary hover:text-primary transition-colors">
           <ArrowLeft className="w-4 h-4" />
@@ -200,7 +214,7 @@ export default function ItemDetail() {
             onClose={() => setEditing(false)}
             onSaved={async () => {
               setEditing(false);
-              const fresh = await itemsApi.get(slug).catch(() => null);
+              const fresh = await itemsApi.get(slug, previewToken ? { preview: previewToken } : undefined).catch(() => null);
               if (fresh) setItem(fresh);
             }}
           />
