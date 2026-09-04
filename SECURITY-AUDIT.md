@@ -198,6 +198,13 @@ characters and 12 tokens, Levenshtein short-circuits above 64 characters, and
   code inside its window is refused; recovery codes are single-use and
   stored as SHA-256; the secret is AES-GCM encrypted like the other user
   fields. `/auth/mfa/verify` shares the login rate limit (10 / 15 min).
+* **Automated scanning.** `.github/dependabot.yml` opens weekly grouped
+  update PRs for backend/frontend npm, GitHub Actions and the Dockerfile base
+  image (advisories immediately). `.github/workflows/security.yml` runs
+  CodeQL (security-and-quality), `dependency-review-action` on pull requests
+  (fails on high), gitleaks for committed secrets, and a report-only
+  `npm audit` over dev dependencies; weekly on a schedule as well. `ci.yml`
+  keeps failing the build on high advisories in production dependencies.
 
 ## Known gaps (accepted, for now)
 
