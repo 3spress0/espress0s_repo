@@ -311,6 +311,25 @@ export const backupApi = {
  * Admin catalogue management: filtered FTS search, bulk edits, dashboard
  * statistics, slug generation and metadata autofill.
  */
+function webhookScope(base) {
+  return {
+    list: () => api.get(base).then(r => r.data),
+    get: (id) => api.get(`${base}/${id}`).then(r => r.data),
+    create: (data) => api.post(base, data).then(r => r.data),
+    update: (id, data) => api.put(`${base}/${id}`, data).then(r => r.data),
+    remove: (id) => api.delete(`${base}/${id}`).then(r => r.data),
+    test: (id) => api.post(`${base}/${id}/test`).then(r => r.data),
+    redeliver: (id, deliveryId) => api.post(`${base}/${id}/deliveries/${deliveryId}/redeliver`).then(r => r.data),
+  };
+}
+
+/** Outgoing webhooks: site-wide (admin) and the signed-in user's own. */
+export const webhooksApi = {
+  admin: webhookScope('/admin/webhooks'),
+  me: webhookScope('/webhooks'),
+  events: (params) => api.get('/admin/events', { params }).then(r => r.data),
+};
+
 export const catalogAdminApi = {
   /** FTS5 search with the admin filter set; sort is allow-listed server-side. */
   search: (params) => api.get('/admin/catalog/search', { params, timeout: AI_TIMEOUT }).then(r => r.data),

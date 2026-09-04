@@ -322,6 +322,56 @@ CREATE TABLE IF NOT EXISTS catalog_imports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_catalog_imports_started ON catalog_imports(started_at DESC);
+
+-- Application event log (services/eventBus.js). Feeds webhooks, the RSS feed
+-- and per-user subscriptions. Pruned after 90 days.
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  item_id INTEGER, -- not a FK: the event outlives the row for item.deleted
+  actor_id INTEGER, -- user who caused it, when any
+  payload TEXT NOT NULL, -- JSON, public-safe (no URLs, no encrypted fields)
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type, id DESC);
+CREATE INDEX IF NOT EXISTS idx_events_item ON events(item_id, id DESC);
+
+-- Outgoing webhooks (services/webhookService.js). user_id NULL = site-wide.
+CREATE TABLE IF NOT EXISTS webhooks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  events TEXT NOT NULL, -- JSON array of event types
+  secret TEXT NOT NULL, -- encrypted; HMAC key for X-Espress0-Signature
+  active INTEGER NOT NULL DEFAULT 1,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  last_delivery_at DATETIME,
+  last_status TEXT, -- 'ok' | 'error'
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_webhooks_user ON webhooks(user_id);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  webhook_id INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+  event_id INTEGER,
+  event_type TEXT NOT NULL,
+  payload TEXT NOT NULL, -- the exact body that was/will be signed and sent
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'delivered', 'failed', 'cancelled')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at DATETIME,
+  last_attempt_at DATETIME,
+  response_status INTEGER,
+  response_body TEXT, -- first 500 chars
+  error TEXT,
+  duration_ms INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook ON webhook_deliveries(webhook_id, id DESC);
 `;
 
 // Sensible starting values. INSERT OR IGNORE means re-running migrations never

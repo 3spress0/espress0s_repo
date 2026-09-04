@@ -167,6 +167,21 @@ The API:
 
 Favourites belong to the database rather than the catalogue, so a full snapshot restore rolls them back with everything else, while a catalogue-only rollback keeps them — an undo after a bad bulk edit does not cost everyone their stars.
 
+## Webhooks and events
+
+Everything notable that happens to the catalogue is written to an event log and can be pushed to a URL of your choice:
+
+| Event | When |
+| --- | --- |
+| `item.created` / `item.updated` / `item.deleted` | a file page is written (payload lists the changed fields) |
+| `item.published` / `item.unpublished` | a draft goes live, or a live page is pulled |
+| `link.down` / `link.recovered` | the link checker sees a mirror change state (transitions only, never repeats) |
+| `import.completed` | a catalogue import was applied |
+
+**Admin → Webhooks** manages site-wide hooks; **Account → Security** has personal hooks, which only receive events about public file pages. Each delivery is a JSON `POST` with `X-Espress0-Event`, `X-Espress0-Delivery` and `X-Espress0-Signature: sha256=<HMAC-SHA256 of the body with the hook's secret>`. Non-2xx responses retry after 1, 5, 15, 60 minutes and 6 hours; every attempt is logged and can be redelivered by hand. Payloads never contain download URLs or encrypted fields. Target URLs must be public (set `WEBHOOK_ALLOW_PRIVATE=true` to allow LAN receivers such as a local n8n).
+
+`GET /api/admin/events` exposes the raw log.
+
 ## Import and export
 
 The catalogue supports backup and metadata import/export workflows.

@@ -31,9 +31,12 @@ import { uploadsRoutes } from './routes/uploads.js';
 import { linkHealthRoutes } from './routes/linkHealth.js';
 import { backupRoutes } from './routes/backup.js';
 import { catalogRoutes } from './routes/catalog.js';
+import { webhookRoutes } from './routes/webhooks.js';
 import multipart from '@fastify/multipart';
 import { monitoringService } from './services/monitoringService.js';
 import { linkHealthService } from './services/linkHealthService.js';
+import { webhookService } from './services/webhookService.js';
+import { setEventLogger } from './services/eventBus.js';
 import { rateLimitKey, rateLimitMax } from './middleware/rateLimit.js';
 import { openapiPlugin } from './docs/openapi.js';
 
@@ -260,6 +263,7 @@ await fastify.register(async (api) => {
   await api.register(linkHealthRoutes);
   await api.register(backupRoutes);
   await api.register(catalogRoutes);
+  await api.register(webhookRoutes);
 }, { prefix: '/api' });
 
 // Serve the built frontend when it exists, in any environment. Deep links
@@ -324,6 +328,8 @@ const start = async () => {
     await fastify.listen({ port: config.port, host: config.host });
     // Periodic download-link checks; idle unless linkcheck_enabled is set.
     linkHealthService.start(fastify.log);
+    setEventLogger(fastify.log);
+    webhookService.start(fastify.log);
     console.log(`
   ░█▀▀░█▀▀░█▀█░█▀▄░█▀▀░█▀▀░█▀▀░▄▀▄░▀░█▀▀░░░█▀▄░█▀▀░█▀█░█▀█
   ░█▀▀░▀▀█░█▀▀░█▀▄░█▀▀░▀▀█░▀▀█░█/█░░░▀▀█░░░█▀▄░█▀▀░█▀▀░█░█

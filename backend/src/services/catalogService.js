@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { getDb } from '../db/index.js';
+import { emitEvent } from './eventBus.js';
 import { config } from '../config.js';
 import { unzip, zip, ZipError } from '../lib/zip.js';
 import {
@@ -645,7 +646,13 @@ export async function importCatalogArchive({ buffer, filename = 'catalog.zip', m
       report ? JSON.stringify(report.errors) : null, backupPath,
       CATALOG_FORMAT, CATALOG_VERSION, new Date().toISOString(), historyId,
     );
-    return db.prepare('SELECT * FROM catalog_imports WHERE id = ?').get(historyId);
+    const row = db.prepare('SELECT * FROM catalog_imports WHERE id = ?').get(historyId);
+    // Applied imports are announced; previews and rejections are not.
+    if (apply && status === 'ok' && report) {
+      const { errors_json, backup_path, ...publicRow } = row;
+      emitEvent('import.completed', { import: publicRow }, { actorId: userId });
+    }
+    return row;
   };
 
   let catalog;

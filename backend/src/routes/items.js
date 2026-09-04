@@ -5,6 +5,7 @@ import { authenticate, optionalAuthenticate, requireAdmin, requireEditor, roleAt
 import { storageManager } from '../services/storage/index.js';
 import { encryptionService, ENCRYPTED_ITEM_FIELDS } from '../services/encryptionService.js';
 import { recordItemVersion } from '../services/versionService.js';
+import { emitEvent, itemSummary } from '../services/eventBus.js';
 import { getFavorite, countItemFavorites, getPublicFavoritedBy } from '../services/favoritesService.js';
 
 function decryptItem(item) {
@@ -425,6 +426,11 @@ export async function itemsRoutes(fastify) {
     (links.links || []).forEach((ld, i) => insertLink.run(linkRow(result.lastInsertRowid, ld, i)));
 
     recordItemVersion(result.lastInsertRowid, request.user?.id, 'Created');
+    {
+      const created = db.prepare('SELECT * FROM items WHERE id = ?').get(result.lastInsertRowid);
+      emitEvent('item.created', { item: itemSummary(created) }, { actorId: request.user?.id });
+      if (created.published) emitEvent('item.published', { item: itemSummary(created) }, { actorId: request.user?.id });
+    }
 
     const newItemRaw = db.prepare('SELECT * FROM items WHERE id = ?').get(result.lastInsertRowid);
     const newItem = decryptItem(newItemRaw);
@@ -483,6 +489,16 @@ export async function itemsRoutes(fastify) {
     recordItemVersion(Number(id), request.user?.id);
 
     const updatedRaw = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
+    {
+      // Which public fields changed, for subscribers ("version: 1.2 -> 1.3").
+      const changed = Object.keys(data).filter(k => k !== 'download_links' && String(existing[k] ?? '') !== String(updatedRaw[k] ?? ''));
+      if (wantedLinks.links !== null) changed.push('download_links');
+      const summary = itemSummary(updatedRaw);
+      const actor = { actorId: request.user?.id };
+      if (!existing.published && updatedRaw.published) emitEvent('item.published', { item: summary }, actor);
+      else if (existing.published && !updatedRaw.published) emitEvent('item.unpublished', { item: summary }, actor);
+      if (changed.length) emitEvent('item.updated', { item: summary, changes: changed }, actor);
+    }
     const decrypted = decryptItem(updatedRaw);
     const links = getItemLinks(id);
     return { ...decrypted, download_links: links, download_links_count: links.length };
@@ -491,8 +507,10 @@ export async function itemsRoutes(fastify) {
   fastify.delete('/items/:id', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
-    if (!db.prepare('SELECT id FROM items WHERE id = ?').get(id)) return reply.code(404).send({ error: 'Item not found' });
+    const doomed = db.prepare('SELECT id, slug, name, published FROM items WHERE id = ?').get(id);
+    if (!doomed) return reply.code(404).send({ error: 'Item not found' });
     db.prepare('DELETE FROM items WHERE id = ?').run(id);
+    emitEvent('item.deleted', { item: { id: doomed.id, slug: doomed.slug, name: doomed.name, published: !!doomed.published } }, { actorId: request.user?.id, itemId: doomed.id });
     return { success: true, message: 'Item deleted' };
   });
 

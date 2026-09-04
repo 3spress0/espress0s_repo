@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Shield, Database, HardDrive, FolderTree, Folder, Users, Activity, ExternalLink, Settings, Archive, FileArchive } from 'lucide-react';
+import { Shield, Database, HardDrive, FolderTree, Folder, Users, Activity, ExternalLink, Settings, Archive, FileArchive, Webhook } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import Loading from '../components/Loading';
 
@@ -20,6 +20,7 @@ const NAV = [
   { to: '/admin/storage', label: 'Storage', icon: ExternalLink },
   { to: '/admin/imports', label: 'Catalogue', icon: FileArchive },
   { to: '/admin/backup', label: 'Backup', icon: Archive },
+  { to: '/admin/webhooks', label: 'Webhooks', icon: Webhook },
   { to: '/admin/settings', label: 'Site Settings', icon: Settings },
   { to: '/admin/monitoring', label: 'Monitoring', icon: Activity },
 ];
