@@ -8,6 +8,7 @@ import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
 import FavoriteButton from '../components/FavoriteButton';
 import Loading, { LoadingDots } from '../components/Loading';
+import { useI18n } from '../i18n/index.jsx';
 
 const REQ_LABEL = { os: 'OS', runtime: 'Runtime', hardware: 'Hardware', dependency: 'Depends on', other: 'Other' };
 
@@ -18,6 +19,7 @@ const ItemEditor = lazy(() => import('../components/admin/ItemEditor'));
 export default function ItemDetail() {
   const { slug } = useParams();
   const navigate = useNavigate();
+  const { t } = useI18n();
   const { isAuthenticated, isEditor, loading: authLoading } = useAuth();
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -389,20 +391,20 @@ export default function ItemDetail() {
         <div className="lg:col-span-2 space-y-6">
           {item.long_description && (
             <div className="glass rounded-2xl border border-white/5 p-6">
-              <h2 className="font-semibold text-textPrimary mb-3">About</h2>
+              <h2 className="font-semibold text-textPrimary mb-3">{t('item.about')}</h2>
               {/* Admin-authored markdown, rendered as React elements (no raw HTML). */}
               <Markdown>{item.long_description}</Markdown>
             </div>
           )}
           {item.changelog && (
             <div className="glass rounded-2xl border border-white/5 p-6">
-              <h2 className="font-semibold text-textPrimary mb-3">Changelog</h2>
+              <h2 className="font-semibold text-textPrimary mb-3">{t('item.changelog')}</h2>
               <Markdown>{item.changelog}</Markdown>
             </div>
           )}
           {Array.isArray(item.requirements) && item.requirements.length > 0 && (
             <div className="glass rounded-2xl border border-white/5 p-6">
-              <h2 className="font-semibold text-textPrimary mb-4 flex items-center gap-2"><Cpu className="w-4 h-4 text-primary" />Requirements</h2>
+              <h2 className="font-semibold text-textPrimary mb-4 flex items-center gap-2"><Cpu className="w-4 h-4 text-primary" />{t('item.requirements')}</h2>
               <ul className="space-y-2 text-sm">
                 {item.requirements.map((r, i) => (
                   <li key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">

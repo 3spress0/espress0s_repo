@@ -96,6 +96,9 @@ case "$CMD" in
     echo "== backend =="
     (cd backend && npm test --silent) || exit 1
     echo
+    echo "== frontend =="
+    (cd frontend && npm test --silent) || exit 1
+    echo
     echo "== deployment / auto-update =="
     exec bash tests/auto-update.test.sh ;;
   status)

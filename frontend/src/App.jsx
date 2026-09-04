@@ -17,6 +17,7 @@ import MaintenanceBanner from './components/MaintenanceBanner';
 import { AuthProvider } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { I18nProvider } from './i18n/index.jsx';
 
 /**
  * The admin panel, the inline item editor and the encryption explainer are
@@ -105,9 +106,11 @@ function App() {
       {/* Theme sits inside Settings: the admin's default scheme is a setting. */}
       <ThemeProvider>
         <AuthProvider>
-          <Router>
-            <AppContent />
-          </Router>
+          <I18nProvider>
+            <Router>
+              <AppContent />
+            </Router>
+          </I18nProvider>
         </AuthProvider>
       </ThemeProvider>
     </SettingsProvider>

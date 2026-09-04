@@ -5,12 +5,15 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import Logo from './Logo';
 import ThemePicker from './ThemePicker';
+import LanguagePicker from './LanguagePicker';
+import { useI18n } from '../i18n/index.jsx';
 
 export default function Navbar({ onAskOpen }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout, isAdmin, isEditor } = useAuth();
   const { get } = useSettings();
+  const { t } = useI18n();
 
   // Last word of the site name keeps the gradient accent.
   const nameWords = String(get('site_name', '')).trim().split(/\s+/);
@@ -31,12 +34,12 @@ export default function Navbar({ onAskOpen }) {
   };
 
   const navLinks = [
-    { path: '/browse', label: 'Browse', icon: Package },
-    { path: '/people', label: 'People', icon: Users },
+    { path: '/browse', label: t('nav.browse'), icon: Package },
+    { path: '/people', label: t('nav.people'), icon: Users },
   ];
 
   if (isEditor) {
-    navLinks.push({ path: isAdmin ? '/admin' : '/admin/items', label: isAdmin ? 'Admin' : 'Editor', icon: Shield });
+    navLinks.push({ path: isAdmin ? '/admin' : '/admin/items', label: isAdmin ? t('nav.admin') : t('nav.editor'), icon: Shield });
   }
 
   return (
@@ -79,6 +82,7 @@ export default function Navbar({ onAskOpen }) {
                 Ask AI
               </button>
 
+              <LanguagePicker compact />
               <ThemePicker />
 
               {user ? (
@@ -93,8 +97,8 @@ export default function Navbar({ onAskOpen }) {
                 </div>
               ) : (
                 <div className="ml-2 flex items-center gap-2">
-                  <Link to="/login" className="px-4 py-2 rounded-full text-sm font-medium text-textSecondary hover:text-textPrimary hover:bg-surfaceHover transition-all">Login</Link>
-                  <Link to="/register" className="px-4 py-2 rounded-full text-sm font-medium bg-gradient-primary text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 transition-all">Register</Link>
+                  <Link to="/login" className="px-4 py-2 rounded-full text-sm font-medium text-textSecondary hover:text-textPrimary hover:bg-surfaceHover transition-all">{t('nav.login')}</Link>
+                  <Link to="/register" className="px-4 py-2 rounded-full text-sm font-medium bg-gradient-primary text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 transition-all">{t('nav.register')}</Link>
                 </div>
               )}
             </div>
@@ -139,11 +143,11 @@ export default function Navbar({ onAskOpen }) {
                   <>
                     <Link to="/login" onClick={() => setMobileOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-textSecondary hover:text-textPrimary hover:bg-surface">
                       <User className="w-5 h-5" />
-                      Login
+                      {t('nav.login')}
                     </Link>
                     <Link to="/register" onClick={() => setMobileOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium bg-gradient-primary text-white">
                       <User className="w-5 h-5" />
-                      Register
+                      {t('nav.register')}
                     </Link>
                   </>
                 )}
@@ -159,11 +163,11 @@ export default function Navbar({ onAskOpen }) {
             <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-4">
               <LogOut className="w-6 h-6 text-red-400" />
             </div>
-            <h3 className="text-lg font-bold text-textPrimary text-center mb-2">Confirm Log Out?</h3>
-            <p className="text-sm text-textSecondary text-center mb-6">You will need to login again to download files.</p>
+            <h3 className="text-lg font-bold text-textPrimary text-center mb-2">{t('logout.confirmTitle')}</h3>
+            <p className="text-sm text-textSecondary text-center mb-6">{t('logout.confirmBody')}</p>
             <div className="flex gap-3">
-              <button onClick={() => setShowLogoutConfirm(false)} className="flex-1 px-5 py-3 bg-surface border border-border rounded-xl text-sm font-medium hover:border-primary/30">Cancel</button>
-              <button onClick={confirmLogout} className="flex-1 px-5 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl text-sm font-medium shadow-lg shadow-red-500/20">Log Out</button>
+              <button onClick={() => setShowLogoutConfirm(false)} className="flex-1 px-5 py-3 bg-surface border border-border rounded-xl text-sm font-medium hover:border-primary/30">{t('logout.cancel')}</button>
+              <button onClick={confirmLogout} className="flex-1 px-5 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl text-sm font-medium shadow-lg shadow-red-500/20">{t('logout.button')}</button>
             </div>
           </div>
         </div>

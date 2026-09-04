@@ -1,0 +1,40 @@
+{
+  "_meta": { "name": "English", "code": "en", "dir": "ltr" },
+  "nav": {
+    "browse": "Browse",
+    "people": "People",
+    "admin": "Admin",
+    "editor": "Editor",
+    "login": "Login",
+    "register": "Register",
+    "account": "Account",
+    "askAi": "Ask AI",
+    "search": "Search",
+    "menu": "Menu"
+  },
+  "logout": {
+    "button": "Log out",
+    "confirmTitle": "Confirm log out?",
+    "confirmBody": "You will need to log in again to download files.",
+    "cancel": "Cancel"
+  },
+  "common": {
+    "loading": "Loading…",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "close": "Close",
+    "download": "Download",
+    "language": "Language",
+    "languageHint": "Interface language. Catalogue content stays in the language it was written in.",
+    "auto": "Automatic ({{name}})"
+  },
+  "item": {
+    "about": "About",
+    "changelog": "Changelog",
+    "requirements": "Requirements",
+    "fileDetails": "File details",
+    "downloads": "{{count}} download",
+    "downloads_plural": "{{count}} downloads"
+  }
+}

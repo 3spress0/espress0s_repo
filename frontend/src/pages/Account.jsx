@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import StarryBackground from '../components/StarryBackground';
 import ThemePicker from '../components/ThemePicker';
+import LanguagePicker from '../components/LanguagePicker';
 import { useTheme } from '../context/ThemeContext';
 import Logo from '../components/Logo';
 import { LoadingDots, LoadingPanel } from '../components/Loading';
@@ -318,6 +319,9 @@ export default function Account() {
                   Your device asks for reduced motion, so the starfield and aurora animations are paused.
                 </p>
               )}
+              <div className="mt-6 pt-6 border-t border-white/5">
+                <LanguagePicker />
+              </div>
             </div>
 
             <div className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl">

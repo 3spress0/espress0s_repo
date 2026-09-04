@@ -212,6 +212,20 @@ Imports support:
 
 Backups can be used to restore catalogue data when necessary.
 
+## Languages
+
+The interface has a small, dependency-free i18n layer (`frontend/src/i18n/`).
+Strings live in `locales/<code>.json` (English is the source of truth;
+Dutch ships as the first translation); components call `const { t } = useI18n()`
+and `t('nav.browse')`, with `{{placeholders}}` and a `_plural` key for counts.
+The active language follows the browser and can be overridden from the navbar
+or Account → Appearance (stored per browser). Dates and numbers use `Intl`
+for the active locale. Catalogue content is not translated. To add a language,
+copy `en.json`, translate it, and register it in `i18n/index.jsx`;
+`npm test` in `frontend/` checks every locale has the same keys as English.
+Only the navigation, log-out dialog and item page headings are wired so far;
+the rest of the UI is still literal English and can be migrated file by file.
+
 ## Administration
 
 The admin interface provides management for:
