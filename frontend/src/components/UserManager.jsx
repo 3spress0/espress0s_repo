@@ -230,6 +230,9 @@ export default function UserManager() {
                         <RoleIcon className="w-3 h-3" />
                         {user.role}
                       </span>
+                      {user.mfa_enabled ? (
+                        <span title="Two-factor authentication on" className="ml-1.5 inline-flex items-center gap-1 px-2 py-1 rounded-full border border-emerald-500/30 text-emerald-300 text-[10px] font-medium">2FA</span>
+                      ) : null}
                     </td>
                     <td className="p-4">
                       <div className="flex flex-col gap-1">

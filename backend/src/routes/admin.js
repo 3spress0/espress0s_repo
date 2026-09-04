@@ -787,7 +787,7 @@ export async function adminRoutes(fastify) {
     if (conditions.length) where = 'WHERE ' + conditions.join(' AND ');
 
     const total = db.prepare(`SELECT COUNT(*) as c FROM users ${where}`).get(params).c;
-    const usersRaw = db.prepare(`SELECT id, username, email, email_hash, role, encryption_version, created_at, updated_at FROM users ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`).all({
+    const usersRaw = db.prepare(`SELECT id, username, email, email_hash, role, totp_enabled AS mfa_enabled, encryption_version, created_at, updated_at FROM users ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`).all({
       ...params,
       limit: pageSize,
       offset,
@@ -822,7 +822,7 @@ export async function adminRoutes(fastify) {
   fastify.get('/admin/users/:id', async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
-    const userRaw = db.prepare('SELECT id, username, email, email_hash, role, encryption_version, created_at, updated_at FROM users WHERE id = ?').get(id);
+    const userRaw = db.prepare('SELECT id, username, email, email_hash, role, totp_enabled AS mfa_enabled, encryption_version, created_at, updated_at FROM users WHERE id = ?').get(id);
     if (!userRaw) return reply.code(404).send({ error: 'User not found' });
 
     let decryptedEmail = userRaw.email;

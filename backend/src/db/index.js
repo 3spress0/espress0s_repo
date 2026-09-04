@@ -45,6 +45,11 @@ export function getDb() {
     // because existing databases were created before the column existed.
     const hasFavDefault = userCols.some(c => c.name === 'favorites_default_public');
     if (!hasFavDefault) dbInstance.exec("ALTER TABLE users ADD COLUMN favorites_default_public INTEGER NOT NULL DEFAULT 0");
+    // Optional TOTP second factor (see services/totpService.js).
+    if (!userCols.some(c => c.name === 'totp_secret')) dbInstance.exec("ALTER TABLE users ADD COLUMN totp_secret TEXT");
+    if (!userCols.some(c => c.name === 'totp_enabled')) dbInstance.exec("ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0");
+    if (!userCols.some(c => c.name === 'totp_recovery')) dbInstance.exec("ALTER TABLE users ADD COLUMN totp_recovery TEXT");
+    if (!userCols.some(c => c.name === 'totp_last_counter')) dbInstance.exec("ALTER TABLE users ADD COLUMN totp_last_counter INTEGER");
 
     // Email became optional (you can register without one). Databases created
     // before this had `email TEXT UNIQUE NOT NULL`, which rejects the NULL a
@@ -69,17 +74,23 @@ export function getDb() {
             bio TEXT,
             theme TEXT DEFAULT 'dark' CHECK(theme IN ('dark', 'light', 'auto')),
             favorites_default_public INTEGER NOT NULL DEFAULT 0,
+            totp_secret TEXT,
+            totp_enabled INTEGER NOT NULL DEFAULT 0,
+            totp_recovery TEXT,
+            totp_last_counter INTEGER,
             encryption_version TEXT DEFAULT 'v1',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
           );
           INSERT INTO users_new
             (id, username, email, email_hash, password_hash, role, auth_version,
-             avatar_url, bio, theme, favorites_default_public, encryption_version,
+             avatar_url, bio, theme, favorites_default_public,
+             totp_secret, totp_enabled, totp_recovery, totp_last_counter, encryption_version,
              created_at, updated_at)
           SELECT
             id, username, email, email_hash, password_hash, role, auth_version,
-            avatar_url, bio, theme, favorites_default_public, encryption_version,
+            avatar_url, bio, theme, favorites_default_public,
+            totp_secret, totp_enabled, totp_recovery, totp_last_counter, encryption_version,
             created_at, updated_at
           FROM users;
           DROP TABLE users;

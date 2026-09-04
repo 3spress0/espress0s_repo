@@ -17,6 +17,12 @@ CREATE TABLE IF NOT EXISTS users (
   -- Profile default for new favourites. 0 = private (the safe default), 1 =
   -- public. Individual favourites can still be flipped either way.
   favorites_default_public INTEGER NOT NULL DEFAULT 0,
+  -- Optional TOTP second factor. Secret encrypted at rest; recovery codes are
+  -- stored hashed (JSON array), each single-use.
+  totp_secret TEXT,
+  totp_enabled INTEGER NOT NULL DEFAULT 0,
+  totp_recovery TEXT,
+  totp_last_counter INTEGER, -- last accepted TOTP step, refuses code replay
   encryption_version TEXT DEFAULT 'v1',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -344,6 +350,7 @@ export const DEFAULT_SETTINGS = [
   // behaviour toggles
   { key: 'allow_registration', value: 'true', type: 'boolean', group_name: 'auth', label: 'Allow public registration', description: 'Overrides the ALLOW_REGISTRATION env var when set.', public: 1 },
   { key: 'require_captcha', value: 'true', type: 'boolean', group_name: 'auth', label: 'Require CAPTCHA on login', public: 0 },
+  { key: 'require_mfa_admins', value: 'false', type: 'boolean', group_name: 'auth', label: 'Require two-factor auth for admins', description: 'Admins without TOTP enabled can only reach their Account page until they turn it on.', public: 0 },
   { key: 'show_dev_credentials_panel', value: 'false', type: 'boolean', group_name: 'auth', label: 'Show test-credentials panel on login', description: 'Development aid. Leave off in production.', public: 1 },
   { key: 'ai_enabled', value: 'true', type: 'boolean', group_name: 'ai', label: 'Enable Ask AI', description: 'Turns the AI entry points on or off.', public: 1 },
   // Provider selection. Everything here overrides .env, except the key: an API

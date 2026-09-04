@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee, Palette, Star, Globe } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
@@ -9,6 +9,7 @@ import { useTheme } from '../context/ThemeContext';
 import Logo from '../components/Logo';
 import { LoadingDots, LoadingPanel } from '../components/Loading';
 import FavoritesPanel from '../components/FavoritesPanel';
+import TwoFactorPanel from '../components/TwoFactorPanel';
 
 export default function Account() {
   const themeCtx = useTheme();
@@ -23,7 +24,9 @@ export default function Account() {
   // Two views of the same account: the profile form, and the files starred
   // from the catalogue. Favourites live on their own tab rather than below the
   // form, which is already a full page of fields.
-  const [tab, setTab] = useState('profile');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => (['profile', 'favorites', 'security'].includes(searchParams.get('tab')) ? searchParams.get('tab') : 'profile'));
+  const mfaForced = searchParams.get('mfa') === 'required';
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -189,6 +192,7 @@ export default function Account() {
           {[
             { id: 'profile', label: 'Profile', icon: User },
             { id: 'favorites', label: 'Favourites', icon: Star },
+            { id: 'security', label: 'Security', icon: Shield },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -282,6 +286,16 @@ export default function Account() {
           <div className="lg:col-span-2 space-y-6">
             {tab === 'favorites' ? (
               <FavoritesPanel onError={setError} />
+            ) : tab === 'security' ? (
+              <>
+                {mfaForced && !user?.mfa_enabled && (
+                  <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-sm text-amber-200 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <span>This site requires two-factor authentication for admin accounts. Turn it on below to continue using the admin area.</span>
+                  </div>
+                )}
+                <TwoFactorPanel onError={setError} onSuccess={setSuccess} />
+              </>
             ) : (
             <>
             {/* Appearance: the scheme is a per-browser preference, so it is not

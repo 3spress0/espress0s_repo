@@ -130,6 +130,12 @@ Health checks run separately from normal catalogue browsing so an unavailable ex
 
 ## Accounts and favourites
 
+### Two-factor authentication
+
+Any account can add a TOTP second factor from **Account → Security**: scan the QR code with an authenticator app (Aegis, 1Password, Google Authenticator, …), confirm one code, and save the ten single-use recovery codes that are shown once. From then on the login form asks for a code after the password. Turning it off again needs the password *and* a current code.
+
+Admins can make it mandatory for admin accounts with **Site Settings → Require two-factor auth for admins**: an admin who has not enrolled can only reach their Account page until they do. Codes accept ±30 s of clock drift and a code is never accepted twice. Secrets are encrypted at rest; recovery codes are stored hashed.
+
 Every signed-in account can star a file from its page. Favourites are **private by default**: starring is a personal bookmark, not a publication.
 
 Sharing is a second, deliberate step, and it can be taken two ways:

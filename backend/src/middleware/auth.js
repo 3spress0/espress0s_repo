@@ -2,11 +2,18 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { config } from '../config.js';
 import { getDb } from '../db/index.js';
+import { getSetting } from '../services/settingsService.js';
 
 // Only HS256 is ever issued here. Without this list jsonwebtoken would accept
 // any algorithm named in the token header, which is how "alg" confusion bugs
 // happen.
 const JWT_ALGORITHMS = ['HS256'];
+
+/** What an admin may still call while forced to enrol in 2FA. */
+const MFA_ENROL_PATHS = new Set([
+  '/api/auth/me', '/api/auth/profile', '/api/auth/mfa', '/api/auth/mfa/setup', '/api/auth/mfa/enable',
+  '/api/auth/logout', '/api/auth/logout-all', '/api/auth/csrf', '/api/auth/encryption-status',
+]);
 
 /**
  * Routes that may take the token from `?token=`.
@@ -75,7 +82,7 @@ export async function authenticate(request, reply) {
 
     const decoded = verifyToken(token);
     const db = getDb();
-    const row = db.prepare('SELECT id, username, email, role, password_hash, auth_version FROM users WHERE id = ?').get(decoded.id);
+    const row = db.prepare('SELECT id, username, email, role, password_hash, auth_version, totp_enabled FROM users WHERE id = ?').get(decoded.id);
 
     if (!row) {
       return reply.code(401).send({ error: 'User not found' });
@@ -96,8 +103,21 @@ export async function authenticate(request, reply) {
       });
     }
 
-    const { password_hash, auth_version, ...user } = row;
+    const { password_hash, auth_version, totp_enabled, ...user } = row;
     request.user = user;
+
+    // "Require two-factor auth for admins": an admin who has not enrolled may
+    // only reach the routes needed to enrol (and to leave). Everything else
+    // answers 403 with mfaSetupRequired so the SPA can send them to Account.
+    if (user.role === 'admin' && !totp_enabled && getSetting('require_mfa_admins', false) === true) {
+      const pathname = (request.raw?.url || request.url || '').split('?')[0];
+      if (!MFA_ENROL_PATHS.has(pathname)) {
+        return reply.code(403).send({
+          error: 'Two-factor authentication is required for admin accounts - turn it on in your Account page',
+          mfaSetupRequired: true,
+        });
+      }
+    }
   } catch (err) {
     return reply.code(401).send({
       error: 'Invalid or expired token - please login again',

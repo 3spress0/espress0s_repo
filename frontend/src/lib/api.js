@@ -140,6 +140,11 @@ api.interceptors.response.use(
       // Session expired/invalidated - nothing to clear client-side any more;
       // components react to the rejection.
     }
+    // "Require two-factor auth for admins" is on and this admin has not
+    // enrolled: the API only allows the enrolment routes, so send them there.
+    if (status === 403 && error.response?.data?.mfaSetupRequired && !window.location.pathname.startsWith('/account')) {
+      window.location.assign('/account?tab=security&mfa=required');
+    }
     return Promise.reject(error);
   }
 );
@@ -198,6 +203,15 @@ export const aiApi = {
 
 export const authApi = {
   login: (creds) => api.post('/auth/login', creds).then(r => r.data),
+  /** Step two of a login when the account has TOTP on. */
+  mfaVerify: (mfaToken, code) => api.post('/auth/mfa/verify', { mfaToken, code }).then(r => r.data),
+  mfa: {
+    status: () => api.get('/auth/mfa').then(r => r.data),
+    setup: () => api.post('/auth/mfa/setup').then(r => r.data),
+    enable: (code) => api.post('/auth/mfa/enable', { code }).then(r => r.data),
+    disable: (password, code) => api.post('/auth/mfa/disable', { password, code }).then(r => r.data),
+    recoveryCodes: (code) => api.post('/auth/mfa/recovery-codes', { code }).then(r => r.data),
+  },
   register: (data) => api.post('/auth/register', data).then(r => r.data),
   me: () => api.get('/auth/me').then(r => r.data),
   logout: () => api.post('/auth/logout').then(r => r.data),
