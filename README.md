@@ -167,6 +167,22 @@ The API:
 
 Favourites belong to the database rather than the catalogue, so a full snapshot restore rolls them back with everything else, while a catalogue-only rollback keeps them — an undo after a bad bulk edit does not cost everyone their stars.
 
+## Public API
+
+`/api/v1` is a versioned, read-only JSON API for scripts and third-party tools. It is separate from the endpoints the web UI uses: it only ever returns **published** entries (no session is read, so no draft branch exists), never includes download URLs or encrypted fields, and has its **own rate-limit bucket** (`PUBLIC_API_RATE_LIMIT`, default 60 requests per minute per IP, `PUBLIC_API_RATE_WINDOW` to change the window) so an integration cannot starve a browser session on the same IP or vice versa. `GET` is allowed from any origin.
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /api/v1` | version, limits, endpoint list |
+| `GET /api/v1/items` | paginated list; filters `q`, `category`, `folder`, `tag`, `platform`, `architecture`, `file_type`, `license_status`, `featured`, `updated_since`, `sort`, `order`, `page`, `limit` (≤100) |
+| `GET /api/v1/items/{slug\|id}` | one entry with mirrors (label, provider, health) and relations; supports `If-None-Match` |
+| `GET /api/v1/categories`, `/folders`, `/tags` | taxonomies with published item counts |
+| `GET /api/v1/search?q=` | alias of `/items?q=` |
+| `GET /api/v1/changes?since=&limit=` | recent create/update/publish/link-status events |
+| `GET /api/v1/stats` | totals |
+
+Downloads are not part of the public API by design: each entry carries `download_url_api` (`/api/download/{id}`), which needs a signed-in session as in the UI. The full schema is in `/api/docs` under *Public API*.
+
 ## Webhooks and events
 
 Everything notable that happens to the catalogue is written to an event log and can be pushed to a URL of your choice:
