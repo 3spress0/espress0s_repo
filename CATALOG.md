@@ -28,6 +28,25 @@ curl -b cookies.txt -F "file=@catalog.zip" \
   "https://repo.example.com/api/admin/catalog/import?mode=upsert&apply=1"
 ```
 
+## Other upload formats: JSON and CSV
+
+The import endpoint (and the drop zone on **Admin → Catalogue**) also accepts
+a bare `.json` file - either a full catalogue object or an array of entries -
+and a `.csv` spreadsheet. Both are converted to `catalog.zip` on the server
+before anything else happens, so validation, modes, duplicate detection,
+snapshots and history are identical. The response carries `converted: "csv"`
+/ `"json"` when this happened. Download `GET /api/admin/catalog/template.csv`
+for a starter sheet.
+
+CSV rules: header names are catalogue field names (`slug`, `name`,
+`description`, `category`, `folder`, `version`, `platform`, `tags`, …).
+`tags` and `related` split on `|` (or `,`); `related` items are
+`slug:relation`. Download links come from `link_label` / `link_url` /
+`link_provider` / `link_path` (and `_2`, `_3`… for more mirrors).
+`requirements` is either JSON or `type:name version | type:name version`.
+`published` / `featured` accept true/false/yes/no/1/0. Empty cells are left
+unset rather than cleared.
+
 ## Import modes
 
 | Mode | Missing in the database | Already present |

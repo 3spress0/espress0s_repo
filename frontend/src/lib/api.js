@@ -378,6 +378,8 @@ export const catalogApi = {
   export: () => api.get('/admin/catalog/export', { responseType: 'blob', timeout: AI_TIMEOUT }).then(r => r.data),
   /** Starter archive with two fully-populated example entries. */
   template: () => api.get('/admin/catalog/template', { responseType: 'blob' }).then(r => r.data),
+  /** Starter spreadsheet for CSV bulk import. */
+  templateCsv: () => api.get('/admin/catalog/template.csv', { responseType: 'blob' }).then(r => r.data),
   history: (limit = 50) => api.get('/admin/catalog/imports', { params: { limit } }).then(r => r.data),
   get: (id) => api.get(`/admin/catalog/imports/${id}`).then(r => r.data),
   errors: (id, format = 'json') => api.get(`/admin/catalog/imports/${id}/errors`, {

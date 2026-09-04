@@ -83,9 +83,12 @@ export default function AdminImports() {
   };
 
   /** Step one: upload and preview. Nothing is written. */
-  const onPick = async (event) => {
-    const file = event.target.files?.[0];
+  const previewFile = async (file) => {
     if (!file) return;
+    if (!/\.(zip|json|csv|txt)$/i.test(file.name)) {
+      notify('error', `"${file.name}" is not a .zip, .json or .csv file`);
+      return;
+    }
     setBusy(true);
     setError('');
     setNotice('');
@@ -98,6 +101,7 @@ export default function AdminImports() {
       // it, changing the dropdown after previewing applied a different rule
       // than the numbers on screen describe.
       setPreview({ ...res, file, mode });
+      if (res.converted) setNotice(`Converted ${res.converted.toUpperCase()} to a catalogue archive - same validation and modes as a catalog.zip.`);
       // Dry runs are recorded too, so the history answers "what did I look at".
       load();
     } catch (e) {
@@ -107,6 +111,26 @@ export default function AdminImports() {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = '';
     }
+  };
+  const onPick = (event) => previewFile(event.target.files?.[0]);
+
+  // Drag and drop anywhere on the import card.
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const onDragEnter = (e) => { e.preventDefault(); dragDepth.current++; setDragging(true); };
+  const onDragLeave = (e) => { e.preventDefault(); if (--dragDepth.current <= 0) { dragDepth.current = 0; setDragging(false); } };
+  const onDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; };
+  const onDrop = (e) => {
+    e.preventDefault(); dragDepth.current = 0; setDragging(false);
+    if (busy) return;
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length > 1) notify('error', 'Drop one file at a time - each import is previewed before it is applied');
+    previewFile(files[0]);
+  };
+
+  const downloadCsvTemplate = async () => {
+    try { saveBlob(await catalogApi.templateCsv(), 'catalog-template.csv'); }
+    catch (e) { notify('error', e.response?.data?.error || 'Could not download the CSV template'); }
   };
 
   /** Step two: apply the same archive for real. */
@@ -182,7 +206,14 @@ export default function AdminImports() {
           disabled={busy}
           className="px-4 py-2 bg-surface border border-border rounded-xl text-sm text-textSecondary hover:border-primary/30 disabled:opacity-40 flex items-center gap-2"
         >
-          <Download className="w-4 h-4" /> Template
+          <Download className="w-4 h-4" /> Template .zip
+        </button>
+        <button
+          onClick={downloadCsvTemplate}
+          disabled={busy}
+          className="px-4 py-2 bg-surface border border-border rounded-xl text-sm text-textSecondary hover:border-primary/30 disabled:opacity-40 flex items-center gap-2"
+        >
+          <Download className="w-4 h-4" /> Template .csv
         </button>
         <button
           onClick={exportCatalog}
@@ -194,7 +225,14 @@ export default function AdminImports() {
       </div>
 
       {/* Upload + mode + preview */}
-      <div className="glass rounded-2xl border border-white/5 p-5 space-y-4">
+      <div
+        onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={onDragOver} onDrop={onDrop}
+        className={`glass rounded-2xl border p-5 space-y-4 transition-colors ${dragging ? 'border-primary/60 bg-primary/5' : 'border-white/5'}`}
+      >
+        <div className={`rounded-xl border-2 border-dashed px-4 py-6 text-center text-sm transition-colors ${dragging ? 'border-primary text-primary' : 'border-border text-textMuted'}`}>
+          <Upload className="w-5 h-5 mx-auto mb-2 opacity-70" />
+          {dragging ? 'Drop to preview' : <>Drag a <span className="font-mono">catalog.zip</span>, <span className="font-mono">.json</span> or <span className="font-mono">.csv</span> here, or use the button below. Nothing is written until you press Apply.</>}
+        </div>
         <div className="flex flex-wrap items-end gap-3">
           <label className="block">
             <span className="text-[10px] uppercase tracking-widest text-textMuted block mb-1">Import mode</span>
@@ -213,11 +251,11 @@ export default function AdminImports() {
 
           <label className="ml-auto px-5 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium shadow-lg shadow-purple-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-40">
             {busy ? <LoadingDots size={16} /> : <Upload className="w-4 h-4" />}
-            {busy ? 'Working…' : 'Choose catalog.zip'}
+            {busy ? 'Working…' : 'Choose file'}
             <input
               ref={fileRef}
               type="file"
-              accept=".zip,application/zip"
+              accept=".zip,.json,.csv,application/zip,application/json,text/csv"
               onChange={onPick}
               disabled={busy}
               className="hidden"
