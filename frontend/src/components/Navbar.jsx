@@ -109,7 +109,7 @@ export default function Navbar({ onAskOpen }) {
           </div>
 
           {mobileOpen && (
-            <div className="md:hidden py-4 pb-safe border-t border-white/5 animate-fade-in">
+            <div className="md:hidden pt-4 pb-safe border-t border-white/5 animate-fade-in">
               <div className="space-y-1">
                 {navLinks.map(link => {
                   const Icon = link.icon;

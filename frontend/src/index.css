@@ -87,8 +87,12 @@ body {
 
 /* iPhone home-indicator / notch. With viewport-fit=cover the content runs
  * edge-to-edge in standalone mode, so anything pinned to a screen edge pads
- * itself by the safe-area inset (0 in normal browsing - no desktop cost). */
-.pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
+ * itself by the safe-area inset. The 1rem fallback doubles as the normal
+ * bottom padding on devices without an inset (Android) - pair it with a
+ * matching pt-* utility, not py-*, so the two never fight over the same
+ * side. In normal browsing the inset is 0 and the fallback keeps the
+ * desktop look. */
+.pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 1rem); }
 .pt-safe { padding-top: max(env(safe-area-inset-top), 0px); }
 
 /* ---- Phone (coarse pointer) treatment ---------------------------------

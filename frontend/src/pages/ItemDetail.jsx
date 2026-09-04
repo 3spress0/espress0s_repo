@@ -476,7 +476,7 @@ export default function ItemDetail() {
           header button is already reachable. */}
       {(downloadLinks.length > 0 || !isAuthenticated) && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-surface md:hidden">
-          <div className="px-4 py-3 pb-safe">
+          <div className="px-4 pt-3 pb-safe">
             {authLoading ? (
               <div className="flex items-center justify-center gap-2 py-2 text-sm text-textMuted">
                 <LoadingDots size={16} /> Checking login…
