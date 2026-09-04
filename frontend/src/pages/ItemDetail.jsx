@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import FavoriteButton from '../components/FavoriteButton';
 import Loading, { LoadingDots } from '../components/Loading';
 import { useI18n } from '../i18n/index.jsx';
+import { recordView } from '../lib/recentlyViewed';
 
 const REQ_LABEL = { os: 'OS', runtime: 'Runtime', hardware: 'Hardware', dependency: 'Depends on', other: 'Other' };
 
@@ -33,7 +34,7 @@ export default function ItemDetail() {
   useEffect(() => {
     setLoading(true);
     itemsApi.get(slug)
-      .then(setItem)
+      .then((data) => { setItem(data); recordView(data); })
       .catch(err => setError(err.response?.data?.error || 'Failed to load'))
       .finally(() => setLoading(false));
   }, [slug]);

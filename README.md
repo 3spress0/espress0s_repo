@@ -167,6 +167,13 @@ The API:
 
 Favourites belong to the database rather than the catalogue, so a full snapshot restore rolls them back with everything else, while a catalogue-only rollback keeps them — an undo after a bad bulk edit does not cost everyone their stars.
 
+## Recently viewed
+
+The home page and Account → Favourites show the last twelve entries you
+opened. This list lives in `localStorage` only - the server keeps a bare
+`view_count` per entry and never records who viewed what - and has a Clear
+button. Favourites, by contrast, are stored on the account and can be public.
+
 ## Public API
 
 `/api/v1` is a versioned, read-only JSON API for scripts and third-party tools. It is separate from the endpoints the web UI uses: it only ever returns **published** entries (no session is read, so no draft branch exists), never includes download URLs or encrypted fields, and has its **own rate-limit bucket** (`PUBLIC_API_RATE_LIMIT`, default 60 requests per minute per IP, `PUBLIC_API_RATE_WINDOW` to change the window) so an integration cannot starve a browser session on the same IP or vice versa. `GET` is allowed from any origin.

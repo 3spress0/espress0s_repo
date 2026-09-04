@@ -10,6 +10,7 @@ import { useTheme } from '../context/ThemeContext';
 import Logo from '../components/Logo';
 import { LoadingDots, LoadingPanel } from '../components/Loading';
 import FavoritesPanel from '../components/FavoritesPanel';
+import RecentlyViewed from '../components/RecentlyViewed';
 import TwoFactorPanel from '../components/TwoFactorPanel';
 
 export default function Account() {
@@ -286,7 +287,10 @@ export default function Account() {
 
           <div className="lg:col-span-2 space-y-6">
             {tab === 'favorites' ? (
-              <FavoritesPanel onError={setError} />
+              <>
+                <FavoritesPanel onError={setError} />
+                <RecentlyViewed limit={12} className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl" />
+              </>
             ) : tab === 'security' ? (
               <>
                 {mfaForced && !user?.mfa_enabled && (
