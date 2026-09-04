@@ -373,6 +373,6 @@ For larger changes, keep the existing architecture and avoid introducing unneces
 
 ## License
 
-See the repository's licensing and legal documentation for the applicable terms.
+Copyright (c) 2026 Esper. All rights reserved. See `LICENSE`. This is a personal project; no permission to use, copy, modify or distribute is granted.
 
 Catalogue entries may link to third-party software. A catalogue entry or external link does not grant redistribution rights. Always respect the original software's license and distribution terms.
