@@ -159,3 +159,32 @@ describe('public api: rate limiting is its own bucket', () => {
     assert.equal(last.statusCode, 429);
   });
 });
+
+describe('public api: rss / atom feeds', () => {
+  it('serves RSS of published entries only, escaped', async () => {
+    db.prepare("UPDATE items SET name = 'Public <Thing> & Co' WHERE slug = 'pub-thing'").run();
+    const res = await app.inject({ method: 'GET', url: '/api/v1/feed.rss', headers: { host: 'repo.example.com' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.match(res.headers['content-type'], /application\/rss\+xml/);
+    assert.match(res.body, /<rss version="2.0"/);
+    assert.match(res.body, /Public &lt;Thing&gt; &amp; Co/);
+    assert.match(res.body, /https?:\/\/repo\.example\.com\/file\/pub-thing/);
+    assert.doesNotMatch(res.body, /pub-draft/);
+    assert.doesNotMatch(res.body, /secret\.example\.com/);
+    db.prepare("UPDATE items SET name = 'Public Thing' WHERE slug = 'pub-thing'").run();
+  });
+
+  it('serves Atom, honours the tag filter, and has a changes variant', async () => {
+    let res = await app.inject({ method: 'GET', url: '/api/v1/feed.atom?tag=alpha' });
+    assert.equal(res.statusCode, 200);
+    assert.match(res.headers['content-type'], /application\/atom\+xml/);
+    assert.match(res.body, /<feed xmlns="http:\/\/www.w3.org\/2005\/Atom"/);
+    assert.match(res.body, /pub-thing/);
+    res = await app.inject({ method: 'GET', url: '/api/v1/feed.atom?tag=nomatch' });
+    assert.doesNotMatch(res.body, /<entry>/);
+    res = await app.inject({ method: 'GET', url: '/api/v1/feed/changes.rss' });
+    assert.equal(res.statusCode, 200);
+    assert.match(res.body, /changes<\/title>/);
+    assert.match(res.body, /<item>/);
+  });
+});

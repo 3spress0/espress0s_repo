@@ -190,6 +190,21 @@ button. Favourites, by contrast, are stored on the account and can be public.
 
 Downloads are not part of the public API by design: each entry carries `download_url_api` (`/api/download/{id}`), which needs a signed-in session as in the UI. The full schema is in `/api/docs` under *Public API*.
 
+## RSS / Atom feeds
+
+Public, published-only, on the same rate-limit bucket as the JSON API:
+
+| Feed | RSS | Atom |
+| --- | --- | --- |
+| New entries | `/api/v1/feed.rss` | `/api/v1/feed.atom` |
+| Change log (created / updated / published / link status) | `/api/v1/feed/changes.rss` | `/api/v1/feed/changes.atom` |
+
+Entry feeds take `?category=`, `?folder=`, `?tag=` and `?limit=` (≤200). Links
+are absolute: set `PUBLIC_URL=https://repo.example.com` in `.env` when the app
+sits behind a proxy that does not forward the host, otherwise the request host
+is used. The pages advertise the feeds with `<link rel="alternate">`, so feed
+readers can discover them from the site URL.
+
 ## Webhooks and events
 
 Everything notable that happens to the catalogue is written to an event log and can be pushed to a URL of your choice:

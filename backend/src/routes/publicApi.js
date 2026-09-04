@@ -1,5 +1,6 @@
 import { getDb } from '../db/index.js';
 import { parseRequirements } from '../utils/requirements.js';
+import { FEED_TYPES, loadEntries, loadChanges, toFeedItems, renderRss, renderAtom, siteOrigin } from '../services/feedService.js';
 import { decryptItem } from '../services/itemSerializer.js';
 import { searchService, MAX_QUERY_LENGTH } from '../services/searchService.js';
 import { listEvents } from '../services/eventBus.js';
@@ -118,7 +119,7 @@ export async function publicApiRoutes(fastify) {
     docs: '/api/docs',
     openapi: '/api/docs/json',
     rate_limit: { max: PUBLIC_API_MAX, window: PUBLIC_API_WINDOW, scope: 'per IP' },
-    endpoints: ['/api/v1/items', '/api/v1/items/{slug}', '/api/v1/categories', '/api/v1/folders', '/api/v1/tags', '/api/v1/search', '/api/v1/changes', '/api/v1/stats'],
+    endpoints: ['/api/v1/items', '/api/v1/items/{slug}', '/api/v1/categories', '/api/v1/folders', '/api/v1/tags', '/api/v1/search', '/api/v1/changes', '/api/v1/stats', '/api/v1/feed.rss', '/api/v1/feed.atom', '/api/v1/feed/changes.rss'],
     note: 'Read-only. Published catalogue entries only. Downloads require a session via /api/download/{id}.',
   }));
 
@@ -212,6 +213,30 @@ export async function publicApiRoutes(fastify) {
     }).filter(e => e.payload?.item?.published !== false || e.type === 'item.unpublished' || e.type === 'item.deleted');
     return { changes: events.map(e => ({ id: e.id, type: e.type, at: e.created_at, item: e.payload?.item ?? null, changes: e.payload?.changes ?? undefined, link: e.payload?.link ?? undefined })) };
   });
+
+  /**
+   * RSS / Atom. Same rate-limit bucket and published-only rule as the JSON
+   * API. `/feed.rss` and `/feed.atom` are the newest entries; add
+   * `/changes` for the change log. Filters: category, folder, tag, limit.
+   */
+  const feed = (format) => async (request, reply) => {
+    const type = FEED_TYPES.includes(request.params.type) ? request.params.type : 'entries';
+    const q = request.query || {};
+    const origin = siteOrigin(request);
+    const rows = type === 'changes'
+      ? loadChanges({ limit: q.limit })
+      : loadEntries({ category: q.category ? String(q.category).slice(0, 100) : null, folder: q.folder ? String(q.folder).slice(0, 100) : null, tag: q.tag ? String(q.tag).slice(0, 64) : null, limit: q.limit });
+    const items = toFeedItems(type, rows, origin);
+    const selfUrl = `${origin}${request.raw.url}`;
+    const xml = format === 'atom' ? renderAtom({ type, items, origin, selfUrl }) : renderRss({ type, items, origin, selfUrl });
+    reply.header('content-type', format === 'atom' ? 'application/atom+xml; charset=utf-8' : 'application/rss+xml; charset=utf-8');
+    reply.header('cache-control', 'public, max-age=300');
+    return reply.send(xml);
+  };
+  for (const format of ['rss', 'atom']) {
+    fastify.get(`/v1/feed.${format}`, { config: LIMIT, schema: { tags: ['Public API'], summary: `${format.toUpperCase()} feed of new entries` } }, feed(format));
+    fastify.get(`/v1/feed/:type.${format}`, { config: LIMIT, schema: { tags: ['Public API'], summary: `${format.toUpperCase()} feed: entries or changes` } }, feed(format));
+  }
 
   fastify.get('/v1/stats', { config: LIMIT, schema: { tags: ['Public API'], summary: 'Catalogue totals' } }, async () => {
     const db = getDb();
