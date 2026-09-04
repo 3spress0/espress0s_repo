@@ -1,4 +1,4 @@
-/* global document, fetch */
+/* global document */
 (async function () {
   const root = document.getElementById('root');
   const q = document.getElementById('q');
