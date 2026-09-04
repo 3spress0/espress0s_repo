@@ -205,6 +205,16 @@ Everything notable that happens to the catalogue is written to an event log and 
 
 `GET /api/admin/events` exposes the raw log.
 
+## Following entries and tags
+
+Signed-in users can **Follow** an entry (button on its page) or a tag (from the
+entry page or Account → Notifications). Following on its own is a filter: a
+personal webhook created with scope *"only entries and tags I follow"*
+(`filter_mode: "subscribed"`) receives just those `item.*` / `link.*` events;
+hooks with the default scope keep receiving everything public. Site-wide admin
+hooks cannot be scoped this way. API: `GET/POST /api/subscriptions`,
+`DELETE /api/subscriptions/:id`, `GET /api/subscriptions/status/:slug`.
+
 ## Import and export
 
 The catalogue supports backup and metadata import/export workflows.

@@ -368,6 +368,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
   name TEXT NOT NULL,
   url TEXT NOT NULL,
   events TEXT NOT NULL, -- JSON array of event types
+  filter_mode TEXT NOT NULL DEFAULT 'all' CHECK(filter_mode IN ('all', 'subscribed')),
   secret TEXT NOT NULL, -- encrypted; HMAC key for X-Espress0-Signature
   active INTEGER NOT NULL DEFAULT 1,
   failure_count INTEGER NOT NULL DEFAULT 0,
@@ -377,6 +378,22 @@ CREATE TABLE IF NOT EXISTS webhooks (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_webhooks_user ON webhooks(user_id);
+
+-- Per-user subscriptions to one entry or one tag (services/subscriptionService.js).
+-- A personal webhook with filter_mode = 'subscribed' only receives events
+-- about entries the owner subscribed to (directly or through a tag).
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('item', 'tag')),
+  item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+  tag TEXT, -- normalised tag name
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, kind, item_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_item ON subscriptions(item_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_tag ON subscriptions(tag);
 
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

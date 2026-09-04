@@ -38,6 +38,12 @@ export function onEvent(fn) {
   return () => listeners.delete(fn);
 }
 
+function parseTags(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (!raw) return [];
+  try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+
 /** Small public shape of an item for payloads - no encrypted fields, no URLs. */
 export function itemSummary(item) {
   if (!item) return null;
@@ -50,6 +56,7 @@ export function itemSummary(item) {
     platform: item.platform ?? null,
     status: item.status ?? null,
     published: item.published === undefined ? undefined : !!item.published,
+    tags: parseTags(item.tags),
     updated_at: item.updated_at ?? null,
     url: `/file/${item.slug}`,
   };

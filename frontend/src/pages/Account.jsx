@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee, Palette, Star, Globe } from 'lucide-react';
+import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee, Palette, Star, Globe, Bell } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import StarryBackground from '../components/StarryBackground';
@@ -11,6 +11,8 @@ import Logo from '../components/Logo';
 import { LoadingDots, LoadingPanel } from '../components/Loading';
 import FavoritesPanel from '../components/FavoritesPanel';
 import RecentlyViewed from '../components/RecentlyViewed';
+import SubscriptionsPanel from '../components/SubscriptionsPanel';
+import WebhookManager from '../components/WebhookManager';
 import TwoFactorPanel from '../components/TwoFactorPanel';
 
 export default function Account() {
@@ -27,7 +29,7 @@ export default function Account() {
   // from the catalogue. Favourites live on their own tab rather than below the
   // form, which is already a full page of fields.
   const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState(() => (['profile', 'favorites', 'security'].includes(searchParams.get('tab')) ? searchParams.get('tab') : 'profile'));
+  const [tab, setTab] = useState(() => (['profile', 'favorites', 'notifications', 'security'].includes(searchParams.get('tab')) ? searchParams.get('tab') : 'profile'));
   const mfaForced = searchParams.get('mfa') === 'required';
   const [formData, setFormData] = useState({
     username: '',
@@ -194,6 +196,7 @@ export default function Account() {
           {[
             { id: 'profile', label: 'Profile', icon: User },
             { id: 'favorites', label: 'Favourites', icon: Star },
+            { id: 'notifications', label: 'Notifications', icon: Bell },
             { id: 'security', label: 'Security', icon: Shield },
           ].map(({ id, label, icon: Icon }) => (
             <button
@@ -290,6 +293,14 @@ export default function Account() {
               <>
                 <FavoritesPanel onError={setError} />
                 <RecentlyViewed limit={12} className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl" />
+              </>
+            ) : tab === 'notifications' ? (
+              <>
+                <SubscriptionsPanel onError={setError} />
+                <div className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl">
+                  <h2 className="text-xl font-bold text-textPrimary mb-4">Personal webhooks</h2>
+                  <WebhookManager scope="me" />
+                </div>
               </>
             ) : tab === 'security' ? (
               <>

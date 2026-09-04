@@ -7,6 +7,7 @@ import { ItemPlaceholder } from '../components/Logo';
 import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
 import FavoriteButton from '../components/FavoriteButton';
+import FollowButton from '../components/FollowButton';
 import Loading, { LoadingDots } from '../components/Loading';
 import { useI18n } from '../i18n/index.jsx';
 import { recordView } from '../lib/recentlyViewed';
@@ -164,6 +165,7 @@ export default function ItemDetail() {
             count={item.favorites_count}
             onError={(message) => setFavoriteError(message)}
           />
+          <FollowButton slug={item.slug} tags={item.tags || []} onError={(message) => setFavoriteError(message)} />
 
           {/* Admins edit the page they are looking at - no detour through /admin. */}
           {isEditor && !editing && (

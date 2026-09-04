@@ -330,6 +330,15 @@ export const webhooksApi = {
   events: (params) => api.get('/admin/events', { params }).then(r => r.data),
 };
 
+/** Followed entries and tags (feeds 'subscriptions only' personal webhooks). */
+export const subscriptionsApi = {
+  list: () => api.get('/subscriptions').then(r => r.data),
+  followItem: (slug) => api.post('/subscriptions', { kind: 'item', item_slug: slug }).then(r => r.data),
+  followTag: (tag) => api.post('/subscriptions', { kind: 'tag', tag }).then(r => r.data),
+  remove: (id) => api.delete(`/subscriptions/${id}`).then(r => r.data),
+  status: (slug) => api.get(`/subscriptions/status/${encodeURIComponent(slug)}`).then(r => r.data),
+};
+
 /** Scheduled imports (admin). */
 export const importJobsApi = {
   list: () => api.get('/admin/import-jobs').then(r => r.data),

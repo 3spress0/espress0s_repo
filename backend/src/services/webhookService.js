@@ -21,6 +21,7 @@
  */
 import crypto from 'node:crypto';
 import { getDb } from '../db/index.js';
+import { userFollowsEvent } from './subscriptionService.js';
 import { onEvent, EVENT_TYPES } from './eventBus.js';
 import { encryptionService } from './encryptionService.js';
 import { assertPublicUrl, assertConfiguredEndpoint } from '../lib/safeFetch.js';
@@ -58,6 +59,7 @@ function rowToWebhook(row, { withSecret = false } = {}) {
     name: row.name,
     url: row.url,
     events: parseEvents(row.events),
+    filter_mode: row.filter_mode || 'all',
     active: !!row.active,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -103,15 +105,15 @@ export class WebhookService {
    * Create a hook. Returns the row including the plaintext secret exactly
    * once (it is stored encrypted and never listed again).
    */
-  async create({ userId = null, name, url, events, secret = null, active = true }) {
-    const clean = this.validateInput({ name, url, events });
+  async create({ userId = null, name, url, events, secret = null, active = true, filter_mode = 'all' }) {
+    const clean = this.validateInput({ name, url, events, filter_mode, personal: userId !== null });
     await validateWebhookUrl(clean.url);
     const plainSecret = secret || crypto.randomBytes(24).toString('base64url');
     const db = getDb();
     const result = db.prepare(`
-      INSERT INTO webhooks (user_id, name, url, events, secret, active, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(userId, clean.name, clean.url, JSON.stringify(clean.events), encryptionService.encrypt(plainSecret), active ? 1 : 0, nowIso(), nowIso());
+      INSERT INTO webhooks (user_id, name, url, events, filter_mode, secret, active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(userId, clean.name, clean.url, JSON.stringify(clean.events), clean.filter_mode, encryptionService.encrypt(plainSecret), active ? 1 : 0, nowIso(), nowIso());
     return { ...this.get(result.lastInsertRowid), secret: plainSecret };
   }
 
@@ -122,12 +124,14 @@ export class WebhookService {
       name: patch.name ?? existing.name,
       url: patch.url ?? existing.url,
       events: patch.events ?? existing.events,
+      filter_mode: patch.filter_mode ?? existing.filter_mode,
+      personal: existing.user_id !== null,
     };
     const clean = this.validateInput(merged);
     if (patch.url !== undefined && patch.url !== existing.url) await validateWebhookUrl(clean.url);
     const db = getDb();
-    const sets = ['name = @name', 'url = @url', 'events = @events', 'updated_at = @now'];
-    const params = { id, name: clean.name, url: clean.url, events: JSON.stringify(clean.events), now: nowIso() };
+    const sets = ['name = @name', 'url = @url', 'events = @events', 'filter_mode = @filter_mode', 'updated_at = @now'];
+    const params = { id, name: clean.name, url: clean.url, events: JSON.stringify(clean.events), filter_mode: clean.filter_mode, now: nowIso() };
     if (patch.active !== undefined) { sets.push('active = @active'); params.active = patch.active ? 1 : 0; }
     if (patch.active) { sets.push('failure_count = 0'); }
     if (patch.rotateSecret) {
@@ -145,7 +149,7 @@ export class WebhookService {
     return true;
   }
 
-  validateInput({ name, url, events }) {
+  validateInput({ name, url, events, filter_mode = 'all', personal = false }) {
     const cleanName = String(name || '').trim().slice(0, 100);
     if (!cleanName) throw new WebhookValidationError('name is required');
     const cleanUrl = String(url || '').trim();
@@ -154,7 +158,9 @@ export class WebhookService {
     if (!list.length) throw new WebhookValidationError('at least one event is required');
     const bad = list.filter(e => !EVENT_TYPES.includes(e));
     if (bad.length) throw new WebhookValidationError(`unknown event(s): ${bad.join(', ')}`);
-    return { name: cleanName, url: cleanUrl, events: list };
+    if (!['all', 'subscribed'].includes(filter_mode)) throw new WebhookValidationError("filter_mode must be 'all' or 'subscribed'");
+    if (filter_mode === 'subscribed' && !personal) throw new WebhookValidationError('only personal webhooks can be limited to subscriptions');
+    return { name: cleanName, url: cleanUrl, events: list, filter_mode };
   }
 
   // ---- Queueing ---------------------------------------------------------
@@ -167,6 +173,7 @@ export class WebhookService {
     return rows.filter(r => {
       if (!parseEvents(r.events).includes(event.type)) return false;
       if (r.user_id !== null && !isPublicItem) return false;
+      if (r.user_id !== null && r.filter_mode === 'subscribed' && !userFollowsEvent(r.user_id, event)) return false;
       return true;
     });
   }

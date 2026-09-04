@@ -50,7 +50,7 @@ export default function WebhookManager({ scope = 'admin' }) {
   const [eventTypes, setEventTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null); // 'new' | hook
-  const [form, setForm] = useState({ name: '', url: '', events: [] });
+  const [form, setForm] = useState({ name: '', url: '', events: [], filter_mode: 'all' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState(null);
@@ -73,7 +73,7 @@ export default function WebhookManager({ scope = 'admin' }) {
   const openEditor = (hook = null) => {
     setError(''); setSecret(null);
     setEditing(hook || 'new');
-    setForm(hook ? { name: hook.name, url: hook.url, events: hook.events } : { name: '', url: '', events: [] });
+    setForm(hook ? { name: hook.name, url: hook.url, events: hook.events, filter_mode: hook.filter_mode || 'all' } : { name: '', url: '', events: [], filter_mode: 'all' });
   };
   const toggleEvent = (ev) => setForm(f => ({ ...f, events: f.events.includes(ev) ? f.events.filter(x => x !== ev) : [...f.events, ev] }));
 
@@ -167,6 +167,17 @@ export default function WebhookManager({ scope = 'admin' }) {
                   ))}
                 </div>
               </div>
+              {scope !== 'admin' && (
+                <div>
+                  <div className="text-xs font-medium text-textMuted uppercase tracking-widest mb-2">Scope</div>
+                  <div className="flex flex-wrap gap-2">
+                    {[['all', 'Every public entry'], ['subscribed', 'Only entries and tags I follow']].map(([v, label]) => (
+                      <button type="button" key={v} onClick={() => setForm(f => ({ ...f, filter_mode: v }))}
+                        className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${form.filter_mode === v ? 'bg-primary/20 border-primary/40 text-textPrimary' : 'bg-surface border-border text-textSecondary hover:border-primary/30'}`}>{label}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {error && <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-300 flex gap-2"><AlertTriangle className="w-4 h-4 mt-0.5" /> {error}</div>}
               <div className="flex gap-2">
                 <button type="submit" disabled={saving || !form.events.length} className="px-5 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium disabled:opacity-50">{saving ? <LoadingDots size={14} /> : (editing === 'new' ? 'Create' : 'Save')}</button>

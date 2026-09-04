@@ -31,8 +31,8 @@ function mount(fastify, prefix, ownerOf) {
 
   fastify.post(`${prefix}`, async (request, reply) => {
     try {
-      const { name, url, events, active } = request.body || {};
-      const hook = await webhookService.create({ userId: ownerOf(request), name, url, events, active });
+      const { name, url, events, active, filter_mode } = request.body || {};
+      const hook = await webhookService.create({ userId: ownerOf(request), name, url, events, active, filter_mode });
       return reply.code(201).send({ webhook: hook, note: 'Store the secret now - it is not shown again.' });
     } catch (e) { return sendError(reply, e); }
   });
@@ -48,8 +48,8 @@ function mount(fastify, prefix, ownerOf) {
     const id = idParam(request);
     if (!id) return reply.code(404).send({ error: 'Webhook not found' });
     try {
-      const { name, url, events, active, rotateSecret } = request.body || {};
-      const hook = await webhookService.update(id, { name, url, events, active, rotateSecret: !!rotateSecret }, { userId: ownerOf(request) });
+      const { name, url, events, active, rotateSecret, filter_mode } = request.body || {};
+      const hook = await webhookService.update(id, { name, url, events, active, filter_mode, rotateSecret: !!rotateSecret }, { userId: ownerOf(request) });
       if (!hook) return reply.code(404).send({ error: 'Webhook not found' });
       return { webhook: hook };
     } catch (e) { return sendError(reply, e); }

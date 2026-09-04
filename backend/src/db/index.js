@@ -130,6 +130,10 @@ export function getDb() {
       dbInstance.exec("ALTER TABLE items ADD COLUMN requirements TEXT");
     }
     const hasFolderId = itemCols.some(c => c.name === 'folder_id');
+    const hookCols = dbInstance.prepare("PRAGMA table_info(webhooks)").all();
+    if (hookCols.length && !hookCols.some(c => c.name === 'filter_mode')) {
+      dbInstance.exec("ALTER TABLE webhooks ADD COLUMN filter_mode TEXT NOT NULL DEFAULT 'all' CHECK(filter_mode IN ('all', 'subscribed'))");
+    }
     const importCols = dbInstance.prepare("PRAGMA table_info(catalog_imports)").all();
     if (importCols.length && !importCols.some(c => c.name === 'duplicate_count')) {
       dbInstance.exec("ALTER TABLE catalog_imports ADD COLUMN duplicate_count INTEGER NOT NULL DEFAULT 0");
