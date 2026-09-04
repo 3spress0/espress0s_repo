@@ -1,7 +1,7 @@
 import { getDb } from '../db/index.js';
 import { makeSlug, formatBytes } from '../utils/slug.js';
 import { itemSchema, downloadLinkSchema } from '../utils/validation.js';
-import { authenticate, optionalAuthenticate, requireAdmin } from '../middleware/auth.js';
+import { authenticate, optionalAuthenticate, requireAdmin, requireEditor, roleAtLeast } from '../middleware/auth.js';
 import { storageManager } from '../services/storage/index.js';
 import { encryptionService, ENCRYPTED_ITEM_FIELDS } from '../services/encryptionService.js';
 import { recordItemVersion } from '../services/versionService.js';
@@ -22,7 +22,8 @@ function decryptItem(item) {
 
 /** Only admins may see unpublished (draft) items or their mirrors. */
 function isAdmin(request) {
-  return request.user?.role === 'admin';
+  // Staff (editor or admin) may see drafts; the name is kept for the call sites.
+  return roleAtLeast(request.user?.role, 'editor');
 }
 
 /**
@@ -332,7 +333,7 @@ export async function itemsRoutes(fastify) {
   });
 
   // POST /api/items - create (admin)
-  fastify.post('/items', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.post('/items', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const links = parseDownloadLinks(request.body.download_links);
     if (links.errors) {
       // Refuse rather than drop: a page saved without the mirror it was
@@ -432,7 +433,7 @@ export async function itemsRoutes(fastify) {
   });
 
   // PUT /api/items/:id - update (admin)
-  fastify.put('/items/:id', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.put('/items/:id', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
     const existing = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
@@ -507,7 +508,7 @@ export async function itemsRoutes(fastify) {
   });
 
   // POST /api/items/:id/links
-  fastify.post('/items/:id/links', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.post('/items/:id/links', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
     const item = db.prepare('SELECT id FROM items WHERE id = ? OR slug = ?').get(id, id);
@@ -536,7 +537,7 @@ export async function itemsRoutes(fastify) {
   });
 
   // PUT /api/items/:id/links/:linkId
-  fastify.put('/items/:id/links/:linkId', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.put('/items/:id/links/:linkId', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const { id, linkId } = request.params;
     const db = getDb();
     const item = db.prepare('SELECT id FROM items WHERE id = ? OR slug = ?').get(id, id);

@@ -16,7 +16,7 @@ const ItemEditor = lazy(() => import('../components/admin/ItemEditor'));
 export default function ItemDetail() {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const { isAuthenticated, isAdmin, loading: authLoading } = useAuth();
+  const { isAuthenticated, isEditor, loading: authLoading } = useAuth();
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -161,7 +161,7 @@ export default function ItemDetail() {
           />
 
           {/* Admins edit the page they are looking at - no detour through /admin. */}
-          {isAdmin && !editing && (
+          {isEditor && !editing && (
             <button
               onClick={() => setEditing(true)}
               className="px-4 py-2 bg-gradient-primary text-white rounded-xl text-sm font-medium shadow-lg shadow-purple-500/20 flex items-center gap-2"

@@ -87,7 +87,6 @@ function securityFor(route) {
 }
 
 export async function openapiPlugin(fastify) {
-  const seen = new Set();
 
   fastify.addHook('onRoute', (route) => {
     const url = route.url || '';
@@ -96,18 +95,25 @@ export async function openapiPlugin(fastify) {
     const schema = { ...(route.schema || {}) };
     if (schema.hide) return;
     schema.tags = schema.tags || [tagFor(url)];
-    const sec = securityFor(route);
-    if (sec) {
-      schema.security = schema.security || [{ bearerAuth: [] }, { cookieAuth: [] }];
-      const who = sec.roles.length ? `Requires role: ${sec.roles.join(' or ')}.` : 'Requires a signed-in user.';
-      schema.description = [schema.description, who].filter(Boolean).join('\n\n');
-    }
     if (route.config?.rateLimit || route.rateLimit) {
       schema.description = [schema.description, 'Rate limited.'].filter(Boolean).join('\n\n');
     }
     route.schema = schema;
-    seen.add(`${route.method} ${url}`);
   });
+
+  // Security is resolved when the document is built, not in onRoute: other
+  // plugins (admin.js) attach their role gates in their own onRoute hooks,
+  // which run after this one.
+  function transform({ schema, url, route }) {
+    const out = { ...schema };
+    const sec = route ? securityFor(route) : null;
+    if (sec) {
+      out.security = out.security || [{ bearerAuth: [] }, { cookieAuth: [] }];
+      const who = sec.roles.length ? `Requires role: ${sec.roles.join(' or ')}.` : 'Requires a signed-in user.';
+      out.description = [out.description, who].filter(Boolean).join('\n\n');
+    }
+    return { schema: out, url };
+  }
 
   await fastify.register(swagger, {
     openapi: {
@@ -130,6 +136,7 @@ export async function openapiPlugin(fastify) {
       },
     },
     hideUntagged: false,
+    transform,
     refResolver: { buildLocalReference: (json, baseUri, fragment, i) => json.$id || `def-${i}` },
   });
 

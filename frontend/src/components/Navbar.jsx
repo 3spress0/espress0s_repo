@@ -9,7 +9,7 @@ import ThemePicker from './ThemePicker';
 export default function Navbar({ onAskOpen }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, isEditor } = useAuth();
   const { get } = useSettings();
 
   // Last word of the site name keeps the gradient accent.
@@ -35,8 +35,8 @@ export default function Navbar({ onAskOpen }) {
     { path: '/people', label: 'People', icon: Users },
   ];
 
-  if (isAdmin) {
-    navLinks.push({ path: '/admin', label: 'Admin', icon: Shield });
+  if (isEditor) {
+    navLinks.push({ path: isAdmin ? '/admin' : '/admin/items', label: isAdmin ? 'Admin' : 'Editor', icon: Shield });
   }
 
   return (

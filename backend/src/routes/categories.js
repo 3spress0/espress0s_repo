@@ -1,7 +1,7 @@
 import { getDb } from '../db/index.js';
 import { makeSlug } from '../utils/slug.js';
 import { categorySchema } from '../utils/validation.js';
-import { authenticate, requireAdmin } from '../middleware/auth.js';
+import { authenticate, requireAdmin, requireEditor } from '../middleware/auth.js';
 
 export async function categoriesRoutes(fastify) {
   fastify.get('/categories', async (request, reply) => {
@@ -43,7 +43,7 @@ export async function categoriesRoutes(fastify) {
     return { ...category, items };
   });
 
-  fastify.post('/categories', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.post('/categories', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const parsed = categorySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
@@ -73,7 +73,7 @@ export async function categoriesRoutes(fastify) {
     return reply.code(201).send(newCat);
   });
 
-  fastify.put('/categories/:id', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.put('/categories/:id', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
 

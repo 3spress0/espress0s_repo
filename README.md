@@ -190,6 +190,18 @@ The admin interface provides management for:
 
 Version history is available for catalogue pages, including snapshots, diffs, and restore operations.
 
+### Roles
+
+Every account has one of three roles, set from **Admin → Users**:
+
+| Role | Can |
+| --- | --- |
+| `viewer` | Sign in, download, favourite, edit their own profile. The default for new registrations. |
+| `editor` | Everything a viewer can, plus: create and edit file pages and their mirrors, categories and folders, upload images, use the AI drafting helpers, see drafts. Editors open `/admin/items` and see only the content areas. |
+| `admin` | Everything: delete, bulk edits, users, settings, storage, backups, imports, monitoring. |
+
+On the API, the requirement is visible per route in `/api/docs` ("Requires role: editor or admin"). Requests without a session get `401`; a signed-in account below the required role gets `403` with `requiredRole` in the body.
+
 ## AI
 
 AI is optional.

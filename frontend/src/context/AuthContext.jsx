@@ -69,6 +69,9 @@ export function AuthProvider({ children }) {
       logout, 
       logoutAll,
       isAdmin: user?.role === 'admin',
+      // Staff = editor or admin: may create/edit content and see drafts.
+      isEditor: user?.role === 'admin' || user?.role === 'editor',
+      role: user?.role || null,
       isAuthenticated: !!user 
     }}>
       {children}

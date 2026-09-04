@@ -122,9 +122,54 @@ export async function optionalAuthenticate(request) {
   } catch {}
 }
 
+/**
+ * Roles, least to most privileged. See ROLE_CAPABILITIES for the meaning.
+ *
+ *   viewer  - a signed-in member: can download, favourite, edit own profile.
+ *   editor  - a content role: can create and edit file pages, mirrors,
+ *             categories, folders and uploads, and use the AI drafting tools.
+ *             Cannot delete, publish site settings, manage users, run
+ *             backups/imports, or touch anything operational.
+ *   admin   - everything.
+ */
+export const ROLES = ['viewer', 'editor', 'admin'];
+
+export const ROLE_CAPABILITIES = {
+  viewer: ['download', 'favorites', 'profile'],
+  editor: ['download', 'favorites', 'profile', 'content:read', 'content:write', 'uploads:write', 'ai:draft'],
+  admin: ['*'],
+};
+
+export function roleAtLeast(role, minimum) {
+  return ROLES.indexOf(role) >= ROLES.indexOf(minimum);
+}
+
+/**
+ * preHandler factory: `requireRole('editor')` lets editors AND admins through,
+ * `requireRole('admin')` is the same as requireAdmin. 401 without a session,
+ * 403 with one that is too weak.
+ *
+ * The returned function is named `requireRole:<roles>` so the OpenAPI
+ * generator can print the requirement without executing anything.
+ */
+export function requireRole(minimum) {
+  if (!ROLES.includes(minimum)) throw new Error(`Unknown role: ${minimum}`);
+  const allowed = ROLES.slice(ROLES.indexOf(minimum));
+  const fn = async function (request, reply) {
+    if (!request.user) return reply.code(401).send({ error: 'Authentication required' });
+    if (!roleAtLeast(request.user.role, minimum)) {
+      return reply.code(403).send({ error: `${minimum === 'admin' ? 'Admin' : 'Editor'} access required`, requiredRole: minimum });
+    }
+  };
+  Object.defineProperty(fn, 'name', { value: `requireRole:${allowed.join(',')}` });
+  return fn;
+}
+
+export const requireEditor = requireRole('editor');
+
 export async function requireAdmin(request, reply) {
   if (!request.user) return reply.code(401).send({ error: 'Authentication required' });
-  if (request.user.role !== 'admin') return reply.code(403).send({ error: 'Admin access required' });
+  if (request.user.role !== 'admin') return reply.code(403).send({ error: 'Admin access required', requiredRole: 'admin' });
 }
 
 export function generateToken(user, { passwordHash = user?.password_hash } = {}) {

@@ -1,5 +1,5 @@
 import { getDb } from '../db/index.js';
-import { authenticate, requireAdmin } from '../middleware/auth.js';
+import { authenticate, requireAdmin, requireEditor } from '../middleware/auth.js';
 import { storageManager } from '../services/storage/index.js';
 import { encryptionService } from '../services/encryptionService.js';
 import { monitoringService } from '../services/monitoringService.js';
@@ -36,9 +36,40 @@ const toInt = (value, fallback, min, max) => {
   return Math.min(Math.max(n, min), max);
 };
 
+/**
+ * Routes under /api/admin that an `editor` may call. Everything else in this
+ * plugin is admin-only. The list is explicit on purpose: a new route is
+ * admin-only until someone decides otherwise.
+ */
+export const EDITOR_ROUTES = new Set([
+  'GET /admin/items',
+  'GET /admin/slug-check',
+  'POST /admin/slugify',
+  'POST /admin/items/:id/duplicate',
+  'GET /admin/items/:id/versions',
+  'GET /admin/items/:id/versions/:num',
+  'GET /admin/items/:id/related',
+  'POST /admin/items/:id/related',
+  'DELETE /admin/items/:id/related/:relationId',
+  'GET /admin/catalog/search',
+  'GET /admin/catalog/facets',
+  'GET /admin/catalog/stats',
+  'POST /admin/metadata-autofill',
+  'POST /admin/ai/describe',
+  'POST /admin/ai/fill-gaps',
+]);
+
 export async function adminRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
-  fastify.addHook('preHandler', requireAdmin);
+  // Per-route gate instead of one blanket requireAdmin: the editor allow-list
+  // above gets requireEditor, the rest keeps requireAdmin. Attached in onRoute
+  // so the OpenAPI generator can see the requirement on each route as well.
+  fastify.addHook('onRoute', (route) => {
+    const key = `${route.method} ${route.url.replace(/^\/api/, '')}`;
+    const gate = EDITOR_ROUTES.has(key) ? requireEditor : requireAdmin;
+    const existing = route.preHandler ? (Array.isArray(route.preHandler) ? route.preHandler : [route.preHandler]) : [];
+    route.preHandler = [gate, ...existing];
+  });
 
   // Auto-update status: what scripts/auto-update.sh last wrote to its state
   // file, plus where the checkout currently sits. Read-only - enabling or
