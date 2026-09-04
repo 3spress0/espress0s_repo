@@ -1,6 +1,7 @@
 import { getDb } from '../db/index.js';
 import { makeSlug, formatBytes } from '../utils/slug.js';
 import { itemSchema, downloadLinkSchema } from '../utils/validation.js';
+import { parseRequirements } from '../utils/requirements.js';
 import { authenticate, optionalAuthenticate, requireAdmin, requireEditor, roleAtLeast } from '../middleware/auth.js';
 import { storageManager } from '../services/storage/index.js';
 import { encryptionService, ENCRYPTED_ITEM_FIELDS } from '../services/encryptionService.js';
@@ -251,6 +252,7 @@ export async function itemsRoutes(fastify) {
           file_size_formatted: formatBytes(dec.file_size),
           tags: dec.tags ? JSON.parse(dec.tags || '[]') : [],
           screenshots: dec.screenshots ? JSON.parse(dec.screenshots || '[]') : [],
+          requirements: parseRequirements(dec.requirements),
           download_links: links,
           available_links: availableLinks,
           download_links_count: links.length,
@@ -312,6 +314,7 @@ export async function itemsRoutes(fastify) {
       file_size_formatted: formatBytes(decrypted.file_size),
       tags: decrypted.tags ? JSON.parse(decrypted.tags || '[]') : [],
       screenshots: decrypted.screenshots ? JSON.parse(decrypted.screenshots || '[]') : [],
+      requirements: parseRequirements(decrypted.requirements),
       related: related.map(r => decryptItem(r)),
       download_links: links,
       available_links: availableLinks,
@@ -392,13 +395,13 @@ export async function itemsRoutes(fastify) {
         file_name, file_size, file_type, platform, architecture, sha256, md5,
         storage_provider, storage_path, download_url, external_url,
         featured, published, license_status, license_notes, tags, icon_url, image_url, screenshots,
-        documentation_url, changelog, created_at, updated_at, encryption_version
+        documentation_url, changelog, requirements, created_at, updated_at, encryption_version
       ) VALUES (
         @name, @slug, @description, @long_description, @category_id, @folder_id, @version, @release_date,
         @file_name, @file_size, @file_type, @platform, @architecture, @sha256, @md5,
         @storage_provider, @storage_path, @download_url, @external_url,
         @featured, @published, @license_status, @license_notes, @tags, @icon_url, @image_url, @screenshots,
-        @documentation_url, @changelog, @created_at, @updated_at, @encryption_version
+        @documentation_url, @changelog, @requirements, @created_at, @updated_at, @encryption_version
       )
     `).run({
       name: data.name, slug, description: data.description,
@@ -419,7 +422,9 @@ export async function itemsRoutes(fastify) {
       license_notes: encryptedData.license_notes,
       tags: tagsJson, icon_url: data.icon_url || null, image_url: data.image_url || null,
       screenshots: screenshotsJson, documentation_url: data.documentation_url || null,
-      changelog: data.changelog || null, created_at: now, updated_at: now, encryption_version: 'v1',
+      changelog: data.changelog || null,
+      requirements: data.requirements?.length ? JSON.stringify(data.requirements) : null,
+      created_at: now, updated_at: now, encryption_version: 'v1',
     });
 
     const insertLink = db.prepare(INSERT_LINK_SQL);
@@ -472,6 +477,7 @@ export async function itemsRoutes(fastify) {
         if (ENCRYPTED_ITEM_FIELDS.includes(key) && value) finalValue = encryptionService.encrypt(value);
         if (key === 'tags' && Array.isArray(value)) { updates.push(`${key} = @${key}`); params[key] = JSON.stringify(value); }
         else if (key === 'screenshots' && Array.isArray(value)) { updates.push(`${key} = @${key}`); params[key] = JSON.stringify(value); }
+        else if (key === 'requirements') { updates.push(`${key} = @${key}`); params[key] = Array.isArray(value) && value.length ? JSON.stringify(value) : null; }
         else if (key === 'featured' || key === 'published') { updates.push(`${key} = @${key}`); params[key] = value ? 1 : 0; }
         else { updates.push(`${key} = @${key}`); params[key] = finalValue; }
       }

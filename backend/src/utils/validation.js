@@ -45,6 +45,30 @@ export function isExternalUrl(value) {
   }
 }
 
+export const REQUIREMENT_TYPES = ['os', 'runtime', 'hardware', 'dependency', 'other'];
+
+/**
+ * One dependency / system requirement line. Kept structured (not free text)
+ * so the detail page can group them and other tools can read them, e.g.
+ * { type: 'runtime', name: '.NET Framework', version: '>= 4.8' }.
+ */
+export const requirementSchema = z.object({
+  type: z.enum(REQUIREMENT_TYPES).default('other'),
+  name: z.string().trim().min(1).max(120),
+  version: z.string().trim().max(60).optional().nullable(),
+  optional: z.boolean().optional(),
+  note: z.string().trim().max(300).optional().nullable(),
+});
+
+/** Array of requirements; also accepts the JSON-encoded string the DB stores. */
+export const requirementsSchema = z.preprocess((v) => {
+  if (typeof v === 'string') {
+    if (!v.trim()) return null;
+    try { return JSON.parse(v); } catch { return v; }
+  }
+  return v;
+}, z.array(requirementSchema).max(100).nullable());
+
 export const itemSchema = z.object({
   name: z.string().min(2).max(200),
   slug: z.string().min(2).max(200).optional(),
@@ -83,6 +107,7 @@ export const itemSchema = z.object({
   screenshots: z.string().or(z.array(imageUrlSchema)).optional().nullable(),
   documentation_url: httpUrl.or(z.literal('')).optional().nullable(),
   changelog: z.string().max(5000).optional().nullable(),
+  requirements: requirementsSchema.optional(),
 });
 
 export const categorySchema = z.object({

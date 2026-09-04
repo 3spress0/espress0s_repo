@@ -79,6 +79,10 @@ slug on each import.
       "banner_url": "https://example.com/banner.png",
       "documentation_url": "https://ubuntu.com/tutorials",
       "external_url": "https://releases.ubuntu.com/24.04/",
+      "requirements": [
+        { "type": "hardware", "name": "RAM", "version": "4 GB", "note": "8 GB recommended" },
+        { "type": "hardware", "name": "Disk", "version": "25 GB" }
+      ],
       "links": [
         { "label": "Ubuntu releases", "storage_provider": "external",
           "download_url": "https://releases.ubuntu.com/24.04/ubuntu-24.04.1-desktop-amd64.iso",
@@ -98,6 +102,12 @@ written on one install imports cleanly on another.
 `status` is one of `current`, `legacy`, `deprecated`, `archived`, `unreleased`.
 It is a lifecycle marker and is independent of `published`: an entry can be
 published and still be the deprecated release of a product line.
+
+`requirements` is an optional list of structured dependency / system
+requirement rows: `type` (`os`, `runtime`, `hardware`, `dependency`, `other`),
+`name`, optional `version` (free text such as `>= 4.8`), `optional` (boolean)
+and `note`. Shown on the public page, returned by `/api/v1/items/:slug`, and
+kept in version snapshots.
 
 `related` links entries by slug. Relations: `related`, `supersedes`,
 `superseded-by`, `variant`. Targets may appear later in the same archive.

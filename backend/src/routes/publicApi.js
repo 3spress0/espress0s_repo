@@ -1,4 +1,5 @@
 import { getDb } from '../db/index.js';
+import { parseRequirements } from '../utils/requirements.js';
 import { decryptItem } from '../services/itemSerializer.js';
 import { searchService, MAX_QUERY_LENGTH } from '../services/searchService.js';
 import { listEvents } from '../services/eventBus.js';
@@ -69,7 +70,7 @@ export function publicItem(raw, { links = [], category = null, folder = null } =
     banner_url: item.banner_url ?? null,
     documentation_url: item.documentation_url ?? null,
     changelog: item.changelog ?? null,
-    requirements: item.requirements ?? null,
+    requirements: parseRequirements(item.requirements),
     category: category ? { id: category.id, name: category.name, slug: category.slug } : null,
     folder: folder ? { id: folder.id, name: folder.name, slug: folder.slug } : null,
     download_count: item.download_count ?? 0,

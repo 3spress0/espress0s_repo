@@ -7,6 +7,7 @@ import {
 import { itemsApi, categoriesApi, foldersApi, adminApi, catalogAdminApi } from '../../lib/api';
 import Loading, { LoadingDots } from '../Loading';
 import Progress from '../Progress';
+import RequirementsEditor from './RequirementsEditor';
 import ImagePicker from './ImagePicker';
 import DownloadLinksEditor from './DownloadLinksEditor';
 import MarkdownField from './MarkdownField';
@@ -73,7 +74,7 @@ function emptyForm() {
     architecture: '', sha256: '', md5: '', storage_provider: 'external', storage_path: '',
     download_url: '', external_url: '', featured: false, published: true,
     license_status: 'check-license', license_notes: '', tags: '', icon_url: '',
-    image_url: '', screenshots: '', documentation_url: '', changelog: '',
+    image_url: '', screenshots: '', documentation_url: '', changelog: '', requirements: [],
   };
 }
 
@@ -115,6 +116,7 @@ function itemToForm(item) {
     screenshots: shots.join('\n'),
     documentation_url: item.documentation_url || '',
     changelog: item.changelog || '',
+    requirements: Array.isArray(item.requirements) ? item.requirements : [],
   };
 }
 
@@ -243,6 +245,9 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
     published: form.published ? 1 : 0,
     tags: splitList(form.tags),
     screenshots: splitList(form.screenshots),
+    requirements: (form.requirements || []).filter(r => (r.name || '').trim()).map(r => ({
+      type: r.type || 'other', name: r.name.trim(), version: r.version?.trim() || null, optional: !!r.optional, note: r.note?.trim() || null,
+    })),
     // Strip empty-string URL fields: the API expects a valid URL or nothing.
     download_url: form.download_url || null,
     external_url: form.external_url || null,
@@ -968,6 +973,9 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
           {field('Architecture', 'architecture', { placeholder: 'x64, arm64, universal' })}
           {field('SHA-256', 'sha256', { mono: true })}
           {field('MD5', 'md5', { mono: true })}
+          <div className="sm:col-span-2 pt-2">
+            <RequirementsEditor value={form.requirements} onChange={(v) => setForm(f => ({ ...f, requirements: v }))} />
+          </div>
         </div>
       )}
 

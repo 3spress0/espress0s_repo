@@ -9,6 +9,8 @@ import { useAuth } from '../context/AuthContext';
 import FavoriteButton from '../components/FavoriteButton';
 import Loading, { LoadingDots } from '../components/Loading';
 
+const REQ_LABEL = { os: 'OS', runtime: 'Runtime', hardware: 'Hardware', dependency: 'Depends on', other: 'Other' };
+
 // The editor is ~1k lines and only appears when an admin clicks "Edit this
 // page", so it is not worth putting in the bundle every visitor parses.
 const ItemEditor = lazy(() => import('../components/admin/ItemEditor'));
@@ -396,6 +398,22 @@ export default function ItemDetail() {
             <div className="glass rounded-2xl border border-white/5 p-6">
               <h2 className="font-semibold text-textPrimary mb-3">Changelog</h2>
               <Markdown>{item.changelog}</Markdown>
+            </div>
+          )}
+          {Array.isArray(item.requirements) && item.requirements.length > 0 && (
+            <div className="glass rounded-2xl border border-white/5 p-6">
+              <h2 className="font-semibold text-textPrimary mb-4 flex items-center gap-2"><Cpu className="w-4 h-4 text-primary" />Requirements</h2>
+              <ul className="space-y-2 text-sm">
+                {item.requirements.map((r, i) => (
+                  <li key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-[11px] uppercase tracking-wide text-textMuted w-24 flex-shrink-0">{REQ_LABEL[r.type] || 'Other'}</span>
+                    <span className="text-textPrimary font-medium">{r.name}</span>
+                    {r.version && <span className="font-mono text-xs text-textSecondary">{r.version}</span>}
+                    {r.optional && <span className="text-[11px] px-1.5 py-0.5 rounded bg-surface border border-border text-textMuted">optional</span>}
+                    {r.note && <span className="text-xs text-textMuted">— {r.note}</span>}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           <div className="glass rounded-2xl border border-white/5 p-6">

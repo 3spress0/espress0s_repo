@@ -126,6 +126,9 @@ export function getDb() {
     // the schema block runs before this ALTER, so indexing it there would fail
     // with "no such column: status".
     dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_items_status ON items(status)");
+    if (!itemCols.some(c => c.name === 'requirements')) {
+      dbInstance.exec("ALTER TABLE items ADD COLUMN requirements TEXT");
+    }
     const hasFolderId = itemCols.some(c => c.name === 'folder_id');
     if (!hasFolderId) {
       dbInstance.exec("ALTER TABLE items ADD COLUMN folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL");

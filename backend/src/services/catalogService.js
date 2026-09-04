@@ -7,7 +7,7 @@ import { emitEvent } from './eventBus.js';
 import { config } from '../config.js';
 import { unzip, zip, ZipError } from '../lib/zip.js';
 import {
-  itemSchema, downloadLinkSchema, externalImageUrlSchema, isExternalUrl,
+  itemSchema, downloadLinkSchema, externalImageUrlSchema, isExternalUrl, requirementsSchema,
 } from '../utils/validation.js';
 import {
   serializeItem, getItemLinksForMany, encryptItemFields, encryptLinkFields,
@@ -101,6 +101,7 @@ const catalogItemSchema = z.object({
   documentation_url: externalImageUrlSchema,
   external_url: externalImageUrlSchema,
   changelog: z.string().max(200000).optional().nullable(),
+  requirements: requirementsSchema.optional(),
   links: z.array(downloadLinkSchema.partial()).max(50).optional(),
   related: z.array(relationSchema).max(100).optional(),
 }).passthrough();
@@ -125,7 +126,7 @@ const IMPORTABLE_ITEM_FIELDS = [
   'status', 'storage_provider', 'storage_path', 'download_url', 'external_url',
   'featured', 'published', 'license_status', 'license_notes', 'tags',
   'icon_url', 'banner_url', 'image_url', 'screenshots', 'documentation_url',
-  'changelog',
+  'changelog', 'requirements',
 ];
 
 const ENCRYPTED_ITEM_COLUMNS = new Set(['storage_path', 'download_url', 'external_url', 'license_notes']);
@@ -462,13 +463,13 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
                 file_name, file_size, file_type, platform, architecture, sha256, md5, status,
                 storage_provider, storage_path, download_url, external_url,
                 featured, published, license_status, license_notes, tags, icon_url, banner_url, image_url, screenshots,
-                documentation_url, changelog, created_at, updated_at, encryption_version
+                documentation_url, changelog, requirements, created_at, updated_at, encryption_version
               ) VALUES (
                 @name, @slug, @description, @long_description, @category_id, @folder_id, @version, @release_date,
                 @file_name, @file_size, @file_type, @platform, @architecture, @sha256, @md5, @status,
                 @storage_provider, @storage_path, @download_url, @external_url,
                 @featured, @published, @license_status, @license_notes, @tags, @icon_url, @banner_url, @image_url, @screenshots,
-                @documentation_url, @changelog, @created_at, @updated_at, @encryption_version
+                @documentation_url, @changelog, @requirements, @created_at, @updated_at, @encryption_version
               )`).run({
               name: item.name, slug: item.slug,
               description: item.description, long_description: item.long_description || null,
@@ -486,6 +487,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
               tags: tagsJson, icon_url: item.icon_url || null, banner_url: item.banner_url || null,
               image_url: item.image_url || null, screenshots: item.screenshots ? JSON.stringify(item.screenshots) : null,
               documentation_url: item.documentation_url || null, changelog: item.changelog || null,
+              requirements: item.requirements?.length ? JSON.stringify(item.requirements) : null,
               created_at: now, updated_at: now, encryption_version: 'v1',
             });
             insertLinks(Number(result.lastInsertRowid), valid.links);
@@ -522,6 +524,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
           image_url: item.image_url ?? undefined,
           documentation_url: item.documentation_url ?? undefined,
           changelog: item.changelog ?? undefined,
+          requirements: item.requirements === undefined ? undefined : (item.requirements || []),
           featured: item.featured === undefined ? undefined : (item.featured ? 1 : 0),
           published: item.published === undefined ? undefined : (item.published ? 1 : 0),
           tags: tagsJson === null ? undefined : item.tags,
@@ -556,6 +559,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
               const sqlSets = changedSets.map(([k]) => `${k} = @${k}`);
               for (const [k, v] of changedSets) {
                 if (k === 'tags') params[k] = Array.isArray(v) ? JSON.stringify(v) : v;
+                else if (k === 'requirements') params[k] = Array.isArray(v) && v.length ? JSON.stringify(v) : null;
                 else if (ENCRYPTED_ITEM_COLUMNS.has(k)) params[k] = v ? encryptItemFields({ [k]: v })[k] : null;
                 else params[k] = v ?? null;
               }
@@ -757,6 +761,7 @@ function toCatalogEntry(row, links) {
     external_url: s.external_url || null,
     documentation_url: s.documentation_url || null,
     changelog: s.changelog || null,
+    requirements: Array.isArray(s.requirements) ? s.requirements : [],
     icon_url: s.icon_url || null,
     banner_url: s.banner_url || null,
     links: (s.download_links || []).map((l) => ({

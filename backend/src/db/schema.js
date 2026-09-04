@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS items (
   screenshots TEXT, -- JSON array of URLs
   documentation_url TEXT,
   changelog TEXT,
+  requirements TEXT, -- JSON array of {type,name,version,optional,note}
   -- Catalogue lifecycle. Orthogonal to the published flag: an item can be
   -- published and still be the deprecated release of a product line.
   status TEXT DEFAULT 'current' CHECK(status IN ('current', 'legacy', 'deprecated', 'archived', 'unreleased')),
