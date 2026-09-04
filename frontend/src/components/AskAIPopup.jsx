@@ -68,7 +68,7 @@ export default function AskAIPopup({ isOpen, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
-      <div className="glass-strong rounded-3xl border border-white/10 w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-slide-up">
+      <div className="glass-strong rounded-3xl border border-white/10 w-full max-w-2xl max-h-85dvh flex flex-col shadow-2xl animate-slide-up">
         <div className="flex items-center justify-between p-6 border-b border-white/5">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-primary flex items-center justify-center shadow-lg">
@@ -79,7 +79,7 @@ export default function AskAIPopup({ isOpen, onClose }) {
               <p className="text-xs text-textMuted">Easily find files • {describeAi(status).badge}</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl bg-surface border border-border hover:border-primary/30 transition-colors">
+          <button onClick={onClose} aria-label="Close" className="p-2.5 sm:p-2 rounded-xl bg-surface border border-border hover:border-primary/30 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>

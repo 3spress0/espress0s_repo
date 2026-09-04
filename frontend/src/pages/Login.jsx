@@ -51,7 +51,7 @@ export default function Login() {
           <p className="text-sm text-textMuted mt-1">Sign in to espress0's repo</p>
         </div>
 
-        <div className="glass rounded-3xl border border-white/5 p-8 shadow-2xl">
+        <div className="glass rounded-3xl border border-white/5 p-5 sm:p-8 shadow-2xl">
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="text-xs font-medium text-textMuted uppercase tracking-widest mb-2 block">Username or Email</label>
@@ -85,7 +85,8 @@ export default function Login() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-textMuted hover:text-textPrimary"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-lg text-textMuted hover:text-textPrimary"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>

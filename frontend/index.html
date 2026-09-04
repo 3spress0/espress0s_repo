@@ -14,7 +14,14 @@
          mark is declared here too. -->
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="theme-color" content="#42456a" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets standalone (home-screen) mode extend under
+         the notch/home indicator so the UI can pad itself with the safe-area
+         inset instead of leaving dead grey bands on a phone. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="espress0" />
     <title>espress0's repo</title>
     <meta name="description" content="espress0's repo - A curated personal repository for discovering and downloading software, ISOs, tools, and documentation." />
 

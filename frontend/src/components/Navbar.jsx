@@ -41,7 +41,7 @@ export default function Navbar({ onAskOpen }) {
 
   return (
     <>
-      <nav className="sticky top-0 z-50 glass-strong border-b border-white/5">
+      <nav className="sticky top-0 z-50 pt-safe glass-strong border-b border-white/5">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <Link to="/" className="flex items-center gap-3 group">
@@ -100,15 +100,16 @@ export default function Navbar({ onAskOpen }) {
             </div>
 
             <div className="md:hidden flex items-center gap-1">
-              <ThemePicker />
-              <button onClick={() => setMobileOpen(!mobileOpen)} className="p-2 rounded-xl bg-surface border border-border text-textSecondary hover:text-textPrimary">
+              {/* Both icon buttons need a 44px touch target on a phone. */}
+              <ThemePicker className="max-md:min-w-11 max-md:min-h-11" />
+              <button onClick={() => setMobileOpen(!mobileOpen)} aria-label="Menu" className="w-11 h-11 rounded-xl bg-surface border border-border text-textSecondary hover:text-textPrimary flex items-center justify-center">
                 {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
             </div>
           </div>
 
           {mobileOpen && (
-            <div className="md:hidden py-4 border-t border-white/5 animate-fade-in">
+            <div className="md:hidden py-4 pb-safe border-t border-white/5 animate-fade-in">
               <div className="space-y-1">
                 {navLinks.map(link => {
                   const Icon = link.icon;

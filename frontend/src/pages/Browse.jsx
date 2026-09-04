@@ -130,29 +130,29 @@ export default function Browse() {
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <select value={category} onChange={(e) => updateParam('category', e.target.value)}
-          className="px-3 py-2 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50">
+          className="px-3 py-2 min-h-11 sm:min-h-0 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50">
           <option value="">All categories</option>
           {categories.map(c => <option key={c.id} value={c.slug}>{c.name} ({c.count})</option>)}
         </select>
         <select value={folder} onChange={(e) => updateParam('folder', e.target.value)}
-          className="px-3 py-2 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50">
+          className="px-3 py-2 min-h-11 sm:min-h-0 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50">
           <option value="">All folders</option>
           <option value="none">Unfiled</option>
           {folders.map(f => <option key={f.id} value={f.slug}>{f.name} ({f.item_count})</option>)}
         </select>
         <select value={platform} onChange={(e) => updateParam('platform', e.target.value)}
-          className="px-3 py-2 bg-surface border border-border rounded-xl text-sm capitalize focus:outline-none focus:border-primary/50">
+          className="px-3 py-2 min-h-11 sm:min-h-0 bg-surface border border-border rounded-xl text-sm capitalize focus:outline-none focus:border-primary/50">
           <option value="">Any platform</option>
           {platforms.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
         <select value={sort} onChange={(e) => updateParam('sort', e.target.value)}
-          className="px-3 py-2 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50">
+          className="px-3 py-2 min-h-11 sm:min-h-0 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50">
           {sortOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
         <button
           type="button"
           onClick={() => setShowMore(!showMore)}
-          className={`px-3 py-2 rounded-xl border text-sm font-medium flex items-center gap-2 transition-colors ${
+          className={`px-3 py-2 min-h-11 sm:min-h-0 rounded-xl border text-sm font-medium flex items-center gap-2 transition-colors ${
             showMore || hasExtra
               ? 'bg-gradient-primary border-transparent text-white'
               : 'bg-surface border-border text-textSecondary hover:border-primary/30'
@@ -162,7 +162,7 @@ export default function Browse() {
         </button>
         {activeChips.length > 0 && (
           <button type="button" onClick={clearFilters}
-            className="px-3 py-2 text-xs text-textMuted hover:text-primary flex items-center gap-1">
+            className="px-3 py-2 min-h-11 sm:min-h-0 text-xs text-textMuted hover:text-primary flex items-center gap-1">
             <X className="w-3 h-3" /> Clear
           </button>
         )}
@@ -175,7 +175,7 @@ export default function Browse() {
             <button
               key={key}
               onClick={() => updateParam(key, '')}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-xs text-primary hover:bg-primary/20 transition-colors"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 min-h-[32px] sm:min-h-0 rounded-full bg-primary/10 border border-primary/20 text-xs text-primary hover:bg-primary/20 transition-colors"
             >
               {label} <X className="w-3 h-3" />
             </button>
@@ -191,7 +191,7 @@ export default function Browse() {
             <div className="flex flex-wrap gap-1.5">
               {fileTypes.map(ft => (
                 <button key={ft} onClick={() => updateParam('file_type', fileType === ft ? '' : ft)}
-                  className={`px-2.5 py-1 rounded-full text-xs uppercase border transition-colors ${
+                  className={`inline-flex items-center px-2.5 py-1 min-h-[36px] sm:min-h-0 rounded-full text-xs uppercase border transition-colors ${
                     fileType === ft ? 'bg-gradient-primary border-transparent text-white' : 'bg-surface border-border text-textSecondary hover:border-primary/30'
                   }`}>{ft}</button>
               ))}
@@ -203,7 +203,7 @@ export default function Browse() {
               <div className="flex gap-1.5">
                 {architectures.map(a => (
                   <button key={a} onClick={() => updateParam('architecture', arch === a ? '' : a)}
-                    className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                    className={`inline-flex items-center px-2.5 py-1 min-h-[36px] sm:min-h-0 rounded-full text-xs border transition-colors ${
                       arch === a ? 'bg-gradient-primary border-transparent text-white' : 'bg-surface border-border text-textSecondary hover:border-primary/30'
                     }`}>{a}</button>
                 ))}
@@ -212,7 +212,7 @@ export default function Browse() {
             <div>
               <div className="text-[11px] font-medium text-textMuted uppercase tracking-wider mb-2">License</div>
               <select value={license} onChange={(e) => updateParam('license_status', e.target.value)}
-                className="px-3 py-1.5 bg-surface border border-border rounded-lg text-xs focus:outline-none focus:border-primary/50">
+                className="px-3 py-1.5 min-h-[36px] sm:min-h-0 bg-surface border border-border rounded-lg text-xs focus:outline-none focus:border-primary/50">
                 <option value="">Any license</option>
                 {licenses.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
               </select>
@@ -223,7 +223,7 @@ export default function Browse() {
                 onKeyDown={(e) => { if (e.key === 'Enter') updateParam('tag', localTag.trim()); }}
                 onBlur={() => updateParam('tag', localTag.trim())}
                 placeholder="e.g. linux"
-                className="px-3 py-1.5 bg-surface border border-border rounded-lg text-xs w-32 focus:outline-none focus:border-primary/50" />
+                className="px-3 py-1.5 min-h-[36px] sm:min-h-0 bg-surface border border-border rounded-lg text-xs w-36 sm:w-32 focus:outline-none focus:border-primary/50" />
             </div>
             <label className="flex items-center gap-2 text-xs text-textSecondary cursor-pointer select-none">
               <input type="checkbox" checked={featured} onChange={() => updateParam('featured', featured ? '' : '1')} className="accent-purple-500" />
@@ -234,7 +234,7 @@ export default function Browse() {
               <div className="flex gap-1.5">
                 {['desc', 'asc'].map(o => (
                   <button key={o} onClick={() => updateParam('order', o)}
-                    className={`px-2.5 py-1 rounded-full text-xs border uppercase transition-colors ${
+                    className={`inline-flex items-center px-2.5 py-1 min-h-[36px] sm:min-h-0 rounded-full text-xs border uppercase transition-colors ${
                       order === o ? 'bg-surface border-primary/50 text-primary' : 'bg-surface border-border text-textSecondary'
                     }`}>{o}</button>
                 ))}
@@ -263,7 +263,7 @@ export default function Browse() {
           {pagination.totalPages > 1 && (
             <div className="flex items-center justify-center gap-2 pb-4">
               <button onClick={() => updateParam('page', Math.max(1, page - 1))} disabled={page <= 1}
-                className="p-2.5 rounded-xl bg-surface border border-border disabled:opacity-40 hover:border-primary/30 transition-colors">
+                className="inline-flex items-center justify-center w-11 h-11 sm:w-9 sm:h-9 rounded-xl bg-surface border border-border disabled:opacity-40 hover:border-primary/30 transition-colors">
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <div className="flex items-center gap-1">
@@ -272,14 +272,14 @@ export default function Browse() {
                   if (p > pagination.totalPages) return null;
                   return (
                     <button key={p} onClick={() => updateParam('page', p)}
-                      className={`w-9 h-9 rounded-xl text-sm font-medium transition-colors ${
+                      className={`w-11 h-11 sm:w-9 sm:h-9 rounded-xl text-sm font-medium transition-colors ${
                         p === page ? 'bg-gradient-primary text-white' : 'bg-surface border border-border text-textSecondary hover:border-primary/30'
                       }`}>{p}</button>
                   );
                 })}
               </div>
               <button onClick={() => updateParam('page', Math.min(pagination.totalPages, page + 1))} disabled={page >= pagination.totalPages}
-                className="p-2.5 rounded-xl bg-surface border border-border disabled:opacity-40 hover:border-primary/30 transition-colors">
+                className="inline-flex items-center justify-center w-11 h-11 sm:w-9 sm:h-9 rounded-xl bg-surface border border-border disabled:opacity-40 hover:border-primary/30 transition-colors">
                 <ChevronRight className="w-4 h-4" />
               </button>
               <span className="text-xs text-textMuted ml-2">Page {pagination.page} / {pagination.totalPages}</span>

@@ -2,9 +2,11 @@
   "name": "espress0's repo",
   "short_name": "espress0",
   "description": "A curated personal repository for discovering and downloading software, ISOs, tools, and documentation.",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#0f1117",
   "theme_color": "#42456a",
   "icons": [
@@ -13,6 +15,12 @@
       "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }

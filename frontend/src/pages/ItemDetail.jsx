@@ -144,7 +144,7 @@ export default function ItemDetail() {
   const providerIcons = { 'gdrive': 'G', 'onedrive': 'O', 'external': 'E', 'github': 'GH', 'local': 'L' };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-28 md:pb-8">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <Link to="/browse" className="inline-flex items-center gap-2 text-sm text-textSecondary hover:text-primary transition-colors">
           <ArrowLeft className="w-4 h-4" />
@@ -204,16 +204,16 @@ export default function ItemDetail() {
       <div className="glass rounded-3xl border border-white/5 overflow-hidden mb-6">
         <div className="h-1 w-full bg-gradient-primary" />
         {(item.image_url || item.icon_url) && (
-          <div className="relative h-64 sm:h-80 overflow-hidden bg-surfaceHover">
+          <div className="relative h-52 sm:h-64 md:h-80 overflow-hidden bg-surfaceHover">
             <img src={item.image_url || item.icon_url} alt={item.name} decoding="async" className="w-full h-full object-cover" onError={(e) => e.target.style.display = 'none'} />
             <div className="absolute inset-0 bg-gradient-to-t from-surface via-surface/50 to-transparent" />
-            <div className="absolute bottom-4 left-8 right-8">
+            <div className="absolute bottom-4 left-4 right-4 sm:left-8 sm:right-8">
               <h1 className="text-3xl sm:text-4xl font-bold text-white leading-tight drop-shadow-lg">{item.name}</h1>
               <p className="text-white/80 mt-2 drop-shadow">{item.description}</p>
             </div>
           </div>
         )}
-        <div className="p-8">
+        <div className="p-4 sm:p-6 lg:p-8">
           <div className="flex flex-col md:flex-row gap-6">
             {!(item.image_url || item.icon_url) && (
               <div className="w-20 h-20 rounded-2xl bg-gradient-subtle border border-white/5 flex items-center justify-center flex-shrink-0">
@@ -468,6 +468,42 @@ export default function ItemDetail() {
           </div>
         </div>
       </div>
+
+      {/* Phones: the primary action stays one thumb-tap away no matter how
+          far down the page the reader is. The 5xl header card sits below the
+          fold on a small phone, so without this the Download button is a
+          scroll away on the page that matters most. Hidden at md+ where the
+          header button is already reachable. */}
+      {(downloadLinks.length > 0 || !isAuthenticated) && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-surface md:hidden">
+          <div className="px-4 py-3 pb-safe">
+            {authLoading ? (
+              <div className="flex items-center justify-center gap-2 py-2 text-sm text-textMuted">
+                <LoadingDots size={16} /> Checking login…
+              </div>
+            ) : !isAuthenticated ? (
+              <Link
+                to={`/login?redirect=${encodeURIComponent(`/file/${item.slug}`)}`}
+                className="flex items-center justify-center gap-2 w-full py-3 bg-gradient-primary text-white rounded-xl font-semibold text-sm"
+              >
+                <Lock className="w-4 h-4" /> Login to Download
+              </Link>
+            ) : availableLinks.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 py-3 text-sm font-medium text-red-400">
+                <AlertTriangle className="w-4 h-4" /> All mirrors down
+              </div>
+            ) : (
+              <button
+                onClick={() => handleDownload()}
+                className="flex items-center justify-center gap-2 w-full py-3 bg-gradient-primary active:bg-gradient-primary-hover text-white rounded-xl font-semibold text-sm"
+              >
+                <Download className="w-5 h-5" />
+                <span className="truncate">Download{primaryLink ? ` • ${primaryLink.label}` : ''}</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
