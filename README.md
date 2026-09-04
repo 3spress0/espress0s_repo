@@ -324,6 +324,7 @@ See `SECURITY-AUDIT.md` for the project's security documentation.
 | `CATALOG.md`        | Catalogue/import/export format       |
 | `THEME.md`          | Themes and visual configuration      |
 | `SECURITY-AUDIT.md` | Security documentation               |
+| `/api/docs`         | Live OpenAPI reference (`/api/docs/json`, `/api/docs/yaml`) |
 
 ## Storage model
 

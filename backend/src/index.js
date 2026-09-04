@@ -35,6 +35,7 @@ import multipart from '@fastify/multipart';
 import { monitoringService } from './services/monitoringService.js';
 import { linkHealthService } from './services/linkHealthService.js';
 import { rateLimitKey, rateLimitMax } from './middleware/rateLimit.js';
+import { openapiPlugin } from './docs/openapi.js';
 
 // Boot-time configuration audit. In production this throws; in development it
 // prints the same list so the gap is visible before deploy day.
@@ -215,6 +216,9 @@ fastify.addHook('onResponse', async (request, reply) => {
 });
 
 getDb();
+
+// OpenAPI: must be registered before any route so its onRoute hook sees them.
+await fastify.register(openapiPlugin);
 
 /**
  * Health, and the proof of which release is actually serving it.
