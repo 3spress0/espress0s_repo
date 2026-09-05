@@ -315,7 +315,7 @@ export async function safeFetchBuffer(rawUrl, { maxBytes = 50 * 1024 * 1024, tim
       // checked against the non-public ranges, internal names rejected - and
       // every redirect hop is re-validated below before the next fetch. That
       // is the whole point of this function; see tests/ssrf.test.js.
-      // codeql[js/server-side-request-forgery]
+      // codeql[js/request-forgery]
       response = await fetch(target, {
         signal: controller.signal,
         redirect: 'manual',
