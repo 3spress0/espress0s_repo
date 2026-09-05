@@ -209,8 +209,7 @@ export async function uploadsRoutes(fastify) {
     // scanned for script, event handlers and entities, the size is capped by
     // the multipart limit and by the check above, the caller is an
     // authenticated editor, and the name is ours.
-    // codeql[js/http-to-file-access]
-    fs.writeFileSync(target, buffer);
+    fs.writeFileSync(target, buffer); // codeql[js/http-to-file-access]
 
     const db = getDb();
     const info = db.prepare(`

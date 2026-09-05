@@ -140,8 +140,7 @@ export async function previewRoutes(fastify) {
         // capped, the name is our own hash plus random suffix, the file is
         // private, and the bytes are only ever served back behind login with
         // nosniff, a default-src 'none' CSP and X-Frame-Options: DENY.
-        // codeql[js/http-to-file-access]
-        fs.writeFileSync(tmpPath, buffer, { mode: 0o600 });
+        fs.writeFileSync(tmpPath, buffer, { mode: 0o600 }); // codeql[js/http-to-file-access]
         fs.renameSync(tmpPath, cachedPath);
       } catch (cacheErr) {
         request.log.warn({ itemId: item.id, err: cacheErr.message }, 'Preview cache write failed');
