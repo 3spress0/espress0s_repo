@@ -220,6 +220,29 @@ CONF
   $SUDO chmod 644 "$CONFIG_FILE"
 }
 
+# Build the frontend into a staging directory and swap it into place only when
+# the ENTIRE build succeeded. `vite build` empties dist/ before it writes, so
+# a build that dies mid-way - a removed package export (the 918ecff incident:
+# lucide-react 1.x dropped the brand icons and the build failed on `Github`),
+# or an OOM on a loaded box - otherwise guts dist/ out from under the RUNNING
+# site. Building beside the live tree keeps the last good build serving until
+# its successor is proven complete.
+build_frontend_safely() {
+  local stage="frontend/.dist-stage"
+  rm -rf "$stage"
+  if ! (cd frontend && npm run build -- --outDir .dist-stage --emptyOutDir); then
+    rm -rf "$stage"
+    return 1
+  fi
+  if [ ! -f "$stage/index.html" ]; then
+    rm -rf "$stage"
+    return 1
+  fi
+  rm -rf frontend/dist
+  mv "$stage" frontend/dist
+  return 0
+}
+
 # The one proof that matters after an update: the process answering on the
 # app's port reports the commit we just deployed. `systemctl restart` returning
 # 0 does NOT imply that. Without this check the script printed "Update
@@ -276,8 +299,8 @@ run_post_update() {
   ok "Migrations applied"
 
   step "Rebuilding frontend"
-  (cd frontend && npm run build)
-  [ -f frontend/dist/index.html ] || die "Frontend build produced no dist/index.html."
+  build_frontend_safely \
+    || die "Frontend build failed - the previous build is STILL in place and serving."
   ok "Built frontend/dist"
 
   step "Restarting service"
@@ -779,8 +802,7 @@ else
 fi
 
 step "Building frontend"
-(cd frontend && npm run build)
-[ -f frontend/dist/index.html ] || die "Frontend build produced no dist/index.html."
+build_frontend_safely || die "Frontend build failed (see the output above)."
 ok "Built frontend/dist"
 
 # configure_ai_env already ran on the --update path; on a fresh deploy this is

@@ -597,6 +597,22 @@ testcase "static assets resolve on disk per request and missing files 404 honest
     "the cookieless image proxy route is registered"
 fi
 
+# --- 14. the frontend build cannot gut dist/ under a live site ---------------
+#
+# The second half of the 918ecff incident: `vite build` empties dist/ BEFORE
+# writing, so the lucide-react build failure (and any box that dies mid-build
+# - theirs was so loaded SSH stopped answering) leaves the running site with
+# no working build at all. The deploy must build beside dist/ and swap only
+# the COMPLETED result into place.
+if should_run "atomic frontend build"; then
+testcase "deploy builds the frontend in a staging dir and swaps only a complete build"
+  assert_contains "$DEPLOY" "build_frontend_safely" "deploy uses a build-staging helper"
+  assert_contains "$DEPLOY" "--outDir .dist-stage" "vite builds into .dist-stage, not dist"
+  assert_contains "$DEPLOY" 'mv "$stage" frontend/dist' "only a finished build lands in dist"
+  assert_contains "$DEPLOY" "the previous build is STILL in place and serving" \
+    "a failed update build leaves the old build serving (and says so)"
+fi
+
 # ===================================================================== summary
 printf '\n────────────────────────────────────────\n'
 printf '%s%d passed%s, %s%d failed%s\n' "$GRN" "$PASS" "$RST" \

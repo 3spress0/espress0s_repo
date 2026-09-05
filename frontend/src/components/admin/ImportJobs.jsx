@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CalendarClock, Plus, Play, Trash2, Edit, X, AlertTriangle, CheckCircle2, XCircle, Eye, Github, Link2 } from 'lucide-react';
+import { CalendarClock, Plus, Play, Trash2, Edit, X, AlertTriangle, CheckCircle2, XCircle, Eye, Link2 } from 'lucide-react';
+// The GitHub glyph is a local component now: lucide-react 1.x removed all
+// brand icons, and importing `Github` broke the production build (PR #29).
+import GithubMark from '../GithubMark';
 import { importJobsApi } from '../../lib/api';
 import { LoadingDots } from '../Loading';
 
@@ -139,7 +142,7 @@ export default function ImportJobs({ onNotify }) {
             <div key={job.id} className="glass rounded-2xl border border-white/5 p-4 flex flex-wrap items-center gap-3">
               <div className="flex-1 min-w-[220px]">
                 <div className="font-medium text-textPrimary flex items-center gap-2">
-                  {job.source_type === 'github-releases' ? <Github className="w-4 h-4 text-textMuted" /> : <Link2 className="w-4 h-4 text-textMuted" />}
+                  {job.source_type === 'github-releases' ? <GithubMark className="w-4 h-4 text-textMuted" /> : <Link2 className="w-4 h-4 text-textMuted" />}
                   {job.name} <Status job={job} />
                 </div>
                 <div className="text-xs font-mono text-textMuted truncate">{job.source_url} · {job.mode} · every {job.interval_minutes} min</div>
