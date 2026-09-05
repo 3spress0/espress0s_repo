@@ -5,7 +5,7 @@ import {
   Wand2, GitBranch, Plus, Trash2,
 } from 'lucide-react';
 import { itemsApi, categoriesApi, foldersApi, adminApi, catalogAdminApi } from '../../lib/api';
-import Loading, { LoadingDots } from '../Loading';
+import { LoadingDots } from '../Loading';
 import Progress from '../Progress';
 import RequirementsEditor from './RequirementsEditor';
 import PreviewLinkButton from './PreviewLinkButton';
@@ -223,6 +223,9 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
         .catch(() => { if (!cancelled) setSlugState(null); });
     }, 400);
     return () => { cancelled = true; clearTimeout(t); };
+    // Debounced slug check: re-run only when the slug itself changes, not on
+    // every keystroke in the name field or on the (unmemoised) helper.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveSlug, item?.id]);
 
   const chooseTemplate = (template) => {

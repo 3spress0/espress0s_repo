@@ -1,9 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Download, HardDrive, Calendar, Tag, Shield, Cpu, Monitor, FileType, Hash, ExternalLink, ArrowLeft, Eye, Clock, Music, Video, Play, Image as ImageIcon, Disc, File, Link2, Star, Lock, AlertTriangle, Pencil, Folder } from 'lucide-react';
+import { Download, HardDrive, Calendar, Tag, Cpu, Monitor, FileType, Hash, ArrowLeft, Eye, Clock, Music, Video, Play, Image as Disc, File, Link2, Star, Lock, AlertTriangle, Pencil, Folder } from 'lucide-react';
 import { itemsApi } from '../lib/api';
 import { formatBytes, formatDate, startDownload } from '../lib/utils';
-import { ItemPlaceholder } from '../components/Logo';
 import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
 import FavoriteButton from '../components/FavoriteButton';

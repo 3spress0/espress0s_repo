@@ -162,6 +162,8 @@ export default function StarryBackground() {
       window.removeEventListener('resize', resize);
     };
     // theme.id is in the deps so a scheme change re-reads the CSS variables.
+    // isTouch is a per-mount constant (pointer type does not change).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme.id, starfield, shootingEnabled, reducedMotion, starDensity]);
 
   // Touch equivalent of the 60-90px desktop blurs: still a soft glow, but

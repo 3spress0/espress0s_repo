@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Activity, Cpu, HardDrive, Database, Clock, AlertTriangle, Check, Zap, Download, Users, Shield, RefreshCw, Terminal, BarChart3 } from 'lucide-react';
+import { Activity, Cpu, Database, Clock, AlertTriangle, Check, Zap, Shield, RefreshCw, Terminal, BarChart3 } from 'lucide-react';
 import api from '../lib/api';
 import Loading from './Loading';
 

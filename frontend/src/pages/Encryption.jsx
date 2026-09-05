@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Shield, Lock, Key, Database, Eye, EyeOff, Check, AlertTriangle, FileKey, Hash } from 'lucide-react';
+import { Shield, Lock, Key, Database, Check, AlertTriangle, FileKey, Hash } from 'lucide-react';
 import { authApi } from '../lib/api';
 
 export default function Encryption() {
   const [securityInfo, setSecurityInfo] = useState(null);
   const [encryptionStatus, setEncryptionStatus] = useState(null);
-  const [showKeys, setShowKeys] = useState(false);
   const [testData, setTestData] = useState({ plaintext: 'my secret file path', encrypted: '', decrypted: '' });
 
   useEffect(() => {

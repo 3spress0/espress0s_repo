@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee, Palette, Star, Globe, Bell } from 'lucide-react';
+import { User, Mail, Lock, Save, Shield, Eye, EyeOff, LogOut, AlertTriangle, Check, Coffee, Palette, Star, Globe, Bell } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import StarryBackground from '../components/StarryBackground';

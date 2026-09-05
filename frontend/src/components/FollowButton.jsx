@@ -14,7 +14,8 @@ export default function FollowButton({ slug, tags = [], onError }) {
   const [showTags, setShowTags] = useState(false);
 
   const load = () => subscriptionsApi.status(slug).then(setStatus).catch(() => setStatus(null));
-  useEffect(() => { if (isAuthenticated && slug) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [isAuthenticated, slug]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (isAuthenticated && slug) load(); }, [isAuthenticated, slug]);
   if (!isAuthenticated || !status) return null;
 
   const toggle = async () => {

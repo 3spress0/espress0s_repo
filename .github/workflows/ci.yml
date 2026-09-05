@@ -63,7 +63,7 @@ jobs:
       
       - name: Lint frontend
         working-directory: ./frontend
-        run: npm run lint
+        run: npm run lint -- --max-warnings=0
 
       - name: Test frontend
         working-directory: ./frontend

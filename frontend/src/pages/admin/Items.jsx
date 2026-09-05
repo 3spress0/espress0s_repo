@@ -184,6 +184,8 @@ export default function AdminItems() {
       .catch(() => { if (!cancelled) setEditing(null); })
       .finally(() => { if (!cancelled) setLoadingId(null); });
     return () => { cancelled = true; };
+    // navigate is referentially stable in react-router; only the id matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Every filter is already applied server-side, so the table renders what

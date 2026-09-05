@@ -65,8 +65,7 @@ describe('similar: deterministic scoring', () => {
 });
 
 describe('similar: AI rerank', () => {
-  const fakeAi = (cfg, text) => ({ aiConfig: async () => cfg });
-  const enabled = { enabled: true, provider: 'openai', format: 'openai' };
+  const fakeAi = (cfg) => ({ aiConfig: async () => cfg });
 
   it('falls back to deterministic order when no provider is configured', async () => {
     clearSimilarCache();

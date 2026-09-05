@@ -44,7 +44,7 @@ Useful commands:
 | `./espress0 test` | backend tests, frontend tests, shell tests (same as CI) |
 | `cd backend && npm test` | backend only (`node --test` with `tests/setup.mjs` isolation) |
 | `cd backend && node --import ./tests/setup.mjs --test tests/foo.test.js` | one backend test file |
-| `cd backend && npm run lint` / `cd frontend && npm run lint` | ESLint (0 errors required; warnings are tolerated) |
+| `cd backend && npm run lint` / `cd frontend && npm run lint` | ESLint. Backend: 0 errors. Frontend: 0 errors **and 0 warnings** (CI enforces `--max-warnings=0`) |
 | `cd frontend && npx vite build` | production build check |
 | `./espress0 scan` | security scan (audit + secret patterns) |
 

@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Users, Shield, Edit, Trash2, Search, Plus, AlertTriangle, Lock, Mail, Crown, Eye, UserCheck, ExternalLink } from 'lucide-react';
+import { Users, Edit, Trash2, Search, Plus, AlertTriangle, Lock, Mail, Crown, Eye, UserCheck, ExternalLink } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import { LoadingDots } from './Loading';
 
 export default function UserManager() {
-  const { isAuthenticated, loading: authLoading } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [users, setUsers] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, totalPages: 0 });
   const [loading, setLoading] = useState(true);
@@ -43,6 +43,8 @@ export default function UserManager() {
     if (isAuthenticated) {
       fetchUsers(1);
     }
+    // fetchUsers is recreated every render; listing it would refetch in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
   const handleSearch = () => fetchUsers(1);

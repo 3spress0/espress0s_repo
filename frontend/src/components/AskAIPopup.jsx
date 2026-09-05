@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Coffee, Send, Database, AlertCircle, ExternalLink, Lightbulb, Search, X, Sparkles } from 'lucide-react';
+import { Coffee, Send, Lightbulb, X } from 'lucide-react';
 import { aiApi, describeAi, describeApiError } from '../lib/api';
 import { LoadingDots } from './Loading';
 
