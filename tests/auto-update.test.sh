@@ -187,13 +187,19 @@ case "\$1" in
   list-windows)
     tr ' ' '\n' < "\$ST/tmux-windows"; exit 0 ;;
   send-keys)
+    # NOTE: no launch simulation here on purpose. Typing a command into a
+    # window whose wrapper shell sits at 'read' does NOT start anything, and
+    # the mock staying silent about it is what pins the respawn-window fix.
     keys="\$*"
     case "\$keys" in
       *C-c*) echo down > "\$ST/http" ;;
-      *node*|*index.js*)
-        echo up > "\$ST/http"
-        git -C "$sb/live" rev-parse HEAD > "\$ST/serving-commit" 2>/dev/null || true ;;
     esac
+    exit 0 ;;
+  respawn-window|new-window)
+    # A launch replaces (or creates) the window's process; the app comes up
+    # from whatever the tree holds at that moment.
+    echo up > "\$ST/http"
+    git -C "$sb/live" rev-parse HEAD > "\$ST/serving-commit" 2>/dev/null || true
     exit 0 ;;
 esac
 exit 0
@@ -611,6 +617,98 @@ testcase "deploy builds the frontend in a staging dir and swaps only a complete 
   assert_contains "$DEPLOY" 'mv "$stage" frontend/dist' "only a finished build lands in dist"
   assert_contains "$DEPLOY" "the previous build is STILL in place and serving" \
     "a failed update build leaves the old build serving (and says so)"
+fi
+
+# --- 7. review regressions ----------------------------------------------------
+# Each of these pins a defect the 2026-09 review found in the update flow.
+# The mock tmux deliberately does NOT simulate a working send-keys launch any
+# more, which is what makes the first one bite.
+
+if should_run "tmux respawn"; then
+testcase "the tmux restart respawns the window instead of typing into its parked shell"
+  new_sandbox tmux-respawn
+  echo espress0 > "$SB/mock-state/tmux-session"
+  echo "app updater" > "$SB/mock-state/tmux-windows"
+  run_updater "$SB"
+  assert_eq "$(cat "$SB/rc")" "0" "an update under tmux supervision succeeds"
+  assert_eq "$(live_sha "$SB")" "$NEW_SHA" "deployed through the respawned window"
+  assert_contains "$SB/mock-state/calls" "respawn-window -k -d -t espress0:app" \
+    "the window's process is replaced with the fresh launch command"
+  if grep -F "send-keys" "$SB/mock-state/calls" | grep -q "index.js"; then
+    bad "the launch command must not be send-keys'd: the wrapper shell sits at 'read' after the stop and swallows it"
+  else
+    ok "the launch command is never typed into the window's shell"
+  fi
+fi
+
+if should_run "dirty gate"; then
+testcase "a dirty tracked file skips the cycle in BOTH modes (clone used to steamroll it)"
+  new_sandbox dirty-gate
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  echo "uncommitted tweak" >> "$SB/live/VERSION"
+  run_updater "$SB"                                # default: clone mode
+  assert_contains "$SB/out.log" "uncommitted changes - skipping this cycle" \
+    "clone mode defers the cycle instead of rsyncing over the edit"
+  assert_eq "$(live_sha "$SB")" "$OLD_SHA" "clone mode left the checkout alone"
+  grep -q "uncommitted tweak" "$SB/live/VERSION" \
+    && ok "the uncommitted edit survived the clone-mode cycle" \
+    || bad "the deploy overwrote the uncommitted edit"
+  run_updater "$SB" --mode pull
+  assert_contains "$SB/out.log" "uncommitted changes - skipping this cycle" \
+    "pull mode still defers on a dirty tree"
+  assert_eq "$(live_sha "$SB")" "$OLD_SHA" "pull mode left the checkout alone too"
+fi
+
+if should_run "rehearsal target"; then
+testcase "the migration rehearsal runs against the copied live database, not a fresh empty one"
+  new_sandbox rehearse-target
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  # Upstream gains a commit whose migrate stub records the path it was
+  # pointed at - a relative DATABASE_PATH resolves against the STAGED repo
+  # root (config.js), so the old code silently migrated an empty file.
+  cat > "$SB/upstream/backend/src/db/migrate.js" <<'J'
+const fs = require('fs');
+fs.appendFileSync(__dirname + '/../../.migrate-trace', (process.env.DATABASE_PATH || '(unset)') + '\n');
+J
+  git -C "$SB/upstream" add -A
+  git -C "$SB/upstream" commit -qm "migrate stub that records its target"
+  NEW_SHA="$(git -C "$SB/upstream" rev-parse HEAD)"
+  run_updater "$SB"
+  assert_eq "$(cat "$SB/rc")" "0" "the update completes with the tracing migrate stub"
+  assert_file_contains "$SB/live/.auto-update/next/backend/.migrate-trace" \
+    "$SB/live/.auto-update/next/backend/data/repo.db" \
+    "rehearsal was handed the absolute path of the copied live database"
+  assert_file_contains "$SB/live/.auto-update/next/backend/data/repo.db" "sqlite-ish" \
+    "the rehearsal copy really holds the live database bytes"
+fi
+
+if should_run "swap failure"; then
+testcase "a failed part-way swap rolls the tree back instead of serving the mix"
+  new_sandbox swap-failure
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  # Poison rsync: exit 24/23-ish mid-copy would leave VERSION swapped but not
+  # NEWFILE; the mock leaves VERSION swapped and fails, which is enough to
+  # prove the rollback path runs rather than just restarts.
+  cat > "$SB/mock-bin/rsync" <<EOF
+#!/usr/bin/env bash
+echo "rsync \$*" >> "$SB/mock-state/calls"
+cp -a "$SB/live/.auto-update/next/VERSION" "$SB/live/VERSION"   # half a swap
+exit 1
+EOF
+  chmod +x "$SB/mock-bin/rsync"
+  run_updater "$SB"
+  assert_eq "$(cat "$SB/rc")" "1" "the cycle reports failure"
+  assert_eq "$(live_sha "$SB")" "$OLD_SHA" "HEAD stayed on the old commit"
+  assert_file_contains "$SB/out.log" "rolling the tree back" \
+    "the failure branch says it rolls back, and now it really does"
+  grep -q "v1" "$SB/live/VERSION" \
+    && ok "the half-written new VERSION was reset away again" \
+    || bad "the tree was left half-swapped: $(cat "$SB/live/VERSION")"
+  test -e "$SB/live/NEWFILE" \
+    && bad "a file the failed release added survived the rollback" || ok "release-added files were cleaned up"
 fi
 
 # ===================================================================== summary

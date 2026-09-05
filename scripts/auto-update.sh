@@ -37,8 +37,13 @@
 # Safety:
 #   * --mode pull only ever fast-forwards. Local commits/divergence are never
 #     reset away - the cycle is skipped and logged instead.
-#   * A dirty working tree blocks updates until cleaned (the setup.sh ->
-#     config.sh self-rename is exempt - it is an intended post-install state).
+#   * A dirty working tree skips the cycle in BOTH modes: a clone deploy
+#     would silently rsync over the uncommitted edits, and a pull can never
+#     fast-forward carrying them. (The setup.sh -> config.sh self-rename is
+#     exempt - it is an intended post-install state.)
+#   * With neither curl nor wget installed a deploy is refused before anything
+#     is touched - an unverifiable restart always rolls back anyway, so it is
+#     better refused while everything is still safely on disk.
 #   * .env, data/, backups/, uploads/ and node_modules/ are gitignored and are
 #     never replaced by a deploy; --mode clone copies .env forward and leaves
 #     the rest where it is.
@@ -384,6 +389,21 @@ tmux_has_window() {
     && tmux list-windows -t "$TMUX_SESSION" -F '#W' 2>/dev/null | grep -qx "$name"
 }
 
+# (Re)start a command in a named tmux window.
+#
+# respawn-window, never send-keys: a start-tmux window is a wrapper shell
+# ("launch; echo; read"), so after the stop the shell sits waiting at `read` -
+# typing the launch command there feeds the waiting read builtin, the wrapper
+# consumes it as input and exits, and the app never starts. respawn replaces
+# the window's process whatever it is currently doing; a window whose wrapper
+# already exited (the read hit EOF/Enter) is recreated.
+tmux_launch() { # <window> <command>
+  if tmux_has_window "$1"; then
+    tmux respawn-window -k -d -t "$TMUX_SESSION:$1" "$2" 2>/dev/null && return 0
+  fi
+  tmux new-window -d -t "$TMUX_SESSION" -n "$1" "$2" 2>/dev/null
+}
+
 # Stop the application. Returns non-zero if it cannot be proven stopped.
 #
 # This used to log "no stop target configured" and carry on, which is the bug
@@ -498,12 +518,12 @@ start_app() {
       local started=0 w
       for w in app backend; do
         tmux_has_window "$w" || continue
-        log "starting tmux window: $w"
-        tmux send-keys -t "$TMUX_SESSION:$w" "cd '$ROOT' && $LAUNCH_BACKEND" C-m 2>/dev/null && started=1
+        log "restarting tmux window: $w"
+        tmux_launch "$w" "cd '$ROOT' && $LAUNCH_BACKEND" && started=1
       done
       if tmux_has_window frontend; then
-        log "starting tmux window: frontend"
-        tmux send-keys -t "$TMUX_SESSION:frontend" "cd '$ROOT/frontend' && npm run dev -- --host" C-m 2>/dev/null && started=1
+        log "restarting tmux window: frontend"
+        tmux_launch frontend "cd '$ROOT/frontend' && npm run dev -- --host" && started=1
       fi
       [ "$started" = 1 ] || { log "no 'app'/'backend'/'frontend' window in '$TMUX_SESSION' - cannot start"; ST_STARTED=failed; return 1; }
       ;;
@@ -540,8 +560,11 @@ find_live_db() {
   if [ -f .env ]; then
     from_env="$(sed -n 's/^[[:space:]]*DATABASE_PATH[[:space:]]*=[[:space:]]*//p' .env | tail -n1 | tr -d "\"'" | tr -d '[:space:]')"
   fi
-  # .env resolves DATABASE_PATH against backend/ (that is where the app is
-  # launched from), while config.js falls back to <root>/data/repo.db.
+  # A relative DATABASE_PATH is resolved by config.js against the REPO ROOT
+  # (backend/src -> ../../), not against the launch cwd - so probe the
+  # root-relative path first, then the backend/-relative one for installs that
+  # historically kept the database there, and finally config.js's own default
+  # fallbacks.
   for candidate in "$from_env" "backend/$from_env" "data/repo.db" "backend/data/repo.db"; do
     [ -n "$candidate" ] || continue
     [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
@@ -562,7 +585,12 @@ rehearse_migrations() {
   local ext
   for ext in -wal -shm; do [ -f "$live$ext" ] && cp "$live$ext" "$STAGE_DIR/backend/data/repo.db$ext"; done
   log "rehearsing migrations against a copy of $live"
-  if (cd "$STAGE_DIR/backend" && DATABASE_PATH=./data/repo.db node src/db/migrate.js) >/dev/null 2>&1; then
+  # Absolute on purpose: config.js resolves a RELATIVE DATABASE_PATH against
+  # the repo root (backend/src -> ../../), not the cwd, so a './data/repo.db'
+  # here would point at $STAGE_DIR/data and miss the copy made above - the
+  # rehearsal would run, pass, and have tested an empty file it just created.
+  local staged_db="$ROOT/$STAGE_DIR/backend/data/repo.db"
+  if (cd "$STAGE_DIR/backend" && DATABASE_PATH="$staged_db" node src/db/migrate.js) >/dev/null 2>&1; then
     log "migrations rehearse cleanly"
     return 0
   fi
@@ -632,14 +660,23 @@ install_deps_in() { # <dir>
 # tar-pipe so a box without rsync still updates.
 swap_tree() {
   if command -v rsync >/dev/null 2>&1; then
+    # The runtime exclusions are unanchored basename patterns on purpose: a
+    # 'data/' style pattern would only guard <root>/data, and --delete then
+    # removes a database living at backend/data - plus the rehearsal's copy in
+    # the staged tree would rsync straight over it.
     rsync -a --delete \
-      --exclude '.git/' --exclude "$STAGE_ROOT/" --exclude 'data/' --exclude 'backups/' \
-      --exclude 'uploads/' --exclude '.env' --exclude 'node_modules' \
+      --exclude '.git/' --exclude "$STAGE_ROOT/" --exclude 'data' --exclude 'backups' \
+      --exclude 'uploads' --exclude '.env' --exclude 'node_modules' \
       "$STAGE_DIR/" "$ROOT/" || return 1
   else
+    # Patterns are basename-style (no './x' anchors) so they match at every
+    # depth, exactly like the rsync list above - a staged tree with real
+    # backend/node_modules must not spray it over the live one, and a
+    # release's deleted files linger without --delete, which tar has no
+    # equivalent of: acceptable for a box without rsync, and noted.
     ( cd "$STAGE_DIR" && tar cf - \
-        --exclude='./.git' --exclude="./$STAGE_ROOT" --exclude='./data' --exclude='./backups' \
-        --exclude='./uploads' --exclude='./.env' --exclude='./node_modules' . ) \
+        --exclude='.git' --exclude="$STAGE_ROOT" --exclude='data' --exclude='backups' \
+        --exclude='uploads' --exclude='.env' --exclude='node_modules' . ) \
       | ( cd "$ROOT" && tar xf - ) || return 1
   fi
   return 0
@@ -828,9 +865,16 @@ deploy_via_clone() { # <local_sha> <remote_sha>
   fi
 
   if ! swap_tree; then
-    log "swap failed - putting the app back on the old code"
+    # A half-finished rsync leaves old and new files intermixed on disk;
+    # merely starting the app would serve that. Nothing above this line moved
+    # HEAD, so the rollback machinery is still exact: reset the tracked files
+    # to the old commit, drop files that release added, restore the dist
+    # snapshot taken just before the swap - and only then restart.
+    log "swap failed part-way - rolling the tree back to $(printf %.7s "$1") before restarting"
+    rollback_to "$1" "$2" || true
+    restore_dist_snapshot
     start_app
-    write_state error "File swap failed part-way; previous build restored."
+    write_state error "File swap failed part-way; tree reset to ${1:0:7} and previous build restored."
     return 1
   fi
 
@@ -889,11 +933,7 @@ deploy_via_clone() { # <local_sha> <remote_sha>
 # pull mode: the historic fast-forward path, with the stop-first ordering and
 # the verify/rollback steps the in-place update always needed.
 deploy_via_pull() { # <local_sha> <remote_sha>
-  if [ -n "$(git status --porcelain --untracked-files=no -- . ':(exclude)scripts/setup.sh')" ]; then
-    log "working tree has uncommitted changes - skipping this cycle"
-    write_state skipped "Dirty working tree - update postponed until it is committed/stashed."
-    return 0
-  fi
+  # (the shared dirty-tree gate lives in check_and_update, ahead of both modes)
   # never clobber local work: fast-forward only. Checked before stopping the
   # app (a dry run), then actually performed once the app is down.
   if ! git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
@@ -973,6 +1013,18 @@ check_and_update() {
     return 0
   fi
 
+  # A tracked file with local edits would be silently overwritten by a clone
+  # deploy (and its trail erased by the final `git reset`), and no
+  # fast-forward can carry it in pull mode - so BOTH modes skip the cycle
+  # until it is committed, stashed or reverted. The setup.sh -> config.sh
+  # self-rename is exempt: every fresh install ends with exactly that
+  # deletion pending.
+  if [ -n "$(git status --porcelain --untracked-files=no -- . ':(exclude)scripts/setup.sh')" ]; then
+    log "working tree has uncommitted changes - skipping this cycle"
+    write_state skipped "Dirty working tree - update postponed until it is committed/stashed."
+    return 0
+  fi
+
   if ! git fetch --quiet "$REMOTE" "$BRANCH"; then
     log "fetch failed (offline?); trying again next cycle"
     write_state error "git fetch $REMOTE $BRANCH failed (offline?)"
@@ -986,6 +1038,15 @@ check_and_update() {
   if [ "$local_sha" = "$remote_sha" ]; then
     write_state idle "Up to date."
     return 0
+  fi
+
+  # Accepting a deploy means proving it: a health check needs an HTTP client.
+  # Discovering that mid-verify would roll an otherwise-good release back, so
+  # say it here, while nothing is touched. (--no-restart deploys never verify.)
+  if [ "$NO_RESTART" != 1 ] \
+     && ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    refuse "neither curl nor wget is installed, so a deploy could never be verified against $HEALTH_URL."
+    return 1
   fi
 
   log "update available: $(git rev-parse --short HEAD) -> $(git rev-parse --short FETCH_HEAD) ($MODE mode)"
