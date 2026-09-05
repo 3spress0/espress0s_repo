@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Shield, Database, HardDrive, FolderTree, Folder, Users, Activity, ExternalLink, Settings, Archive, FileArchive, Webhook, Star } from 'lucide-react';
+import { Shield, Database, HardDrive, FolderTree, Folder, Users, Activity, ExternalLink, Settings, Archive, FileArchive, Webhook, Star, BarChart3 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import Loading from '../components/Loading';
 
@@ -13,6 +13,7 @@ import Loading from '../components/Loading';
 // admin-only (mirrors EDITOR_ROUTES in backend/src/routes/admin.js).
 const NAV = [
   { to: '/admin', end: true, label: 'Overview', icon: Database },
+  { to: '/admin/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/admin/items', label: 'File pages', icon: HardDrive, editor: true },
   { to: '/admin/categories', label: 'Categories', icon: FolderTree, editor: true },
   { to: '/admin/folders', label: 'Folders', icon: Folder, editor: true },

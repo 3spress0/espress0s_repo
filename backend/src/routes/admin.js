@@ -13,6 +13,7 @@ import {
 import { autofillFromUrl } from '../services/metadataAutofillService.js';
 import { snapshotDatabase } from '../services/catalogService.js';
 import { listSnapshots, restoreFromSnapshot } from '../services/restoreService.js';
+import { getAnalytics, MAX_DAYS } from '../services/analyticsService.js';
 import { UnsafeUrlError } from '../lib/safeFetch.js';
 import { readFileSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
@@ -116,6 +117,12 @@ export async function adminRoutes(fastify) {
       }
     };
   });
+
+  // Analytics dashboard (#20): read-only aggregate over what is already
+  // recorded. ?days=7|30|90|365 sets the window for the time series.
+  fastify.get('/admin/analytics', {
+    schema: { tags: ['Admin'], summary: 'Usage analytics: downloads, activity, reviews, users, links, webhooks' },
+  }, async (request) => getAnalytics({ days: toInt(request.query?.days, 30, 1, MAX_DAYS) }));
 
   fastify.post('/admin/reindex', async (request, reply) => {
     const db = getDb();

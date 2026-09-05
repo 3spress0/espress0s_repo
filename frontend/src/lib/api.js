@@ -269,6 +269,7 @@ export const captchaApi = {
 
 export const adminApi = {
   overview: () => api.get('/admin/overview').then(r => r.data),
+  analytics: (days) => api.get('/admin/analytics', { params: { days } }).then(r => r.data),
   reindex: () => api.post('/admin/reindex').then(r => r.data),
   storage: () => api.get('/admin/storage').then(r => r.data),
   validateStorage: (provider, path) => api.post('/admin/validate-storage', { provider, path }).then(r => r.data),

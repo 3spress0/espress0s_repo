@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Package, Users, Shield, Settings, LogIn, UserPlus, Star, Sparkles, Palette, Upload, FolderTree, Tag, FileText, Command, CornerDownLeft, Keyboard, Home, Languages, X } from 'lucide-react';
+import { Search, Package, Users, Shield, Settings, LogIn, UserPlus, Star, Sparkles, Palette, Upload, FolderTree, Tag, FileText, Command, CornerDownLeft, Keyboard, Home, Languages, X, BarChart3 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useI18n } from '../i18n/index.jsx';
@@ -82,6 +82,7 @@ export default function CommandPalette({ onAskOpen }) {
       list.push({ id: 'admin-dash', label: 'Admin: Dashboard', icon: Shield, run: () => go('/admin') });
       list.push({ id: 'admin-cats', label: 'Admin: Categories', icon: Tag, run: () => go('/admin/categories') });
       list.push({ id: 'admin-folders', label: 'Admin: Folders', icon: FolderTree, run: () => go('/admin/folders') });
+      list.push({ id: 'admin-analytics', label: 'Admin: Analytics dashboard', icon: BarChart3, run: () => go('/admin/analytics') });
       list.push({ id: 'admin-imports', label: 'Admin: Catalogue import / export', icon: Upload, run: () => go('/admin/imports') });
       list.push({ id: 'admin-users', label: 'Admin: Users', icon: Users, run: () => go('/admin/users') });
       list.push({ id: 'admin-settings', label: 'Admin: Settings', icon: Settings, run: () => go('/admin/settings') });

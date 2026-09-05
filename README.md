@@ -167,6 +167,19 @@ The API:
 
 Favourites belong to the database rather than the catalogue, so a full snapshot restore rolls them back with everything else, while a catalogue-only rollback keeps them — an undo after a bad bulk edit does not cost everyone their stars.
 
+## Analytics dashboard
+
+**Admin → Analytics** (`GET /api/admin/analytics?days=7|30|90|365`, admin
+only) charts what the app already records - no extra tracking is added:
+
+- pages created/updated per day, and the event log (`item.*`, `link.down` /
+  `link.recovered`, `review.created`, `import.completed`) as daily series;
+- downloads: top entries, by category, by platform and by storage provider;
+- reviews: status counts, average rating, top rated, new reviews per day;
+- users by role, sign-ups per day, favourites and subscriptions;
+- mirror health, webhook deliveries, import runs and the in-process request
+  metrics (the deeper process view stays under Monitoring).
+
 ## Ratings and reviews
 
 Signed-in users can rate any published entry from 1 to 5 stars and leave an
