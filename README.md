@@ -167,6 +167,26 @@ The API:
 
 Favourites belong to the database rather than the catalogue, so a full snapshot restore rolls them back with everything else, while a catalogue-only rollback keeps them — an undo after a bad bulk edit does not cost everyone their stars.
 
+## Ratings and reviews
+
+Signed-in users can rate any published entry from 1 to 5 stars and leave an
+optional comment (up to 2000 characters). One review per user per entry;
+saving again replaces the previous one. The aggregate (`average`, `count`,
+histogram) is shown on the entry page and included in the public JSON API.
+
+Spam protection, all server-side:
+
+- accounts younger than `REVIEW_MIN_ACCOUNT_MINUTES` (default 10) cannot post;
+- at most `REVIEW_MAX_PER_DAY` (default 20) reviews per account per day, plus a
+  per-IP rate limit on the write endpoints;
+- comments with more than 2 links are rejected; comments with any link are
+  held as **pending** until an editor approves them;
+- the same comment text pasted onto several entries is rejected.
+
+Editors and admins moderate from **Admin → Reviews** (approve / hide / delete).
+A hidden review stays hidden even if its author edits it. Every new review
+emits a `review.created` event, so webhooks can be notified.
+
 ## Drafts and preview links
 
 An entry with *Published* off is a draft: invisible to visitors (404, not
@@ -228,6 +248,7 @@ Everything notable that happens to the catalogue is written to an event log and 
 | `item.created` / `item.updated` / `item.deleted` | a file page is written (payload lists the changed fields) |
 | `item.published` / `item.unpublished` | a draft goes live, or a live page is pulled |
 | `link.down` / `link.recovered` | the link checker sees a mirror change state (transitions only, never repeats) |
+| `review.created` | a user posts a new rating/review (payload: item summary, rating, status) |
 | `import.completed` | a catalogue import was applied |
 
 **Admin → Webhooks** manages site-wide hooks; **Account → Security** has personal hooks, which only receive events about public file pages. Each delivery is a JSON `POST` with `X-Espress0-Event`, `X-Espress0-Delivery` and `X-Espress0-Signature: sha256=<HMAC-SHA256 of the body with the hook's secret>`. Non-2xx responses retry after 1, 5, 15, 60 minutes and 6 hours; every attempt is logged and can be redelivered by hand. Payloads never contain download URLs or encrypted fields. Target URLs must be public (set `WEBHOOK_ALLOW_PRIVATE=true` to allow LAN receivers such as a local n8n).

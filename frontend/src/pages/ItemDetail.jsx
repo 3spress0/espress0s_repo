@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import FavoriteButton from '../components/FavoriteButton';
 import FollowButton from '../components/FollowButton';
 import PreviewLinkButton from '../components/admin/PreviewLinkButton';
+import Reviews from '../components/Reviews';
 import Loading, { LoadingDots } from '../components/Loading';
 import { useI18n } from '../i18n/index.jsx';
 import { recordView } from '../lib/recentlyViewed';
@@ -540,6 +541,10 @@ export default function ItemDetail() {
             )}
           </div>
         </div>
+      )}
+
+      {item.published && !editing && (
+        <Reviews slug={item.slug} initialSummary={item.rating} />
       )}
     </div>
   );

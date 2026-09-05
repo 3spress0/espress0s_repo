@@ -291,6 +291,25 @@ CREATE TABLE IF NOT EXISTS favorites (
 );
 
 CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id, created_at DESC);
+
+-- Ratings and reviews (services/reviewService.js). One row per user per
+-- item; rating 1-5 required, comment optional. status: 'visible' | 'pending'
+-- (auto-held for moderation, e.g. contains links) | 'hidden' (moderator).
+CREATE TABLE IF NOT EXISTS reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+  comment TEXT,
+  status TEXT NOT NULL DEFAULT 'visible' CHECK(status IN ('visible', 'pending', 'hidden')),
+  hold_reason TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(item_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_item ON reviews(item_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_user ON reviews(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(status, created_at DESC);
 -- Public profile listing: the favourites one user chose to share.
 CREATE INDEX IF NOT EXISTS idx_favorites_public ON favorites(user_id, is_public);
 -- "How many people starred this file" and the cascade when an item is deleted.

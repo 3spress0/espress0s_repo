@@ -39,6 +39,7 @@ const AdminCategories = lazy(() => import('./pages/admin/Categories'));
 const AdminFolders = lazy(() => import('./pages/admin/Folders'));
 const AdminBackup = lazy(() => import('./pages/admin/Backup'));
 const AdminImports = lazy(() => import('./pages/admin/Imports'));
+const AdminReviews = lazy(() => import('./pages/admin/Reviews'));
 const AdminStorage = lazy(() => import('./pages/admin/Storage'));
 const AdminSettings = lazy(() => import('./pages/admin/Settings'));
 const UserManager = lazy(() => import('./components/UserManager'));
@@ -84,6 +85,7 @@ function AppContent() {
               <Route path="users" element={<div className="glass rounded-2xl border border-white/5 p-6"><UserManager /></div>} />
               <Route path="storage" element={<AdminStorage />} />
               <Route path="imports" element={<AdminImports />} />
+              <Route path="reviews" element={<AdminReviews />} />
               <Route path="backup" element={<AdminBackup />} />
               <Route path="webhooks" element={<div className="glass rounded-2xl border border-white/5 p-6"><WebhookManager scope="admin" /></div>} />
               <Route path="settings" element={<AdminSettings />} />

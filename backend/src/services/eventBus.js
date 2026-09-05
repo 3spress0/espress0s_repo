@@ -19,12 +19,13 @@
  *   link.down           payload: { item, link, previous_status }
  *   link.recovered      payload: { item, link }
  *   import.completed    payload: { import }
+ *   review.created      payload: { item, review: { id, rating, status, has_comment } }
  */
 import { getDb } from '../db/index.js';
 
 export const EVENT_TYPES = [
   'item.created', 'item.updated', 'item.published', 'item.unpublished', 'item.deleted',
-  'link.down', 'link.recovered', 'import.completed',
+  'link.down', 'link.recovered', 'import.completed', 'review.created',
 ];
 
 const listeners = new Set();

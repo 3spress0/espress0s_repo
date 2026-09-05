@@ -1,5 +1,6 @@
 import { getDb } from '../db/index.js';
 import { parseRequirements } from '../utils/requirements.js';
+import { ratingSummaries } from '../services/reviewService.js';
 import { FEED_TYPES, loadEntries, loadChanges, toFeedItems, renderRss, renderAtom, siteOrigin } from '../services/feedService.js';
 import { decryptItem } from '../services/itemSerializer.js';
 import { searchService, MAX_QUERY_LENGTH } from '../services/searchService.js';
@@ -36,7 +37,7 @@ const str = (v, max = 64) => (v === undefined || v === null ? null : String(Arra
 const parseJson = (s, fallback) => { try { return s ? JSON.parse(s) : fallback; } catch { return fallback; } };
 
 /** The public representation of one item. */
-export function publicItem(raw, { links = [], category = null, folder = null } = {}) {
+export function publicItem(raw, { links = [], category = null, folder = null, rating = null } = {}) {
   const item = decryptItem(raw);
   const mirrors = links.map(l => ({
     id: l.id,
@@ -75,6 +76,7 @@ export function publicItem(raw, { links = [], category = null, folder = null } =
     category: category ? { id: category.id, name: category.name, slug: category.slug } : null,
     folder: folder ? { id: folder.id, name: folder.name, slug: folder.slug } : null,
     download_count: item.download_count ?? 0,
+    rating: rating || { average: null, count: 0 },
     view_count: item.view_count ?? 0,
     created_at: item.created_at,
     updated_at: item.updated_at,
@@ -153,8 +155,9 @@ export async function publicApiRoutes(fastify) {
       if (!Number.isNaN(since.getTime())) rows = rows.filter(r => new Date(r.updated_at) >= since);
     }
     const refs = loadRefs(db, rows);
+    const ratings = ratingSummaries(rows.map(r => r.id));
     return {
-      items: rows.map(r => publicItem(r, { links: refs.links[r.id] || [], category: refs.cat[r.category_id], folder: refs.folder[r.folder_id] })),
+      items: rows.map(r => publicItem(r, { links: refs.links[r.id] || [], category: refs.cat[r.category_id], folder: refs.folder[r.folder_id], rating: ratings[r.id] })),
       pagination: { page: result.page, limit: result.limit, total: result.total, total_pages: result.totalPages },
     };
   });
@@ -169,7 +172,7 @@ export async function publicApiRoutes(fastify) {
     const etag = `W/"${raw.id}-${new Date(raw.updated_at).getTime()}"`;
     if (request.headers['if-none-match'] === etag) return reply.code(304).send();
     reply.header('etag', etag);
-    return { item: { ...publicItem(raw, { links: refs.links[raw.id] || [], category: refs.cat[raw.category_id], folder: refs.folder[raw.folder_id] }), related } };
+    return { item: { ...publicItem(raw, { links: refs.links[raw.id] || [], category: refs.cat[raw.category_id], folder: refs.folder[raw.folder_id], rating: ratingSummaries([raw.id])[raw.id] }), related } };
   });
 
   fastify.get('/v1/categories', { config: LIMIT, schema: { tags: ['Public API'], summary: 'Categories with published item counts' } }, async () => {

@@ -34,6 +34,7 @@ import { catalogRoutes } from './routes/catalog.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { publicApiRoutes } from './routes/publicApi.js';
 import { subscriptionRoutes } from './routes/subscriptions.js';
+import { reviewRoutes } from './routes/reviews.js';
 import { importJobRoutes } from './routes/importJobs.js';
 import multipart from '@fastify/multipart';
 import { monitoringService } from './services/monitoringService.js';
@@ -270,6 +271,7 @@ await fastify.register(async (api) => {
   await api.register(webhookRoutes);
   await api.register(publicApiRoutes);
   await api.register(subscriptionRoutes);
+  await api.register(reviewRoutes);
   await api.register(importJobRoutes);
 }, { prefix: '/api' });
 

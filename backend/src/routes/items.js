@@ -9,6 +9,7 @@ import { recordItemVersion } from '../services/versionService.js';
 import { emitEvent, itemSummary } from '../services/eventBus.js';
 import { getFavorite, countItemFavorites, getPublicFavoritedBy } from '../services/favoritesService.js';
 import { createPreviewToken, verifyPreviewToken, DEFAULT_TTL_HOURS } from '../services/previewLinkService.js';
+import { ratingSummary } from '../services/reviewService.js';
 
 function decryptItem(item) {
   if (!item) return item;
@@ -339,6 +340,8 @@ export async function itemsRoutes(fastify) {
       shared_by: getPublicFavoritedBy(item.id),
       is_favorite: Boolean(ownFavorite),
       favorite_is_public: Boolean(ownFavorite?.favorite?.is_public),
+      // Star rating aggregate over visible reviews (see routes/reviews.js).
+      rating: ratingSummary(item.id),
       preview: previewing || undefined,
       primary_download: availableLinks.find(l => l.is_primary) || availableLinks[0] || links.find(l => l.is_primary) || links[0] || null,
       encryption: { atRest: 'storage_path, download_url, external_url, license_notes encrypted', version: item.encryption_version || 'v1' }

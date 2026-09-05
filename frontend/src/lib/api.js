@@ -231,6 +231,15 @@ export const authApi = {
  * means "use the profile default". Everything here needs a session - the
  * public, session-free view of someone's list is usersApi below.
  */
+export const reviewsApi = {
+  list: (slug, params) => api.get(`/items/${encodeURIComponent(slug)}/reviews`, { params }).then(r => r.data),
+  save: (slug, { rating, comment }) => api.put(`/items/${encodeURIComponent(slug)}/reviews/mine`, { rating, comment }).then(r => r.data),
+  remove: (slug) => api.delete(`/items/${encodeURIComponent(slug)}/reviews/mine`).then(r => r.data),
+  adminList: (params) => api.get('/admin/reviews', { params }).then(r => r.data),
+  setStatus: (id, status) => api.patch(`/admin/reviews/${id}`, { status }).then(r => r.data),
+  adminRemove: (id) => api.delete(`/admin/reviews/${id}`).then(r => r.data),
+};
+
 export const favoritesApi = {
   list: (params) => api.get('/favorites', { params }).then(r => r.data),
   add: ({ itemId, slug, isPublic }) => api.post('/favorites', {
