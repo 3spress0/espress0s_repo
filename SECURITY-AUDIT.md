@@ -190,6 +190,24 @@ characters and 12 tokens, Levenshtein short-circuits above 64 characters, and
 
 ## Added since the audit
 
+* **Visitor privacy: cookieless image proxy.** Cover images and avatars could
+  point at any third-party host, and the SPA loaded them straight from the
+  visitor's browser — leaking the visitor's IP to each host and letting those
+  hosts set their own cookies (tracker blockers flagged `cdn.jsdelivr.net`
+  and `upload.wikimedia.org`). All cross-origin image URLs are now routed
+  through `GET /api/media/image`, a same-origin fetcher that carries no
+  cookies or browser fingerprint, never echoes upstream headers (Set-Cookie
+  included), reuses the SSRF guard from `safeFetch`, caps size, serves only
+  signature-verified image types with sandboxed/nosniff headers, and rate
+  limits per IP in its own bucket.
+* **Update/boot-strap hardening.** Two serving behaviours that turned any
+  half-completed deploy into a page stuck on the loading screen: static
+  assets are now resolved against disk per request (the previous mode froze
+  the servable route set at process start, so an old process could never
+  serve a new bundle hash), and file-shaped 404s no longer return
+  `index.html` (which browsers block as "HTML is not a module"). A stuck
+  boot screen additionally self-heals: after 10 s it probes `/api/health`
+  once and, if the server is healthy, performs a single guarded reload.
 * **Roles.** `editor` is a real role now (create/edit content, no delete, no
   operations). Gates are per route (`requireRole`), visible in `/api/docs`.
 * **TOTP second factor.** Optional per account, enforceable for admins via

@@ -15,4 +15,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 requestAnimationFrame(() => {
   const boot = document.getElementById('boot');
   if (boot) boot.remove();
+  // The boot was healthy, so the one-shot auto-reload marker in index.html
+  // (set when a pre-deploy tab holds a stale index.html) resets: the next
+  // genuinely stuck load gets its single retry again.
+  try { sessionStorage.removeItem('espress0_boot_retry'); } catch { /* private mode */ }
 });

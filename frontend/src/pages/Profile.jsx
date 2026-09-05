@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { formatDate } from '../lib/utils';
 import ItemCard from '../components/ItemCard';
 import Loading from '../components/Loading';
+import { proxyImageUrl } from '../lib/imageProxy';
 import StarryBackground from '../components/StarryBackground';
 
 /**
@@ -103,7 +104,7 @@ export default function Profile() {
                 <div className="w-20 h-20 sm:w-24 sm:h-24 mx-auto sm:mx-0 rounded-2xl bg-gradient-primary flex items-center justify-center text-white font-bold text-3xl shadow-xl shadow-purple-500/20 overflow-hidden flex-shrink-0">
                   {profile.avatar_url ? (
                     <img
-                      src={profile.avatar_url}
+                      src={proxyImageUrl(profile.avatar_url)}
                       alt={profile.username}
                       loading="lazy"
                       decoding="async"

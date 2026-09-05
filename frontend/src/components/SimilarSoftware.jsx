@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Sparkles, Layers } from 'lucide-react';
 import { itemsApi } from '../lib/api';
 import { ItemPlaceholder } from './Logo';
+import { proxyImageUrl } from '../lib/imageProxy';
 
 /**
  * "Similar software" under an entry. The server scores the catalogue
@@ -37,7 +38,7 @@ export default function SimilarSoftware({ slug }) {
         {data.items.map((it) => (
           <Link key={it.id} to={`/file/${it.slug}`} className="glass rounded-xl border border-white/5 p-3 hover:border-primary/40 transition-colors flex gap-3 min-w-0">
             {it.icon_url || it.image_url
-              ? <img src={it.icon_url || it.image_url} alt="" className="w-10 h-10 rounded-lg object-cover flex-shrink-0" loading="lazy" />
+              ? <img src={proxyImageUrl(it.icon_url || it.image_url)} alt="" className="w-10 h-10 rounded-lg object-cover flex-shrink-0" loading="lazy" />
               : <ItemPlaceholder fileType={it.file_type} size="small" className="flex-shrink-0" />}
             <div className="min-w-0">
               <div className="text-sm font-medium text-textPrimary truncate">{it.name}{it.version ? <span className="text-textSecondary font-normal"> {it.version}</span> : null}</div>

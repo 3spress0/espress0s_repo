@@ -220,6 +220,49 @@ CONF
   $SUDO chmod 644 "$CONFIG_FILE"
 }
 
+# The one proof that matters after an update: the process answering on the
+# app's port reports the commit we just deployed. `systemctl restart` returning
+# 0 does NOT imply that. Without this check the script printed "Update
+# complete" while the previous release kept serving / a crashed-restart loop
+# left nothing serving - exactly the state where every visitor only got the
+# "Loading" boot screen. Same discipline auto-update.sh applies, lighter.
+verify_running_commit() {
+  local expected body attempt=1
+  expected="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$expected" ]; then
+    warn "No git HEAD to verify against - skipping the running-commit check."
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "curl missing - cannot verify the running commit. Check /api/health yourself."
+    return 0
+  fi
+  local url="http://127.0.0.1:${INTERNAL_PORT}/api/health"
+  [ "$INTERNAL_PORT" = "80" ] && url="http://127.0.0.1/api/health"
+  step "Verifying the running commit"
+  while [ "$attempt" -le 15 ]; do
+    body="$(curl -fsS -m 5 "$url" 2>/dev/null || true)"
+    if printf '%s' "$body" | grep -q "\"commit\":\"$expected\""; then
+      ok "Verified: the process answering on $url runs ${expected:0:7}"
+      return 0
+    fi
+    # Health answers but reports a DIFFERENT commit: the restart did not take
+    # and waiting longer cannot change that.
+    if [ "$attempt" -ge 3 ] && printf '%s' "$body" | grep -q '"commit":"'; then
+      break
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  die "The service did not come up on the deployed commit (${expected:0:7}) - NOT calling this update done.
+    GET $url answered: $(printf '%s' "$body" | head -c 200)
+    Files, dependencies and migrations are already in place; only the process hand-over failed.
+    Recover with:
+      sudo journalctl -u $APP_NAME -n 50 --no-pager
+      sudo systemctl restart $APP_NAME
+      sleep 2 && curl -s $url"
+}
+
 # Dependency refresh + migrate + rebuild + restart. Shared by the update path
 # and the --resume re-exec.
 run_post_update() {
@@ -238,16 +281,20 @@ run_post_update() {
   ok "Built frontend/dist"
 
   step "Restarting service"
-  if $SUDO systemctl restart "$APP_NAME" 2>/dev/null; then
-    sleep 2
-    if $SUDO systemctl is-active --quiet "$APP_NAME"; then
-      ok "Service running at $(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo 'current build')"
-    else
-      warn "Service is not active - check: journalctl -u $APP_NAME -n 50"
-    fi
-  else
-    warn "'systemctl restart' failed (is systemd running?). Try: sudo systemctl start $APP_NAME"
+  if ! command -v systemctl >/dev/null 2>&1; then
+    warn "systemctl not available here - restart $APP_NAME yourself so the new build is served."
+    return 0
   fi
+  # A failed restart used to be a mere warning: files and dist had already
+  # moved forward, the old process kept serving (or nothing did), and the
+  # site silently degraded until someone noticed the boot screen. Loud now.
+  if ! $SUDO systemctl restart "$APP_NAME" 2>/dev/null; then
+    die "systemctl restart $APP_NAME failed - files are updated but the service was not.
+    Recover with:
+      sudo journalctl -u $APP_NAME -n 50 --no-pager
+      sudo systemctl restart $APP_NAME"
+  fi
+  verify_running_commit
 }
 
 # Start the stack and prove it is answering. Returns non-zero if not.
@@ -587,12 +634,23 @@ if [ "$UPDATE_ONLY" -eq 1 ] && [ "$RESUME" -eq 0 ]; then
   # loaded into this shell. --resume stops the second run pulling again.
   if [ "$BEFORE" != "$AFTER" ]; then
     warn "Repository moved $BEFORE -> $AFTER; re-running the updated script"
-    REEXEC_ARGS=(--update --resume --repo "$REPO_URL" --branch "$BRANCH" --port "$APP_PORT")
+    # --port carries the EFFECTIVE internal listener, not the public one: in
+    # domain mode APP_PORT is the public 80 while the app itself answers on
+    # INTERNAL_PORT, and the resumed run probes with exactly this value.
+    REEXEC_ARGS=(--update --resume --repo "$REPO_URL" --branch "$BRANCH" --port "$INTERNAL_PORT")
     [ -n "$DOMAIN" ] && REEXEC_ARGS+=(--domain "$DOMAIN")
     [ "$WANT_HTTPS" -eq 1 ] && REEXEC_ARGS+=(--https)
     # Without this the opt-out is silently forgotten by the second run.
     [ "$AUTO_UPDATE" -eq 0 ] && REEXEC_ARGS+=(--no-auto-update)
-    exec bash "$ROOT_DIR/${BASH_SOURCE[0]}" "${REEXEC_ARGS[@]}"
+    # ${BASH_SOURCE[0]} is whatever path invoked THIS copy: relative when the
+    # ./espress0 wrapper execs scripts/deploy-ubuntu.sh, absolute when run as
+    # 'sudo "$PWD/scripts/deploy-ubuntu.sh"'. "$ROOT_DIR/${BASH_SOURCE[0]}"
+    # concatenated both in the absolute case and bash died on the doubled
+    # path - which meant every update that actually pulled a commit aborted
+    # right here, AFTER the sync but BEFORE the rebuild/restart below, so the
+    # site was left half-updated on the old build. Resolve via SCRIPT_DIR,
+    # which is absolute by construction, whichever way we were invoked.
+    exec bash "$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")" "${REEXEC_ARGS[@]}"
   fi
 
   run_post_update
@@ -607,7 +665,11 @@ if [ "$UPDATE_ONLY" -eq 1 ] && [ "$RESUME" -eq 1 ]; then
   step "Finishing update (post-sync)"
   run_post_update
   if [ "$AUTO_UPDATE" -eq 1 ]; then install_auto_updater; else remove_auto_updater_if_disabled; fi
-  start_and_verify || warn "Update applied, but the site is not answering - see the log lines above."
+  # "Update complete" over an unanswering site is how bricked deploys went
+  # unnoticed; a failed verification now fails the run (non-zero exit).
+  if ! start_and_verify; then
+    die "Update applied, but the site is not answering - see the log lines above."
+  fi
   printf '\n%s%s Update complete (%s) %s\n\n' "$B" "$GRN" \
     "$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo 'current build')" "$R"
   exit 0

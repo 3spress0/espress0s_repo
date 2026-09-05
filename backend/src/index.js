@@ -28,6 +28,7 @@ import { monitoringRoutes } from './routes/monitoring.js';
 import { previewRoutes } from './routes/preview.js';
 import { settingsRoutes } from './routes/settings.js';
 import { uploadsRoutes } from './routes/uploads.js';
+import { imageProxyRoutes } from './routes/imageProxy.js';
 import { linkHealthRoutes } from './routes/linkHealth.js';
 import { backupRoutes } from './routes/backup.js';
 import { catalogRoutes } from './routes/catalog.js';
@@ -265,6 +266,7 @@ await fastify.register(async (api) => {
   await api.register(previewRoutes);
   await api.register(settingsRoutes);
   await api.register(uploadsRoutes);
+  await api.register(imageProxyRoutes);
   await api.register(linkHealthRoutes);
   await api.register(backupRoutes);
   await api.register(catalogRoutes);
@@ -279,6 +281,18 @@ await fastify.register(async (api) => {
 // (/admin, /login, /file/slug) fall back to index.html so a hard refresh or a
 // shared URL works instead of 404ing. When dist/ is absent (plain dev, where
 // Vite serves the UI on :5173) we stay in API-only mode with a clear message.
+//
+// Extensions that always mean "a file that should exist", never an SPA deep
+// link (slugs and usernames cannot contain dots - strict slugify and the
+// username regex both forbid them - so this cannot eat a legit route). Used
+// by the not-found handler below.
+const FILE_LIKE_EXTENSIONS = new Set([
+  'js', 'mjs', 'css', 'map', 'json',
+  'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'ico', 'avif', 'bmp',
+  'woff', 'woff2', 'ttf', 'otf', 'eot',
+  'xml', 'txt', 'webmanifest', 'pdf', 'zip',
+  'mp3', 'mp4', 'webm', 'ogg', 'wav',
+]);
 {
   const path = await import('path');
   const fs = await import('fs');
@@ -293,12 +307,24 @@ await fastify.register(async (api) => {
     await fastify.register(fastifyStatic, {
       root: frontendDist,
       prefix: '/',
-      wildcard: false,
-      // Vite fingerprints everything it emits under /assets/ (index-<hash>.js),
-      // so those URLs change whenever the bytes do and can be pinned for a year.
-      // Unhashed files — index.html, the logo, the loading gif — keep the same
-      // URL across deploys, so they must be revalidated or a release sticks.
+      // Wildcard serving (the default) resolves the path against the
+      // filesystem at REQUEST time. This used to be `wildcard: false`, which
+      // globs dist/ ONCE at startup and registers one route per file: after
+      // any update that swapped frontend/dist while the old process was
+      // still answering — a deploy that crashed mid-way, a restart that
+      // quietly failed — every visitor got the new index.html pointing at
+      // hashed bundles the old process had no routes for. The SPA fallback
+      // then answered those /assets/ requests with index.html itself,
+      // which every browser refuses to execute as a module, so React never
+      // mounted and the site sat on the "Loading espress0's repo" boot
+      // screen until someone restarted the service by hand. Wildcard mode
+      // cannot freeze that way: serve whatever is on disk, now.
       setHeaders: (reply, path) => {
+        // Vite fingerprints everything it emits under /assets/
+        // (index-<hash>.js), so those URLs change whenever the bytes do and
+        // can be pinned for a year. Unhashed files — index.html, the logo,
+        // the loading gif — keep the same URL across deploys, so they must
+        // be revalidated or a release sticks.
         if (/[\\/]assets[\\/]/.test(path)) {
           reply.header('Cache-Control', 'public, max-age=31536000, immutable');
         } else {
@@ -308,6 +334,21 @@ await fastify.register(async (api) => {
     });
     fastify.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'API route not found' });
+      // File-shaped URLs (a hashed bundle a cached page from before a deploy
+      // still references, a favicon typo) get an honest 404 — never
+      // index.html. Returning HTML here is what turns a missing asset into
+      // "module script blocked: wrong MIME type" and a page stuck on the
+      // boot overlay forever.
+      const pathname = req.url.split('?')[0];
+      const lastSegment = pathname.slice(pathname.lastIndexOf('/') + 1);
+      const ext = lastSegment.includes('.')
+        ? lastSegment.slice(lastSegment.lastIndexOf('.') + 1).toLowerCase()
+        : '';
+      if (FILE_LIKE_EXTENSIONS.has(ext)) {
+        return reply.code(404).send({ error: 'Not found' });
+      }
+      // Everything else is an SPA deep link (/admin, /file/slug): React
+      // Router takes over from the boot page.
       return reply.sendFile('index.html');
     });
     fastify.log.info(`Serving frontend from ${frontendDist}`);

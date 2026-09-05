@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { adminApi, itemsApi, foldersApi, categoriesApi, catalogAdminApi } from '../../lib/api';
 import ItemEditor from '../../components/admin/ItemEditor';
+import { proxyImageUrl } from '../../lib/imageProxy';
 import Loading, { LoadingDots } from '../../components/Loading';
 import Progress from '../../components/Progress';
 import CatalogFilters from '../../components/admin/CatalogFilters';
@@ -547,7 +548,7 @@ export default function AdminItems() {
                   </td>
                   <td className="p-4">
                     {item.image_url || item.icon_url ? (
-                      <img src={item.image_url || item.icon_url} alt="" loading="lazy" decoding="async" className="w-6 h-6 rounded object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+                      <img src={proxyImageUrl(item.image_url || item.icon_url)} alt="" loading="lazy" decoding="async" className="w-6 h-6 rounded object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
                     ) : (
                       <ImageIcon className="w-4 h-4 text-textMuted" />
                     )}

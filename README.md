@@ -12,6 +12,10 @@ espress0's repo gives you a searchable catalogue with:
 * Fast full-text search powered by SQLite FTS5
 * Categories, folders, tags, platforms, architectures, and versions
 * Markdown descriptions and cover images
+* Third-party cover art/avatars are fetched through a cookieless same-origin
+  proxy (`/api/media/image`), so a visitor's browser never talks to hosts
+  like cdn.jsdelivr.net or upload.wikimedia.org at all — no third-party
+  cookies, no tracking pixels via cover images
 * Multiple download/mirror links per item
 * Checksums and file metadata
 * Version history with diffs and restore
@@ -419,6 +423,22 @@ sudo ./espress0 deploy \
 ```
 
 The deployment keeps the application behind nginx while the Node.js application runs locally.
+
+Updating an installed server:
+
+```bash
+sudo ./espress0 deploy --update
+```
+
+An update pulls the latest commit, refreshes dependencies, runs migrations,
+rebuilds the frontend and restarts the service — and then *proves the result*:
+it waits until `/api/health` reports the commit it just deployed. If anything
+in that chain fails (a restart that did not take, the new release not
+answering), the script stops with a non-zero exit and prints the exact
+recovery commands instead of claiming success over a broken site. Automatic,
+fully staged updates with rollback are also installed by default
+(`espress0-repo-updater`); pause them with
+`touch data/.auto-update-disabled`.
 
 ### Docker
 

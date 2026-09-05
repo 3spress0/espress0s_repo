@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { User, Mail, Lock, Save, Shield, Eye, EyeOff, LogOut, AlertTriangle, Check, Palette, Star, Globe, Bell } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
+import { proxyImageUrl } from '../lib/imageProxy';
 import StarryBackground from '../components/StarryBackground';
 import ThemePicker from '../components/ThemePicker';
 import { useTheme } from '../context/ThemeContext';
@@ -214,7 +215,7 @@ export default function Account() {
             <div className="glass rounded-3xl border border-white/5 p-6 text-center backdrop-blur-xl">
               <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-primary flex items-center justify-center text-white font-bold text-2xl shadow-xl shadow-primary/25 overflow-hidden">
                 {profile?.avatar_url ? (
-                  <img src={profile.avatar_url} alt="avatar" loading="lazy" decoding="async" className="w-full h-full object-cover" onError={(e) => e.target.style.display = 'none'} />
+                  <img src={proxyImageUrl(profile.avatar_url)} alt="avatar" loading="lazy" decoding="async" className="w-full h-full object-cover" onError={(e) => e.target.style.display = 'none'} />
                 ) : (
                   profile?.username?.[0]?.toUpperCase() || 'U'
                 )}
@@ -374,7 +375,7 @@ export default function Account() {
                   <p className="text-[11px] text-textMuted mt-1">Image URL for avatar, encrypted at rest. Use transparent PNG.</p>
                   {formData.avatar_url && (
                     <div className="mt-3 flex items-center gap-3">
-                      <img src={formData.avatar_url} alt="avatar preview" loading="lazy" decoding="async" className="w-12 h-12 rounded-xl object-cover border border-border" onError={(e) => e.target.style.display = 'none'} />
+                      <img src={proxyImageUrl(formData.avatar_url)} alt="avatar preview" loading="lazy" decoding="async" className="w-12 h-12 rounded-xl object-cover border border-border" onError={(e) => e.target.style.display = 'none'} />
                       <span className="text-xs text-textMuted">Preview</span>
                     </div>
                   )}
