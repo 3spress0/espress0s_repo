@@ -7,6 +7,8 @@ export function cn(...inputs) {
 // Schemes that are safe to put in an href/src. Everything else (javascript:,
 // data:, vbscript:, blob: from elsewhere) is rejected.
 const SAFE_LINK = /^(https?:\/\/|\/(?!\/)|mailto:|#)/i;
+// magnet: URIs are opened by the user's BitTorrent client, never by the page.
+const MAGNET_LINK = /^magnet:\?xt=urn:bt(?:ih|mh):[A-Za-z0-9]{32,68}(?:&|$)/i;
 
 /**
  * @param {string|null|undefined} href
@@ -17,7 +19,7 @@ export function safeHref(href) {
   if (!trimmed) return null;
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f]/.test(trimmed)) return null; // "java\nscript:" tricks
-  return SAFE_LINK.test(trimmed) ? trimmed : null;
+  return SAFE_LINK.test(trimmed) || MAGNET_LINK.test(trimmed) ? trimmed : null;
 }
 
 export function formatBytes(bytes) {
@@ -63,7 +65,7 @@ export function startDownload(url, fileName) {
   a.href = url;
   a.rel = 'noopener noreferrer';
   // Only meaningful for same-origin URLs; harmless elsewhere.
-  if (fileName) a.download = fileName;
+  if (fileName && !/^magnet:/i.test(url)) a.download = fileName;
   // Cross-origin destinations must not replace the app inside an iframe.
   const isSameOrigin = url.startsWith('/') || url.startsWith(window.location.origin);
   if (!isSameOrigin) a.target = '_blank';

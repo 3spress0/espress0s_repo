@@ -282,7 +282,7 @@ column map, so a `?sort=` value can never reach the `ORDER BY` clause.
 | `q` | free text (FTS5; falls back to `LIKE` if the MATCH expression is malformed) |
 | `status` | `current`, `legacy`, `deprecated`, `archived`, `unreleased` |
 | `platform`, `architecture`, `version`, `file_type` | exact (case-insensitive for platform/architecture/file_type) |
-| `storage_provider` | `local`, `gdrive`, `onedrive`, `github`, `external` |
+| `storage_provider` | `local`, `gdrive`, `onedrive`, `github`, `external`; mirrors may also use `torrent` (magnet: URI or `.torrent` URL in `download_url`) |
 | `category`, `folder` | slug or numeric id; `folder=none` means unfiled |
 | `tag` | matches the quoted JSON token, so `iso` does not match `isometric` |
 | `release_from`, `release_to` | `YYYY-MM-DD`, and must be a real calendar date |

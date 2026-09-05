@@ -7,7 +7,7 @@ import { emitEvent } from './eventBus.js';
 import { config } from '../config.js';
 import { unzip, zip, ZipError } from '../lib/zip.js';
 import {
-  itemSchema, downloadLinkSchema, externalImageUrlSchema, isExternalUrl, requirementsSchema,
+  itemSchema, downloadLinkSchema, externalImageUrlSchema, isExternalUrl, requirementsSchema, normalizeLinkProvider,
 } from '../utils/validation.js';
 import {
   serializeItem, getItemLinksForMany, encryptItemFields, encryptLinkFields,
@@ -374,7 +374,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false, detect
       stmt.run({
         item_id: itemId,
         label: d.label,
-        storage_provider: d.storage_provider || 'external',
+        storage_provider: normalizeLinkProvider(d).storage_provider || 'external',
         storage_path: enc.storage_path,
         download_url: enc.download_url,
         file_size: d.file_size ?? null,

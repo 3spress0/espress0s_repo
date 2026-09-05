@@ -186,9 +186,10 @@ CREATE TABLE IF NOT EXISTS item_download_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   label TEXT NOT NULL, -- e.g., "Google Drive Mirror 1", "OneDrive EU", "Direct"
-  storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external')),
+  -- 'torrent': download_url holds a magnet: URI or an http(s) .torrent URL.
+  storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external', 'torrent')),
   storage_path TEXT, -- encrypted: file ID or path in external storage
-  download_url TEXT, -- encrypted: direct URL
+  download_url TEXT, -- encrypted: direct URL (or magnet: URI for torrent mirrors)
   file_size INTEGER, -- optional override per mirror
   is_primary INTEGER DEFAULT 0, -- primary mirror
   is_down INTEGER DEFAULT 0, -- marked as down by admin or checker

@@ -152,7 +152,7 @@ export default function ItemDetail() {
     'abandonware': 'bg-purple-500/10 text-purple-400 border-purple-500/20',
   };
 
-  const providerIcons = { 'gdrive': 'G', 'onedrive': 'O', 'external': 'E', 'github': 'GH', 'local': 'L' };
+  const providerIcons = { 'gdrive': 'G', 'onedrive': 'O', 'external': 'E', 'github': 'GH', 'local': 'L', 'torrent': '⇅' };
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-28 md:pb-8">

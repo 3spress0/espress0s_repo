@@ -1,6 +1,6 @@
 import { getDb } from '../db/index.js';
 import { makeSlug, formatBytes } from '../utils/slug.js';
-import { itemSchema, downloadLinkSchema } from '../utils/validation.js';
+import { itemSchema, downloadLinkSchema, normalizeLinkProvider, isMagnetUri } from '../utils/validation.js';
 import { parseRequirements } from '../utils/requirements.js';
 import { authenticate, optionalAuthenticate, requireAdmin, requireEditor, roleAtLeast } from '../middleware/auth.js';
 import { storageManager } from '../services/storage/index.js';
@@ -53,7 +53,7 @@ function parseDownloadLinks(raw) {
   raw.forEach((entry, index) => {
     const parsed = downloadLinkSchema.safeParse(entry);
     if (parsed.success) {
-      links.push(parsed.data);
+      links.push(normalizeLinkProvider(parsed.data));
       return;
     }
     errors.push({
@@ -150,9 +150,10 @@ function syncDownloadLinks(db, itemId, wanted) {
  * `javascript:`/`data:` URL back to the browser or put one in a Location
  * header, whatever an admin (or an imported feed) may have stored.
  */
-function isSafeRedirectUrl(url) {
+function isSafeRedirectUrl(url, { allowMagnet = false } = {}) {
   if (typeof url !== 'string' || !url) return false;
   if (url.startsWith('/')) return !url.startsWith('//');
+  if (allowMagnet && isMagnetUri(url)) return true;
   return /^https?:\/\//i.test(url);
 }
 
@@ -586,7 +587,7 @@ export async function itemsRoutes(fastify) {
     const parsed = downloadLinkSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
 
-    const ld = parsed.data;
+    const ld = normalizeLinkProvider(parsed.data);
     const encLink = encryptLinkFields({ storage_path: ld.storage_path || null, download_url: ld.download_url || null, down_reason: ld.down_reason || null });
 
     if (ld.is_primary) db.prepare('UPDATE item_download_links SET is_primary = 0 WHERE item_id = ?').run(item.id);
@@ -618,7 +619,7 @@ export async function itemsRoutes(fastify) {
     const parsed = downloadLinkSchema.partial().safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
 
-    const data = parsed.data;
+    const data = normalizeLinkProvider(parsed.data);
     if (data.is_primary) db.prepare('UPDATE item_download_links SET is_primary = 0 WHERE item_id = ?').run(item.id);
 
     const updates = [];
@@ -697,7 +698,8 @@ export async function itemsRoutes(fastify) {
 
       if (!downloadUrl) return reply.code(404).send({ error: 'No download URL configured' });
       if (downloadUrl.startsWith('/api/files/')) return reply.code(501).send({ error: 'Local file serving not configured' });
-      if (!isSafeRedirectUrl(downloadUrl)) {
+      const isTorrent = (usedLink?.storage_provider || item.storage_provider) === 'torrent';
+      if (!isSafeRedirectUrl(downloadUrl, { allowMagnet: isTorrent })) {
         request.log.error({ itemId: item.id }, 'Refusing to serve unsafe download URL');
         return reply.code(502).send({ error: 'Stored download URL is not a valid http(s) link' });
       }
@@ -752,7 +754,7 @@ export async function itemsRoutes(fastify) {
       const downloadUrl = await storageManager.getDownloadUrl(link.storage_provider, link.storage_path, link);
       if (!downloadUrl) return reply.code(404).send({ error: 'No download URL configured' });
       if (downloadUrl.startsWith('/api/files/')) return reply.code(501).send({ error: 'Local file serving not configured' });
-      if (!isSafeRedirectUrl(downloadUrl)) {
+      if (!isSafeRedirectUrl(downloadUrl, { allowMagnet: link.storage_provider === 'torrent' })) {
         request.log.error({ itemId: item.id, linkId: link.id }, 'Refusing to serve unsafe download URL');
         return reply.code(502).send({ error: 'Stored download URL is not a valid http(s) link' });
       }

@@ -180,6 +180,27 @@ only) charts what the app already records - no extra tracking is added:
 - mirror health, webhook deliveries, import runs and the in-process request
   metrics (the deeper process view stays under Monitoring).
 
+## Torrent and magnet mirrors
+
+A mirror can be a torrent: choose **Torrent / magnet** as the provider (or
+just paste a `magnet:?xt=urn:btih:…` link - the editor and the import
+pipeline detect it) and put the magnet URI or an http(s) `.torrent` URL in
+the download URL. Rules:
+
+- magnet links must carry a BitTorrent info-hash (`btih` or `btmh`) and only
+  URL-safe characters; anything else is rejected at validation time;
+- a magnet URL on any other provider is coerced to `torrent`, so it is never
+  handed to an http-only storage adapter;
+- the download endpoint returns the magnet as-is (the browser opens the
+  user's torrent client); it is never used as an HTTP redirect target for
+  non-torrent mirrors;
+- the link checker skips magnets ("cannot be probed") instead of marking
+  them down; `.torrent` URLs are probed like any other link;
+- existing databases are migrated once at start-up (the mirror table's
+  `CHECK` constraint is rebuilt; rows, counters and indexes are preserved).
+
+Nothing is seeded or hosted by espress0 - it only stores the link.
+
 ## Similar software
 
 Every published entry shows a "Similar software" block

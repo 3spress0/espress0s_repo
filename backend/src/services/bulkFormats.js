@@ -100,7 +100,7 @@ export function csvToEntries(text) {
     });
     const linkList = Object.keys(links).sort((a, b) => Number(a) - Number(b)).map((n, i) => {
       const l = links[n];
-      const out = { label: l.label || `Download${i ? ` ${i + 1}` : ''}`, storage_provider: l.provider || 'external', is_primary: l.primary ? toBool(l.primary) : i === 0, sort_order: i };
+      const out = { label: l.label || `Download${i ? ` ${i + 1}` : ''}`, storage_provider: l.provider || (/^magnet:/i.test(l.url || '') ? 'torrent' : 'external'), is_primary: l.primary ? toBool(l.primary) : i === 0, sort_order: i };
       if (l.url) out.download_url = l.url;
       if (l.path) out.storage_path = l.path;
       return out;

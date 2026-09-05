@@ -1,7 +1,7 @@
 import { config } from '../../config.js';
 import { GoogleDriveProvider } from './GoogleDriveProvider.js';
 import { OneDriveProvider } from './OneDriveProvider.js';
-import { LocalProvider, ExternalProvider, GitHubProvider } from './LocalProvider.js';
+import { LocalProvider, ExternalProvider, GitHubProvider, TorrentProvider } from './LocalProvider.js';
 
 class StorageManager {
   constructor() {
@@ -15,6 +15,7 @@ class StorageManager {
     this.providers.set('onedrive', new OneDriveProvider(config.storage.onedrive));
     this.providers.set('external', new ExternalProvider({}));
     this.providers.set('github', new GitHubProvider({}));
+    this.providers.set('torrent', new TorrentProvider({}));
   }
 
   getProvider(name) {
@@ -54,6 +55,7 @@ class StorageManager {
       'onedrive': 'Microsoft OneDrive',
       'external': 'External URL',
       'github': 'GitHub Releases',
+      'torrent': 'Torrent / magnet',
     };
     return names[name] || name;
   }
@@ -62,6 +64,7 @@ class StorageManager {
     if (name === 'local') return true;
     if (name === 'external') return true;
     if (name === 'github') return true;
+    if (name === 'torrent') return true;
     if (name === 'gdrive') return config.storage.googleDrive.enabled || true; // Allow even if not fully configured, admin sets link
     if (name === 'onedrive') return config.storage.onedrive.enabled || true;
     return true;

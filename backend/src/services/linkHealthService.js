@@ -81,7 +81,10 @@ export class LinkHealthService {
     let outcome;
     try {
       const url = await this.resolveUrl(link);
-      if (!url || !/^https?:\/\//i.test(url)) {
+      if (url && /^magnet:/i.test(url)) {
+        // A magnet link has no server to ask; swarm health is out of scope.
+        outcome = { status: link.status || 'unknown', http_status: null, check_error: 'Skipped — magnet links cannot be probed', skipped: true };
+      } else if (!url || !/^https?:\/\//i.test(url)) {
         outcome = {
           status: link.status || 'unknown',
           http_status: null,

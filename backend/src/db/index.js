@@ -150,7 +150,7 @@ export function getDb() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
           label TEXT NOT NULL,
-          storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external')),
+          storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external', 'torrent')),
           storage_path TEXT,
           download_url TEXT,
           file_size INTEGER,
@@ -188,6 +188,50 @@ export function getDb() {
       if (!hasCheckError) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN check_error TEXT");
       const hasCheckDuration = linkCols.some(c => c.name === 'check_duration_ms');
       if (!hasCheckDuration) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN check_duration_ms INTEGER");
+
+      // Torrent / magnet mirrors (#22). SQLite cannot widen a CHECK constraint
+      // in place, so a database created before 'torrent' was allowed gets the
+      // table rebuilt once. Nothing references item_download_links by foreign
+      // key, so copy -> drop -> rename is safe; indexes are recreated below.
+      const linkSql = dbInstance.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'item_download_links'").get()?.sql || '';
+      // Match the CHECK clause itself: sqlite_master keeps SQL comments, and
+      // the schema comment above the column mentions the word too.
+      if (linkSql && !/CHECK\s*\(\s*storage_provider\s+IN\s*\([^)]*'torrent'/i.test(linkSql)) {
+        const cols = dbInstance.prepare("PRAGMA table_info(item_download_links)").all().map(c => c.name).join(', ');
+        dbInstance.transaction(() => {
+          dbInstance.exec(`
+            CREATE TABLE item_download_links_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+              label TEXT NOT NULL,
+              storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external', 'torrent')),
+              storage_path TEXT,
+              download_url TEXT,
+              file_size INTEGER,
+              is_primary INTEGER DEFAULT 0,
+              is_down INTEGER DEFAULT 0,
+              down_reason TEXT,
+              status TEXT DEFAULT 'up' CHECK(status IN ('up', 'down', 'unknown', 'checking')),
+              last_checked DATETIME,
+              http_status INTEGER,
+              check_error TEXT,
+              check_duration_ms INTEGER,
+              sort_order INTEGER DEFAULT 0,
+              download_count INTEGER DEFAULT 0,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO item_download_links_new (${cols}) SELECT ${cols} FROM item_download_links;
+            DROP TABLE item_download_links;
+            ALTER TABLE item_download_links_new RENAME TO item_download_links;
+            CREATE INDEX IF NOT EXISTS idx_download_links_item ON item_download_links(item_id);
+            CREATE INDEX IF NOT EXISTS idx_download_links_primary ON item_download_links(item_id, is_primary);
+            CREATE INDEX IF NOT EXISTS idx_download_links_down ON item_download_links(is_down);
+            CREATE INDEX IF NOT EXISTS idx_download_links_item_status ON item_download_links(item_id, status);
+          `);
+        })();
+        console.log('Migrated item_download_links: torrent/magnet mirrors are now allowed.');
+      }
     } catch (e) {
       console.warn('Download links table migration warning:', e.message);
     }
