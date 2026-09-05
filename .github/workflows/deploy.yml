@@ -13,7 +13,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Job-level `if` cannot read the `secrets` context, so probe it from a
       # step. Without this, a repository that has not configured the VM
@@ -35,7 +35,7 @@ jobs:
 
       - name: Deploy via SSH
         if: steps.probe.outputs.configured == 'true'
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.AZURE_VM_HOST }}
           username: ${{ secrets.AZURE_VM_USER }}
