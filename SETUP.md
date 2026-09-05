@@ -170,6 +170,31 @@ generated systemd unit grants exactly one capability,
 `AmbientCapabilities=CAP_NET_BIND_SERVICE`. Use `--port 3000` if you would
 rather keep nginx as the only thing on 80.
 
+### After a reboot
+
+A production deploy starts itself — the unit is enabled at install time, so
+the app should be back a few seconds after the machine boots. If the site
+stays stuck on the **"Loading espress0's repo"** screen, the backend is down
+and the browser is only showing the static part of the app. On the server:
+
+```bash
+systemctl status espress0-repo
+journalctl -u espress0-repo -n 50 --no-pager
+ss -ltn | grep -E ':(80|3000)\b'
+```
+
+The classic cause for an install that lives in your home directory
+(`~/espress0s_repo`): `ProtectHome=true` in the unit hides all of `/home` from
+the service (it fails with `status=200/CHDIR` or `status=203/EXEC`, then
+`Restart=always` loops forever). Re-running `sudo ./espress0 deploy` now
+regenerates the unit with `ProtectHome=false` for home-directory layouts, or
+flip that one line in `/etc/systemd/system/espress0-repo.service` by hand and
+then `sudo systemctl daemon-reload && sudo systemctl restart espress0-repo`.
+
+The tmux runner (`./espress0 serve`) does **not** survive a reboot at all —
+nothing restarts it. Either re-run `./espress0 serve` after every boot, or
+switch to the systemd deployment above for an always-on box.
+
 ## Developing locally
 
 ### Quick start (one command)

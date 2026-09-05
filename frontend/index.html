@@ -85,6 +85,15 @@
     <div id="boot">
       <img src="/loading_dots_white.gif" alt="" width="44" height="44" />
       <span>Loading espress0's repo</span>
+      <!-- Only revealed when the app has NOT committed after 10 s, which in
+           practice means the backend is down (after a reboot, a crashed
+           service) and this screen would otherwise pulse forever. On a
+           healthy load main.jsx removes #boot long before the timer fires,
+           so nobody ever sees this. -->
+      <span id="boot-hint" hidden>
+        Hey, this isn't supposed to happen — try reloading the page.
+        <a href="" id="boot-reload">Reload now</a>
+      </span>
     </div>
     <style>
       #boot {
@@ -105,7 +114,43 @@
       #boot span { opacity: .55; animation: boot-pulse 1.6s ease-in-out infinite }
       @keyframes boot-pulse { 0%, 100% { opacity: .55 } 50% { opacity: .3 } }
       @media (prefers-reduced-motion: reduce) { #boot span { animation: none } }
+      /* The stuck-here hint does not pulse, wraps on small screens, and must
+         opt back into pointer events (#boot above is click-through, so the
+         Reload link would otherwise be unclickable). */
+      #boot #boot-hint {
+        opacity: .75;
+        animation: none;
+        max-width: 24em;
+        text-align: center;
+        line-height: 1.6;
+        pointer-events: auto;
+      }
+      #boot #boot-hint a { color: inherit; text-decoration: underline; }
+      #boot #boot-hint a:hover { opacity: .8 }
     </style>
+    <script>
+      // Healthy loads never run this to visibility: main.jsx removes #boot as
+      // soon as React commits its first frame, so the timer below finds an
+      // absent #boot and stops. If #boot is still here after 10 s the bundle
+      // or the backend never came up — the classic case being a server that
+      // rebooted without anything restarting the app — so tell the visitor
+      // instead of pulsing forever. Inline script (no external file) because
+      // it must run even when every other asset is beyond reach; the backend
+      // hashes inline blocks into the CSP, which is also why the click
+      // handler is attached here rather than as an onclick= attribute
+      // (script-src-attr is 'none').
+      (function () {
+        var reload = document.getElementById('boot-reload');
+        if (reload) reload.addEventListener('click', function (event) {
+          event.preventDefault();
+          location.reload();
+        });
+        setTimeout(function () {
+          var hint = document.getElementById('boot-hint');
+          if (hint && document.getElementById('boot')) hint.hidden = false;
+        }, 10000);
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

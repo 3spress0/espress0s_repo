@@ -742,6 +742,25 @@ sed -e "s|/opt/espress0s-repo|$ROOT_DIR|g" \
     -e "s|/usr/bin/node|$NODE_BIN|g" \
     "systemd/${APP_NAME}.service" > "$TMP"
 
+# ProtectHome=true is right for an /opt install, but it mounts an empty,
+# inaccessible view over /home, /root and /run/user inside the unit's mount
+# namespace. With the checkout in a home directory — or a Node binary from
+# nvm/fnm under one — the service cannot chdir into its WorkingDirectory at
+# boot (status=200/CHDIR) and Restart=always then loops forever. The site
+# never comes up and visitors only ever see the "Loading espress0's repo"
+# screen. Relax it for that layout only; /opt installs keep the hardening.
+lives_under_home() {
+  local p
+  p="$(readlink -f "$1" 2>/dev/null || printf '%s' "$1")"
+  case "$p" in /home/*|/root|/root/*|/run/user/*) return 0 ;; esac
+  return 1
+}
+if lives_under_home "$ROOT_DIR" || lives_under_home "$NODE_BIN"; then
+  sed -i 's|^ProtectHome=true|# Relaxed by deploy-ubuntu.sh: this installation (or the Node\n# binary) lives in a home directory. ProtectHome=true would hide it from\n# the unit and the app could never start at boot.\nProtectHome=false|' "$TMP"
+  warn "Installation is under a home directory - set ProtectHome=false in the"
+  warn "generated unit (with ProtectHome=true the app cannot start at boot)."
+fi
+
 # The unit must be told which interface/port to bind. In domain mode the app
 # is loopback-only; nginx is the only public listener.
 grep -q "^Environment=PORT=" "$TMP" || sed -i "/^Environment=NODE_ENV=/a Environment=PORT=$INTERNAL_PORT" "$TMP"
