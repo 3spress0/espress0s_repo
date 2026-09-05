@@ -532,17 +532,15 @@ The application stores the relevant metadata and resolves the configured externa
 
 ## Contributing
 
-Contributions are welcome.
-
-Before submitting changes:
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the workflow, coding rules,
+database-migration guidance and the PR checklist. In short: one change per
+PR, extend existing modules instead of duplicating them, add a test, and run
 
 ```bash
 ./espress0 test
 ```
 
-and verify that the application still builds correctly.
-
-For larger changes, keep the existing architecture and avoid introducing unnecessary services or dependencies.
+before opening a pull request. Issue and PR templates live in `.github/`.
 
 ## License
 
