@@ -134,6 +134,13 @@ export async function previewRoutes(fastify) {
           PREVIEW_DIR,
           `.${cacheKey}.${crypto.randomBytes(8).toString('hex')}.tmp`
         );
+        // Deliberately suppressed: caching fetched bytes is the feature, and
+        // the controls are the ones around it. safeFetchBuffer refused any
+        // non-public target and re-checked every redirect hop, the size is
+        // capped, the name is our own hash plus random suffix, the file is
+        // private, and the bytes are only ever served back behind login with
+        // nosniff, a default-src 'none' CSP and X-Frame-Options: DENY.
+        // codeql[js/http-to-file-access]
         fs.writeFileSync(tmpPath, buffer, { mode: 0o600 });
         fs.renameSync(tmpPath, cachedPath);
       } catch (cacheErr) {

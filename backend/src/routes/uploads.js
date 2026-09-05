@@ -204,6 +204,12 @@ export async function uploadsRoutes(fastify) {
     if (!target.startsWith(UPLOAD_DIR + path.sep)) {
       return reply.code(500).send({ error: 'Refusing to store this upload' });
     }
+    // Deliberately suppressed: storing an upload is the feature. The buffer is
+    // sniffed against a fixed signature table (not the client's claim), SVG is
+    // scanned for script, event handlers and entities, the size is capped by
+    // the multipart limit and by the check above, the caller is an
+    // authenticated editor, and the name is ours.
+    // codeql[js/http-to-file-access]
     fs.writeFileSync(target, buffer);
 
     const db = getDb();

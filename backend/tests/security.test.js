@@ -219,7 +219,7 @@ describe('Security - espress0 repo', () => {
       const { aiService } = await import('../src/services/aiService.js');
       const sanitized = aiService.sanitizeAnswer('See https://espress0.duckdns.org/file/ubuntu-24-04-lts for the ISO.');
       assert.ok(sanitized.includes('/file/ubuntu-24-04-lts'), 'the repo link survives');
-      assert.ok(!sanitized.includes('espress0.duckdns.org'), 'the guessed domain is gone');
+      assert.ok(!/https?:\/\//.test(sanitized), 'the guessed domain is gone');
       assert.ok(!/may not be verified/.test(sanitized), 'a repo link needs no disclaimer');
     });
 
