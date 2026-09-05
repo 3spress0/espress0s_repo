@@ -92,11 +92,11 @@
     <div id="boot">
       <img src="/loading_dots_white.gif" alt="" width="44" height="44" />
       <span>Loading espress0's repo</span>
-      <!-- Only revealed when the app has NOT committed after 10 s, which in
-           practice means the backend is down (after a reboot, a crashed
-           service) and this screen would otherwise pulse forever. On a
-           healthy load main.jsx removes #boot long before the timer fires,
-           so nobody ever sees this. -->
+      <!-- Only shown when the app has NOT committed after 10 s AND one
+           guarded auto-reload already ran (or the backend is unreachable),
+           i.e. a plain stale-tab reload cannot fix it — the backend is down
+           or the deploy itself is broken. On a healthy load main.jsx removes
+           #boot long before the timer fires, so nobody ever sees this. -->
       <span id="boot-hint" hidden>
         Hey, this isn't supposed to happen — try reloading the page.
         <a href="" id="boot-reload">Reload now</a>
@@ -139,22 +139,50 @@
       // Healthy loads never run this to visibility: main.jsx removes #boot as
       // soon as React commits its first frame, so the timer below finds an
       // absent #boot and stops. If #boot is still here after 10 s the bundle
-      // or the backend never came up — the classic case being a server that
-      // rebooted without anything restarting the app — so tell the visitor
-      // instead of pulsing forever. Inline script (no external file) because
-      // it must run even when every other asset is beyond reach; the backend
-      // hashes inline blocks into the CSP, which is also why the click
-      // handler is attached here rather than as an onclick= attribute
-      // (script-src-attr is 'none').
+      // never executed, and there are two distinct causes:
+      //
+      //   a. This tab holds an index.html from BEFORE a deploy: the hashed
+      //      bundle it points at no longer exists. The SERVER is fine - it
+      //      answers /api/health - so one hard reload pulls the current
+      //      index.html (Cache-Control: no-cache) and the site recovers on
+      //      its own. The reload happens once per tab; main.jsx clears the
+      //      marker on the next good boot, so a genuinely broken server can
+      //      never be hammered by a reload loop.
+      //   b. The backend is actually down (a reboot that did not restart the
+      //      app): /api/health does not answer, so we show the hint and let
+      //      the visitor decide.
+      //
+      // Inline script (no external file) because it must run even when every
+      // other asset is beyond reach; the backend hashes inline blocks into
+      // the CSP, which is also why the click handler is attached here rather
+      // than as an onclick= attribute (script-src-attr is 'none').
       (function () {
+        var RETRY_FLAG = 'espress0_boot_retry';
         var reload = document.getElementById('boot-reload');
         if (reload) reload.addEventListener('click', function (event) {
           event.preventDefault();
           location.reload();
         });
         setTimeout(function () {
+          if (!document.getElementById('boot')) return; // React committed
           var hint = document.getElementById('boot-hint');
-          if (hint && document.getElementById('boot')) hint.hidden = false;
+          var showHint = function () {
+            if (hint && document.getElementById('boot')) hint.hidden = false;
+          };
+          var retried = false;
+          try { retried = sessionStorage.getItem(RETRY_FLAG) === '1'; } catch (e) {}
+          if (retried || !window.fetch) { showHint(); return; }
+          fetch('/api/health', { cache: 'no-store' }).then(function (res) {
+            if (!document.getElementById('boot')) return;
+            if (res.ok) {
+              // Server is healthy but the app never booted - almost always a
+              // stale pre-deploy index.html. One guarded reload, not a loop.
+              try { sessionStorage.setItem(RETRY_FLAG, '1'); } catch (e) {}
+              location.reload();
+            } else {
+              showHint();
+            }
+          }).catch(showHint);
         }, 10000);
       })();
     </script>

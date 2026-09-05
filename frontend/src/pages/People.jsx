@@ -4,6 +4,7 @@ import { Search, X, Users, Star, Shield, ChevronLeft, ChevronRight } from 'lucid
 import { usersApi } from '../lib/api';
 import { formatDate } from '../lib/utils';
 import Loading from '../components/Loading';
+import { proxyImageUrl } from '../lib/imageProxy';
 
 /**
  * People directory: /people
@@ -35,7 +36,7 @@ function PersonCard({ person }) {
       <div className="shrink-0 w-14 h-14 rounded-2xl bg-gradient-primary flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-purple-500/20 overflow-hidden">
         {person.avatar_url ? (
           <img
-            src={person.avatar_url}
+            src={proxyImageUrl(person.avatar_url)}
             alt={person.username}
             loading="lazy"
             decoding="async"

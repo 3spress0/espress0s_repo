@@ -547,6 +547,72 @@ testcase "the documented contract is present in --help"
   assert_not_contains "$HELP" "set -uo pipefail" "the help does not leak shell code"
 fi
 
+# --- 11. deploy --update cannot die mid-update on the re-exec ----------------
+#
+# The bug: re-running the just-pulled script built its path as
+# "$ROOT_DIR/${BASH_SOURCE[0]}". Invoked via an absolute path that becomes
+# ROOT + absolute => "bash: /home/.../espress0s_repo//home/.../scripts/
+# deploy-ubuntu.sh: No such file or directory", and the update aborted AFTER
+# the git sync but BEFORE npm install / vite build / systemctl restart ever
+# ran - the exact halfway state that left sites on the boot screen.
+if should_run "deploy re-exec"; then
+testcase "deploy --update re-execs via an absolute path that always exists"
+  assert_not_contains "$DEPLOY" 'exec bash "$ROOT_DIR/${BASH_SOURCE[0]}"' \
+    "the re-exec no longer builds ROOT + possibly-absolute invocation path"
+  assert_contains "$DEPLOY" 'exec bash "$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"' \
+    "the re-exec resolves the script from SCRIPT_DIR (absolute by construction)"
+  assert_contains "$DEPLOY" '--port "$INTERNAL_PORT"' \
+    "the resumed run pins the internal listener, not the public port"
+fi
+
+# --- 12. deploy --update finishes by proving what runs, not by hoping --------
+#
+# A failed 'systemctl restart' used to be a mere warn, after which the script
+# still printed "Update complete" while the old process kept serving (or
+# nothing served at all).
+if should_run "deploy verifies"; then
+testcase "deploy --update dies loudly when the new release is not what answers"
+  assert_contains "$DEPLOY" "verify_running_commit" \
+    "the update verifies the commit the RUNNING process reports"
+  assert_not_contains "$DEPLOY" "systemctl restart' failed (is systemd running?). Try: sudo systemctl start" \
+    "a failed restart in the update path is no longer a shrug"
+  assert_not_contains "$DEPLOY" 'start_and_verify || warn "Update applied, but the site is not answering' \
+    "the resumed run no longer prints 'Update complete' over an unanswering site"
+fi
+
+# --- 13. the backend never serves index.html where a file should be ----------
+#
+# The boot-screen mechanism at the HTTP layer: with wildcard:false the asset
+# route set was frozen at process start, and the SPA fallback answered
+# /assets/<old-hash>.js with index.html itself - which browsers refuse to
+# execute as a module, leaving #boot on screen forever.
+if should_run "static serving"; then
+testcase "static assets resolve on disk per request and missing files 404 honestly"
+  INDEXJS="$REPO_ROOT/backend/src/index.js"
+  assert_not_contains "$INDEXJS" "wildcard: false," \
+    "static routes are not frozen at process start (assets resolve per request)"
+  assert_contains "$INDEXJS" "lastSegment.includes('.')" \
+    "file-shaped URLs (stale hashed assets) get an honest 404, not index.html"
+  assert_contains "$INDEXJS" "imageProxyRoutes" \
+    "the cookieless image proxy route is registered"
+fi
+
+# --- 14. the frontend build cannot gut dist/ under a live site ---------------
+#
+# The second half of the 918ecff incident: `vite build` empties dist/ BEFORE
+# writing, so the lucide-react build failure (and any box that dies mid-build
+# - theirs was so loaded SSH stopped answering) leaves the running site with
+# no working build at all. The deploy must build beside dist/ and swap only
+# the COMPLETED result into place.
+if should_run "atomic frontend build"; then
+testcase "deploy builds the frontend in a staging dir and swaps only a complete build"
+  assert_contains "$DEPLOY" "build_frontend_safely" "deploy uses a build-staging helper"
+  assert_contains "$DEPLOY" "--outDir .dist-stage" "vite builds into .dist-stage, not dist"
+  assert_contains "$DEPLOY" 'mv "$stage" frontend/dist' "only a finished build lands in dist"
+  assert_contains "$DEPLOY" "the previous build is STILL in place and serving" \
+    "a failed update build leaves the old build serving (and says so)"
+fi
+
 # ===================================================================== summary
 printf '\n────────────────────────────────────────\n'
 printf '%s%d passed%s, %s%d failed%s\n' "$GRN" "$PASS" "$RST" \

@@ -5,65 +5,15 @@ import { fileURLToPath } from 'url';
 import { getDb } from '../db/index.js';
 import { authenticate, requireAdmin, requireEditor } from '../middleware/auth.js';
 import { getSetting } from '../services/settingsService.js';
+// Signature sniffing and active-SVG rejection live in one shared place -
+// routes/imageProxy.js applies the exact same rules to third-party bytes.
+import { detectImageType, svgRejectionReason } from '../lib/imageSafety.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = path.resolve(__dirname, '../../../data/uploads');
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 
-// Real image types, matched on file signature rather than the client's claim.
-const IMAGE_SIGNATURES = [
-  { mime: 'image/png', ext: 'png', magic: [0x89, 0x50, 0x4e, 0x47] },
-  { mime: 'image/jpeg', ext: 'jpg', magic: [0xff, 0xd8, 0xff] },
-  { mime: 'image/gif', ext: 'gif', magic: [0x47, 0x49, 0x46, 0x38] },
-  { mime: 'image/webp', ext: 'webp', magic: [0x52, 0x49, 0x46, 0x46], tail: { offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] } },
-  { mime: 'image/svg+xml', ext: 'svg', textPrefixes: ['<?xml', '<svg'] },
-];
-
-function detectImageType(buffer) {
-  for (const sig of IMAGE_SIGNATURES) {
-    if (sig.textPrefixes) {
-      const head = buffer.subarray(0, 512).toString('utf8').replace(/^\uFEFF/, '').trim().toLowerCase();
-      if (sig.textPrefixes.some(p => head.startsWith(p))) return sig;
-      continue;
-    }
-    const magicOk = sig.magic.every((b, i) => buffer[i] === b);
-    if (!magicOk) continue;
-    if (sig.tail) {
-      const { offset, bytes } = sig.tail;
-      if (!bytes.every((b, i) => buffer[offset + i] === b)) continue;
-    }
-    return sig;
-  }
-  return null;
-}
-
-/**
- * SVG is a document format: it can carry <script>, event handlers and
- * external references, and it is served from our own origin. Even with the
- * hardened response headers below we refuse the obviously active constructs
- * rather than betting everything on one control.
- */
-const SVG_FORBIDDEN = [
-  /<\s*script/i,
-  /<\s*foreignobject/i,
-  /<\s*iframe/i,
-  /<\s*embed/i,
-  /<\s*object/i,
-  /<\s*use[^>]+href\s*=\s*["']?\s*(?:https?:)?\/\//i,
-  /\son\w+\s*=/i,          // onload=, onclick=, ...
-  /javascript\s*:/i,
-  /<!ENTITY/i,               // XXE / billion laughs
-  /<\s*set[^>]+attributeName/i,
-];
-
-function svgRejectionReason(buffer) {
-  const text = buffer.toString('utf8');
-  for (const pattern of SVG_FORBIDDEN) {
-    if (pattern.test(text)) return `SVG contains disallowed markup (${pattern.source})`;
-  }
-  return null;
-}
 
 /**
  * Uploaded bytes are served from the app's own origin, so a stored file must

@@ -6,6 +6,7 @@ import { formatBytes, formatDate, startDownload } from '../lib/utils';
 import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
 import FavoriteButton from '../components/FavoriteButton';
+import { proxyImageUrl } from '../lib/imageProxy';
 import FollowButton from '../components/FollowButton';
 import PreviewLinkButton from '../components/admin/PreviewLinkButton';
 import Reviews from '../components/Reviews';
@@ -225,7 +226,7 @@ export default function ItemDetail() {
         <div className="h-1 w-full bg-gradient-primary" />
         {(item.image_url || item.icon_url) && (
           <div className="relative h-52 sm:h-64 md:h-80 overflow-hidden bg-surfaceHover">
-            <img src={item.image_url || item.icon_url} alt={item.name} decoding="async" className="w-full h-full object-cover" onError={(e) => e.target.style.display = 'none'} />
+            <img src={proxyImageUrl(item.image_url || item.icon_url)} alt={item.name} decoding="async" className="w-full h-full object-cover" onError={(e) => e.target.style.display = 'none'} />
             <div className="absolute inset-0 bg-gradient-to-t from-surface via-surface/50 to-transparent" />
             <div className="absolute bottom-4 left-4 right-4 sm:left-8 sm:right-8">
               <h1 className="text-3xl sm:text-4xl font-bold text-white leading-tight drop-shadow-lg">{item.name}</h1>
@@ -485,7 +486,7 @@ export default function ItemDetail() {
                       >
                         {account.avatar_url ? (
                           <img
-                            src={account.avatar_url}
+                            src={proxyImageUrl(account.avatar_url)}
                             alt={account.username}
                             loading="lazy"
                             decoding="async"

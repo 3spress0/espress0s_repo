@@ -6,6 +6,7 @@ import api, { favoritesApi } from '../lib/api';
 import { formatBytes, formatDate } from '../lib/utils';
 import { FileTypeBadge } from './Logo';
 import { LoadingDots } from './Loading';
+import { proxyImageUrl } from '../lib/imageProxy';
 
 /**
  * "Favourites" tab of the account page.
@@ -177,7 +178,7 @@ export default function FavoritesPanel({ onError }) {
               <div className="shrink-0 w-10 h-10 rounded-lg bg-surfaceHover border border-border flex items-center justify-center overflow-hidden">
                 {item.icon_url || item.image_url ? (
                   <img
-                    src={item.icon_url || item.image_url}
+                    src={proxyImageUrl(item.icon_url || item.image_url)}
                     alt=""
                     loading="lazy"
                     decoding="async"

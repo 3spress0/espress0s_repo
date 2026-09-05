@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { Download, Star } from 'lucide-react';
 import { formatBytes, formatRelativeTime } from '../lib/utils';
 import { FileTypeBadge } from './Logo';
+import { proxyImageUrl } from '../lib/imageProxy';
 
 // Compact list-friendly card: icon + name + one-line description + one meta row.
 // No big banner placeholders -- a wall of identical gray boxes was pure clutter.
@@ -22,7 +23,7 @@ export default function ItemCard({ item, featured = false }) {
     >
       <div className="shrink-0 w-11 h-11 rounded-lg bg-surfaceHover border border-border flex items-center justify-center overflow-hidden">
         {item.icon_url ? (
-          <img src={item.icon_url} alt="" loading="lazy" decoding="async" className="w-7 h-7 object-contain" onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.dataset.empty = '1'; }} />
+          <img src={proxyImageUrl(item.icon_url)} alt="" loading="lazy" decoding="async" className="w-7 h-7 object-contain" onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.dataset.empty = '1'; }} />
         ) : (
           <FileTypeBadge type={item.file_type} size={18} />
         )}
