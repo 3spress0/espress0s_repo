@@ -438,6 +438,8 @@ than rewriting them. Fixing the seed data is a separate change.
 | `catalog` | URL of a `catalog.zip` or a bare `catalog.json` | Fetches and imports it with the job's mode |
 | `github-releases` | `owner/repo` or a github.com URL | Each release becomes one entry (`<prefix>-<tag>`), each asset one `github` download link |
 
-GitHub options: `category`, `folder`, `prefix`, `tags`, `asset_pattern` (regex on asset names), `include_prereleases`, `max_releases` (≤200), `platform`, `license_status`. Set `GITHUB_TOKEN` in `.env` to raise the API rate limit. Minimum interval is 15 minutes; "Preview" runs the dry run; every applied run appears in the import history with its report. Sources must be public hosts (same SSRF policy as the rest of the app).
+GitHub options: `category`, `folder`, `prefix`, `tags`, `asset_pattern` (glob on asset names: `*` and `?`; other characters match literally), `include_prereleases`, `max_releases` (≤200), `platform`, `license_status`. Set `GITHUB_TOKEN` in `.env` to raise the API rate limit. Minimum interval is 15 minutes; "Preview" runs the dry run; every applied run appears in the import history with its report. Sources must be public hosts (same SSRF policy as the rest of the app).
+
+`asset_pattern` used to be a regular expression. It is a glob now, because the value is stored and admin-editable and a RegExp built from it is controllable by whoever edits the job. Filters saved before the change still work when they were plain text or used `*`; one that used `|`, `\d`, groups or anchors now matches that text literally and should be rewritten (`linux|windows` → two jobs, or `*linux*`).
 
 API: `GET/POST /api/admin/import-jobs`, `GET/PUT/DELETE /api/admin/import-jobs/:id`, `POST /api/admin/import-jobs/:id/run[?apply=0]`.

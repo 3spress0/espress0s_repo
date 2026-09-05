@@ -12,6 +12,7 @@ const { itemsRoutes } = await import('../src/routes/items.js');
 const { generateToken } = await import('../src/middleware/auth.js');
 const { createPreviewToken, verifyPreviewToken } = await import('../src/services/previewLinkService.js');
 const { encryptionService } = await import('../src/services/encryptionService.js');
+const { hostsIn } = await import('./helpers/responseUrls.mjs');
 const cookie = (await import('@fastify/cookie')).default;
 
 let app, db, editor, viewer, draft, other;
@@ -80,7 +81,7 @@ describe('preview links: routes', () => {
     assert.equal(j.name, 'Preview Draft');
     assert.equal(j.download_url, null);
     assert.ok(j.download_links.every(l => l.download_url === null && l.storage_path === null));
-    assert.doesNotMatch(res.body, /secret\.example\.com/);
+    assert.ok(!hostsIn(res.body).has('secret.example.com'), 'a secret URL leaked into the preview');
     assert.equal(db.prepare('SELECT view_count FROM items WHERE id = ?').get(draft.id).view_count, 0);
     // The token is bound to the item: not valid for another draft.
     res = await app.inject({ method: 'GET', url: `/api/items/pv-other?preview=${token}` });

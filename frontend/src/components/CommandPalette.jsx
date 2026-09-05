@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Package, Users, Shield, Settings, LogIn, UserPlus, Star, Sparkles, Palette, Upload, FolderTree, Tag, FileText, Command, CornerDownLeft, Keyboard, Home, Languages, X, BarChart3 } from 'lucide-react';
+import { Search, Package, Users, Shield, Settings, LogIn, UserPlus, Star, Sparkles, Palette, Upload, FolderTree, Tag, FileText, Command, CornerDownLeft, Keyboard, Home, X, BarChart3 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { useI18n } from '../i18n/index.jsx';
 import { searchApi } from '../lib/api';
 
 /**
@@ -45,7 +44,6 @@ export default function CommandPalette({ onAskOpen }) {
   const navigate = useNavigate();
   const { user, isAdmin, isEditor, logout } = useAuth();
   const themeCtx = useTheme();
-  const { t, setLocale, locales } = useI18n();
   const [open, setOpen] = useState(false);
   const [help, setHelp] = useState(false);
   const [query, setQuery] = useState('');
@@ -62,17 +60,17 @@ export default function CommandPalette({ onAskOpen }) {
   const commands = useMemo(() => {
     const list = [
       { id: 'home', label: 'Home', hint: 'g h', icon: Home, run: () => go('/') },
-      { id: 'browse', label: t('nav.browse'), hint: 'g b', icon: Package, run: () => go('/browse') },
-      { id: 'people', label: t('nav.people'), icon: Users, run: () => go('/people') },
-      { id: 'ask', label: t('nav.askAi'), icon: Sparkles, run: () => { setOpen(false); onAskOpen?.(); } },
+      { id: 'browse', label: 'Browse', hint: 'g b', icon: Package, run: () => go('/browse') },
+      { id: 'people', label: 'People', icon: Users, run: () => go('/people') },
+      { id: 'ask', label: 'Ask AI', icon: Sparkles, run: () => { setOpen(false); onAskOpen?.(); } },
     ];
     if (user) {
       list.push({ id: 'favorites', label: 'My favourites', hint: 'g f', icon: Star, run: () => go('/account?tab=favorites') });
-      list.push({ id: 'account', label: t('nav.account'), icon: Settings, run: () => go('/account') });
-      list.push({ id: 'logout', label: t('logout.button'), icon: LogIn, run: () => { setOpen(false); logout(); navigate('/'); } });
+      list.push({ id: 'account', label: 'Account', icon: Settings, run: () => go('/account') });
+      list.push({ id: 'logout', label: 'Log out', icon: LogIn, run: () => { setOpen(false); logout(); navigate('/'); } });
     } else {
-      list.push({ id: 'login', label: t('nav.login'), icon: LogIn, run: () => go('/login') });
-      list.push({ id: 'register', label: t('nav.register'), icon: UserPlus, run: () => go('/register') });
+      list.push({ id: 'login', label: 'Login', icon: LogIn, run: () => go('/login') });
+      list.push({ id: 'register', label: 'Register', icon: UserPlus, run: () => go('/register') });
     }
     if (isEditor) {
       list.push({ id: 'admin-items', label: 'Admin: Items', hint: 'g a', icon: Shield, run: () => go('/admin/items') });
@@ -91,11 +89,9 @@ export default function CommandPalette({ onAskOpen }) {
       list.push({ id: 'theme-auto', label: 'Theme: match system', icon: Palette, run: () => { themeCtx.setTheme('auto'); setOpen(false); } });
       for (const th of themeCtx.themes) list.push({ id: `theme-${th.id}`, label: `Theme: ${th.label}`, icon: Palette, run: () => { themeCtx.setTheme(th.id); setOpen(false); } });
     }
-    list.push({ id: 'lang-auto', label: `${t('common.language')}: automatic`, icon: Languages, run: () => { setLocale(null); setOpen(false); } });
-    for (const l of locales) list.push({ id: `lang-${l.code}`, label: `${t('common.language')}: ${l.name}`, icon: Languages, run: () => { setLocale(l.code); setOpen(false); } });
     list.push({ id: 'help', label: 'Keyboard shortcuts', hint: '?', icon: Keyboard, run: () => setHelp(true) });
     return list;
-  }, [user, isAdmin, isEditor, themeCtx, t, setLocale, locales, go, logout, navigate, onAskOpen]);
+  }, [user, isAdmin, isEditor, themeCtx, go, logout, navigate, onAskOpen]);
 
   // ---- live search ---------------------------------------------------------
   useEffect(() => {

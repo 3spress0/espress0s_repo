@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { User, Mail, Lock, Save, Shield, Eye, EyeOff, LogOut, AlertTriangle, Check, Coffee, Palette, Star, Globe, Bell } from 'lucide-react';
+import { User, Mail, Lock, Save, Shield, Eye, EyeOff, LogOut, AlertTriangle, Check, Palette, Star, Globe, Bell } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import StarryBackground from '../components/StarryBackground';
 import ThemePicker from '../components/ThemePicker';
-import LanguagePicker from '../components/LanguagePicker';
 import { useTheme } from '../context/ThemeContext';
-import Logo from '../components/Logo';
 import { LoadingDots, LoadingPanel } from '../components/Loading';
 import FavoritesPanel from '../components/FavoritesPanel';
 import RecentlyViewed from '../components/RecentlyViewed';
@@ -168,12 +166,9 @@ export default function Account() {
       <StarryBackground />
       
       <div className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex items-center gap-3 mb-8">
-          <Logo size={40} />
-          <div>
-            <h1 className="text-3xl font-bold text-textPrimary">Account Customization</h1>
-            <p className="text-sm text-textMuted">Manage your espress0's repo profile • Encrypted at rest</p>
-          </div>
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-textPrimary">Account</h1>
+          <p className="text-sm text-textMuted">Profile, favourites, notifications and security</p>
         </div>
 
         {error && (
@@ -204,7 +199,7 @@ export default function Account() {
               onClick={() => setTab(id)}
               className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
                 tab === id
-                  ? 'bg-gradient-primary text-white shadow-lg shadow-purple-500/20'
+                  ? 'bg-gradient-primary text-white shadow-lg shadow-primary/25'
                   : 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
               }`}
             >
@@ -217,7 +212,7 @@ export default function Account() {
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 space-y-6">
             <div className="glass rounded-3xl border border-white/5 p-6 text-center backdrop-blur-xl">
-              <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-primary flex items-center justify-center text-white font-bold text-2xl shadow-xl shadow-purple-500/20 overflow-hidden">
+              <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-primary flex items-center justify-center text-white font-bold text-2xl shadow-xl shadow-primary/25 overflow-hidden">
                 {profile?.avatar_url ? (
                   <img src={profile.avatar_url} alt="avatar" loading="lazy" decoding="async" className="w-full h-full object-cover" onError={(e) => e.target.style.display = 'none'} />
                 ) : (
@@ -244,46 +239,38 @@ export default function Account() {
                   <span className="text-textMuted">Member since</span>
                   <span className="font-mono text-[11px]">{profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : '—'}</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-surface border border-border">
-                  <div className="text-[11px] text-textMuted uppercase tracking-widest">Security</div>
-                  <div className="mt-1 text-[11px] leading-relaxed text-textSecondary">
-                    Email: {profile?.encryption?.email || 'encrypted'}<br/>
-                    Password: pepper+bcryptjs<br/>
-                    Avatar/Bio: {profile?.encryption?.avatar || 'encrypted'}
-                  </div>
-                </div>
               </div>
 
-              <div className="mt-6 pt-6 border-t border-white/5 space-y-2">
-                <Link to="/browse" className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-surface border border-border rounded-xl text-sm hover:border-primary/30 transition-colors">
-                  <Shield className="w-4 h-4" />
-                  Browse Repo
-                </Link>
-                <Link to="/ask" className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-surface border border-border rounded-xl text-sm hover:border-primary/30">
-                  <Coffee className="w-4 h-4" />
-                  Ask Barista
-                </Link>
+              {/* One link out of this card. Browse and Ask AI already sit in the
+                  top bar on every page, so repeating them here was clutter. */}
+              <div className="mt-6 pt-6 border-t border-white/5">
                 {/* The visitor-facing version of this account: avatar, bio and
                     the favourites marked shared. */}
-                <Link to={`/u/${profile?.username}`} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-surface border border-border rounded-xl text-sm hover:border-primary/30">
+                <Link to={`/u/${profile?.username}`} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-surface border border-border rounded-xl text-sm hover:border-primary/30 transition-colors">
                   <Globe className="w-4 h-4" />
                   View public profile
                 </Link>
-                <button
-                  onClick={handleLogoutConfirm}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 rounded-xl text-sm transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                  Log Out
-                </button>
-                <button
-                  onClick={handleLogoutAll}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-surface border border-border text-textSecondary hover:border-red-500/40 hover:text-red-400 rounded-xl text-sm transition-colors"
-                >
-                  <Shield className="w-4 h-4" />
-                  Log out all devices
-                </button>
-                <p className="text-[11px] text-textMuted">“All devices” invalidates every session on this account, including this browser.</p>
+              </div>
+
+              <div className="mt-6 pt-6 border-t border-white/5 text-left">
+                <p className="text-[11px] text-textMuted uppercase tracking-widest mb-2">Session</p>
+                <div className="space-y-2">
+                  <button
+                    onClick={handleLogoutConfirm}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 rounded-xl text-sm transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Log out
+                  </button>
+                  <button
+                    onClick={handleLogoutAll}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-surface border border-border text-textSecondary hover:border-red-500/40 hover:text-red-400 rounded-xl text-sm transition-colors"
+                  >
+                    <Shield className="w-4 h-4" />
+                    Log out all devices
+                  </button>
+                </div>
+                <p className="text-[11px] text-textMuted mt-2">Invalidates every session on this account, including this browser.</p>
               </div>
             </div>
           </div>
@@ -334,9 +321,6 @@ export default function Account() {
                   Your device asks for reduced motion, so the starfield and aurora animations are paused.
                 </p>
               )}
-              <div className="mt-6 pt-6 border-t border-white/5">
-                <LanguagePicker />
-              </div>
             </div>
 
             <div className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl">
@@ -466,7 +450,7 @@ export default function Account() {
                   <button
                     type="submit"
                     disabled={saving}
-                    className="px-6 py-3 bg-gradient-primary hover:bg-gradient-primary-hover disabled:opacity-50 text-white rounded-xl font-medium shadow-lg shadow-purple-500/20 flex items-center gap-2 transition-all"
+                    className="px-6 py-3 bg-gradient-primary hover:bg-gradient-primary-hover disabled:opacity-50 text-white rounded-xl font-medium shadow-lg shadow-primary/25 flex items-center gap-2 transition-all"
                   >
                     {saving ? <LoadingDots size={16} /> : <Save className="w-4 h-4" />}
                     {saving ? 'Saving...' : 'Save Customization'}

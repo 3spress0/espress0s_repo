@@ -177,7 +177,7 @@ export default function Profile() {
                     : `${profile.username} has not shared any favourites yet.`}
                 </p>
                 {isOwnProfile ? (
-                  <Link to="/account" className="px-5 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium inline-flex items-center gap-2 shadow-lg shadow-purple-500/20">
+                  <Link to="/account?tab=favorites" className="px-5 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium inline-flex items-center gap-2 shadow-lg shadow-primary/25">
                     <Star className="w-4 h-4" />
                     Open my favourites
                   </Link>

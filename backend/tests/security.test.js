@@ -130,6 +130,18 @@ describe('Security - espress0 repo', () => {
       const valid = await provider.validatePath('https://example.com/file.iso');
       assert.equal(valid, true);
     });
+
+    it('should accept only real Drive hosts in GoogleDriveProvider', async () => {
+      const { GoogleDriveProvider } = await import('../src/services/storage/GoogleDriveProvider.js');
+      const provider = new GoogleDriveProvider({});
+      assert.equal(await provider.validatePath('https://drive.google.com/file/d/1a2b3c4d5e6f7g8h9i/view'), true);
+      assert.equal(await provider.validatePath('1a2b3c4d5e6f7g8h9i'), true, 'a bare file id');
+      // The substring "drive.google.com" is not evidence of the host.
+      assert.equal(await provider.validatePath('https://attacker.example/?x=drive.google.com'), false);
+      assert.equal(await provider.validatePath('https://drive.google.com.attacker.example/file'), false);
+      assert.equal(await provider.validatePath('../../../etc/passwd'), false);
+      assert.equal(await provider.validatePath(''), false);
+    });
   });
 
   describe('JWT Security', () => {

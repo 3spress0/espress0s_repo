@@ -11,7 +11,7 @@ import Fastify from 'fastify';
  */
 const { getDb } = await import('../src/db/index.js');
 const { importJobRoutes } = await import('../src/routes/importJobs.js');
-const { importJobService, releasesToCatalog, parseRepo, validateJobInput } = await import('../src/services/importJobService.js');
+const { importJobService, releasesToCatalog, parseRepo, validateJobInput, assetFilterToRegExp } = await import('../src/services/importJobService.js');
 const { zip } = await import('../src/lib/zip.js');
 const { generateToken } = await import('../src/middleware/auth.js');
 const cookie = (await import('@fastify/cookie')).default;
@@ -82,7 +82,15 @@ describe('import jobs: github releases mapping', () => {
     assert.throws(() => validateJobInput({ name: 'x', source_type: 'catalog', source_url: 'file:///etc/passwd', mode: 'upsert' }), /http/);
     assert.throws(() => validateJobInput({ name: 'x', source_type: 'github-releases', source_url: 'nope', mode: 'upsert' }), /owner\/repo/);
     assert.throws(() => validateJobInput({ name: 'x', source_type: 'github-releases', source_url: 'a/b', mode: 'wipe' }), /mode/);
-    assert.throws(() => validateJobInput({ name: 'x', source_type: 'github-releases', source_url: 'a/b', mode: 'upsert', options: { asset_pattern: '(' } }), /regular expression/);
+    // asset_pattern is a glob, not a regex: metacharacters are data, so a
+    // catastrophic pattern is inert instead of a hang, and only an over-long
+    // filter is refused.
+    const glob = validateJobInput({ name: 'x', source_type: 'github-releases', source_url: 'a/b', mode: 'upsert', options: { asset_pattern: ' (a+)+$ ' } });
+    assert.equal(glob.options.asset_pattern, '(a+)+$', 'trimmed and stored verbatim');
+    assert.equal(assetFilterToRegExp('(a+)+$').test(`${'a'.repeat(40)}b`), false, 'metacharacters stay literal, so no catastrophic backtracking');
+    assert.equal(assetFilterToRegExp('*linux*x64*').test('tool-2.1.0-LINUX-x64.tar.gz'), true, 'glob wildcards still filter');
+    assert.equal(assetFilterToRegExp('   '), null, 'a blank filter means no filter');
+    assert.throws(() => validateJobInput({ name: 'x', source_type: 'github-releases', source_url: 'a/b', mode: 'upsert', options: { asset_pattern: 'x'.repeat(201) } }), /200 characters or fewer/);
     const ok = validateJobInput({ name: ' Job ', source_type: 'github-releases', source_url: 'https://github.com/a/b', mode: 'add-only', interval_minutes: 1 });
     assert.equal(ok.source_url, 'a/b');
     assert.equal(ok.interval_minutes, 15, 'interval floor');

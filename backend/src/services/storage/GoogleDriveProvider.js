@@ -54,7 +54,16 @@ export class GoogleDriveProvider extends StorageProvider {
     if (!storagePath) return false;
     // Basic validation: ID should be alphanumeric with - _
     const id = storagePath.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1] || storagePath.split('?')[0];
-    return /^[a-zA-Z0-9_-]{10,}$/.test(id) || storagePath.includes('drive.google.com');
+    if (/^[a-zA-Z0-9_-]{10,}$/.test(id)) return true;
+    // A full URL counts only when its *host* is Drive. Testing whether the
+    // string contains "drive.google.com" anywhere would accept
+    // https://attacker.example/?x=drive.google.com and
+    // https://drive.google.com.attacker.example/file alike.
+    try {
+      return new URL(storagePath).host === 'drive.google.com';
+    } catch {
+      return false;
+    }
   }
 
   async getMetadata(storagePath) {
