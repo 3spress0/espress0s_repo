@@ -190,16 +190,22 @@ characters and 12 tokens, Levenshtein short-circuits above 64 characters, and
 
 ## Added since the audit
 
-* **Visitor privacy: cookieless image proxy.** Cover images and avatars could
-  point at any third-party host, and the SPA loaded them straight from the
-  visitor's browser — leaking the visitor's IP to each host and letting those
-  hosts set their own cookies (tracker blockers flagged `cdn.jsdelivr.net`
-  and `upload.wikimedia.org`). All cross-origin image URLs are now routed
-  through `GET /api/media/image`, a same-origin fetcher that carries no
-  cookies or browser fingerprint, never echoes upstream headers (Set-Cookie
-  included), reuses the SSRF guard from `safeFetch`, caps size, serves only
-  signature-verified image types with sandboxed/nosniff headers, and rate
-  limits per IP in its own bucket.
+* **Visitor privacy: catalogue-scoped cookieless image proxy.** Cover images
+  and avatars could point at any third-party host, and the SPA loaded them
+  straight from the visitor's browser — leaking the visitor's IP to each host
+  and letting those hosts set their own cookies (tracker blockers flagged
+  `cdn.jsdelivr.net` and `upload.wikimedia.org`). All cross-origin image URLs
+  are now routed through `GET /api/media/image`, a same-origin fetcher that
+  carries no cookies or browser fingerprint, never echoes upstream headers
+  (Set-Cookie included), caps size, serves only signature-verified image
+  types with sandboxed/nosniff headers, and rate limits per IP in its own
+  bucket. The proxied URL is additionally a *lookup key*, not an open
+  request: it must match an image URL this very site actually stores
+  (item icons/banners/images, screenshot galleries, user avatars — decrypted
+  server-side), otherwise 403. The request-dependent value therefore never
+  reaches `fetch` (only the database string matching it does), which keeps
+  the route off the open-proxy/SSRF scanner heuristics entirely, while the
+  old `safeFetch` URL guard remains in place as an independent second wall.
 * **Update/boot-strap hardening.** Two serving behaviours that turned any
   half-completed deploy into a page stuck on the loading screen: static
   assets are now resolved against disk per request (the previous mode froze

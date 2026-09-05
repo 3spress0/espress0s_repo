@@ -1,32 +1,40 @@
 import crypto from 'crypto';
+import { getDb } from '../db/index.js';
+import { encryptionService } from '../services/encryptionService.js';
 import { safeFetchBuffer, UnsafeUrlError } from '../lib/safeFetch.js';
 import { detectImageType, svgRejectionReason } from '../lib/imageSafety.js';
 
 /**
  * Cookieless, same-origin proxy for third-party-hosted cover art and avatars.
  *
- * Item `image_url` / `icon_url` values legitimately point at arbitrary hosts
- * (cdns, wikis, vendor sites) and the SPA used to load them straight from the
- * visitor's browser. Those third parties ride along on the request with their
- * own cookies - tracker blockers (Privacy Badger caught cdn.jsdelivr.net and
- * upload.wikimedia.org setting them) and the visitor's IP end up shared with
- * every host that ever appeared in the catalogue.
+ * Item `image_url` / `icon_url` / `banner_url` / screenshots and user avatars
+ * legitimately point at arbitrary hosts (cdns, wikis, vendor sites) and the
+ * SPA used to load them straight from the visitor's browser. Those third
+ * parties ride along on the request with their own cookies - tracker blockers
+ * (Privacy Badger caught cdn.jsdelivr.net and upload.wikimedia.org setting
+ * them), and the visitor's IP ends up shared with every host that ever
+ * appeared in the catalogue.
  *
- * With this route the browser only ever talks to us: the fetch happens
+ * With this route the browser only ever talks to us. The fetch happens
  * server-side via safeFetchBuffer, which carries no cookies and no browser
  * fingerprint, validates every redirect hop against the SSRF blocklists, and
  * caps the body size. Upstream response headers - Set-Cookie included - are
  * never echoed: the reply is built from scratch with only the bytes and a
  * validated image Content-Type.
  *
+ * The proxy is NOT an open fetcher. `?u=` is treated as a lookup KEY only: it
+ * must equal (after URL normalization) an image URL that the catalogue
+ * actually uses, and the URL handed to fetch is the database's own stored
+ * string, never the request value. That matters twice: it removes the whole
+ * "arbitrary URL straight from the query string into a request" class (what
+ * CodeQL js/request-forgery flags even when the target is validated), and it
+ * means the site cannot be abused as a general-purpose image proxy for
+ * content it has nothing to do with. The SSRF guard below it stays as the
+ * second wall: imports can put anything in the database, so non-public
+ * addresses are still refused.
+ *
  * Response caching: a day at the browser, plus a small in-memory LRU so a
  * busy catalog page does not refetch the same cover per visitor.
- *
- * Deliberate trade-off: this is an open (but image-only, size-capped,
- * rate-limited) fetcher of public URLs - the same URLs any visitor could
- * already see in page source. What it cannot do: reach non-public addresses
- * (SSRF guard), serve non-image content, hand upstream cookies to anyone, or
- * execute active SVG markup.
  */
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB per image
@@ -35,6 +43,7 @@ const MAX_URL_LENGTH = 2048;
 const BROWSER_TTL_SECONDS = 86400; // 24h
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CACHE_MAX_BYTES = 64 * 1024 * 1024; // total budget, not per entry
+const ALLOWLIST_TTL_MS = 60 * 1000;
 
 // Types we serve when the upstream declares them. Anything else must pass
 // signature sniffing (some CDNs answer application/octet-stream for images).
@@ -45,6 +54,85 @@ const DECLARED_TYPES = new Set([
 const SNIFFABLE_TYPES = new Set([
   'application/octet-stream', 'binary/octet-stream', 'text/plain', '',
 ]);
+
+/** Minor canonicalisation so "same URL, slight spelling" still matches. */
+export function normalizeImageUrl(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return null;
+  try {
+    // new URL() lowercases scheme+host and removes default ports, but keeps a
+    // trailing EMPTY '?' or '#', which would make "a.png" and "a.png?" two
+    // different keys for the same resource - strip those.
+    let out = new URL(trimmed).toString();
+    while (/[?#]$/.test(out)) out = out.slice(0, -1);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every third-party image URL this site may legitimately render, as a Map of
+ * normalised URL -> the exact string stored in the database. The stored
+ * string is what gets fetched (see the header comment); the normalised key is
+ * only the lookup.
+ */
+function readCatalogueImageUrls() {
+  const db = getDb();
+  const urls = new Map();
+  const add = (value) => {
+    const key = normalizeImageUrl(value);
+    if (key && !urls.has(key)) urls.set(key, String(value).trim());
+  };
+
+  for (const row of db.prepare('SELECT icon_url, banner_url, image_url, screenshots FROM items').all()) {
+    add(row.icon_url);
+    add(row.banner_url);
+    add(row.image_url);
+    try {
+      for (const shot of JSON.parse(row.screenshots || '[]')) add(shot);
+    } catch { /* a row with malformed screenshots JSON is not a reason to bin the lot */ }
+  }
+
+  // avatar_url is an encrypted column; the user table is small, so decrypting
+  // it here per refresh is cheap and keeps SQL out of the crypto layer.
+  for (const row of db.prepare('SELECT avatar_url FROM users WHERE avatar_url IS NOT NULL').all()) {
+    try {
+      add(encryptionService.decrypt(row.avatar_url));
+    } catch {
+      add(row.avatar_url); // legacy plaintext row
+    }
+  }
+  return urls;
+}
+
+let allowlistCache = { at: 0, urls: new Map() };
+
+function catalogueUrls({ refresh = false } = {}) {
+  if (refresh || Date.now() - allowlistCache.at > ALLOWLIST_TTL_MS) {
+    try {
+      allowlistCache = { at: Date.now(), urls: readCatalogueImageUrls() };
+    } catch {
+      // A DB hiccup must not blank the set mid-request; keep serving the
+      // previous snapshot until it recovers.
+    }
+  }
+  return allowlistCache.urls;
+}
+
+/**
+ * The URL to fetch for a requested `u`, or null when the catalogue does not
+ * use it. On a miss against a stale set the set is rebuilt once, so a cover
+ * added seconds ago renders without waiting out the TTL.
+ */
+export function resolveCatalogueImageUrl(raw, { read = catalogueUrls } = {}) {
+  const key = normalizeImageUrl(raw);
+  if (!key) return null;
+  const urls = read();
+  if (urls.has(key)) return urls.get(key);
+  return read({ refresh: true }).get(key) || null;
+}
 
 /** In-memory LRU with a byte budget. */
 const cache = new Map(); // url -> { buffer, contentType, etag, expiresAt, size }
@@ -119,8 +207,8 @@ export function resolveContentType(declared, buffer) {
   return type;
 }
 
-async function fetchImageEntry(rawUrl, fetcher) {
-  const { buffer, response } = await fetcher(rawUrl, {
+async function fetchImageEntry(urlToFetch, fetcher) {
+  const { buffer, response } = await fetcher(urlToFetch, {
     maxBytes: MAX_BYTES,
     timeoutMs: FETCH_TIMEOUT_MS,
     headers: {
@@ -149,11 +237,13 @@ async function fetchImageEntry(rawUrl, fetcher) {
  * Routes.
  *
  * @param {import('fastify').FastifyInstance} fastify
- * @param {{ fetcher?: Function }} [deps] Test seam: replace the upstream fetch
- *   (must return `{ buffer, response }` like safeFetchBuffer).
+ * @param {{ fetcher?: Function, urlResolver?: Function }} [deps] Test seams:
+ *   replace the upstream fetch (must return `{ buffer, response }` like
+ *   safeFetchBuffer) and/or the catalogue lookup.
  */
 export async function imageProxyRoutes(fastify, deps = {}) {
   const fetcher = deps.fetcher || safeFetchBuffer;
+  const urlResolver = deps.urlResolver || resolveCatalogueImageUrl;
 
   fastify.get('/media/image', {
     config: {
@@ -178,17 +268,26 @@ export async function imageProxyRoutes(fastify, deps = {}) {
       return reply.code(400).send({ error: 'Only http(s) image URLs can be proxied' });
     }
 
-    const cached = cacheGet(raw);
+    // `raw` is only the lookup key: what follows runs on the URL as the
+    // catalogue stores it, or not at all. Unknown URLs are not fetchable
+    // through us, period.
+    const urlToFetch = urlResolver(raw);
+    if (!urlToFetch) {
+      return reply.code(403).send({ error: 'Only image URLs used by this site can be proxied' });
+    }
+
+    const cacheKey = urlToFetch;
+    const cached = cacheGet(cacheKey);
     if (cached) return sendImage(reply, cached, request.headers['if-none-match']);
 
-    let entryPromise = inflight.get(raw);
+    let entryPromise = inflight.get(cacheKey);
     if (!entryPromise) {
       entryPromise = (async () => {
-        const entry = await fetchImageEntry(raw, fetcher);
-        cacheSet(raw, entry);
+        const entry = await fetchImageEntry(urlToFetch, fetcher);
+        cacheSet(cacheKey, entry);
         return entry;
-      })().finally(() => inflight.delete(raw));
-      inflight.set(raw, entryPromise);
+      })().finally(() => inflight.delete(cacheKey));
+      inflight.set(cacheKey, entryPromise);
     }
 
     let entry;

@@ -13,9 +13,10 @@ espress0's repo gives you a searchable catalogue with:
 * Categories, folders, tags, platforms, architectures, and versions
 * Markdown descriptions and cover images
 * Third-party cover art/avatars are fetched through a cookieless same-origin
-  proxy (`/api/media/image`), so a visitor's browser never talks to hosts
-  like cdn.jsdelivr.net or upload.wikimedia.org at all — no third-party
-  cookies, no tracking pixels via cover images
+  proxy (`/api/media/image`, scoped to image URLs the catalogue actually
+  uses), so a visitor's browser never talks to hosts like cdn.jsdelivr.net
+  or upload.wikimedia.org at all — no third-party cookies, no tracking
+  pixels via cover images
 * Multiple download/mirror links per item
 * Checksums and file metadata
 * Version history with diffs and restore

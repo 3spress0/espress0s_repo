@@ -1,14 +1,19 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import Fastify from 'fastify';
-import { imageProxyRoutes, resolveContentType } from '../src/routes/imageProxy.js';
+import {
+  imageProxyRoutes,
+  resolveContentType,
+  resolveCatalogueImageUrl,
+  normalizeImageUrl,
+} from '../src/routes/imageProxy.js';
 import { safeFetchBuffer } from '../src/lib/safeFetch.js';
 
 /**
  * The cookieless image proxy, exercised through fastify.inject with a stubbed
- * upstream. No database, no network: the one real-network path (the SSRF
- * guard) is tested with a literal loopback URL, which assertPublicUrl rejects
- * before any DNS or socket work happens.
+ * upstream and a fixture catalogue map. No database, no network: the one
+ * real-network path (the SSRF guard) is tested with a literal loopback URL,
+ * which assertPublicUrl rejects before any DNS or socket work happens.
  */
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
@@ -19,9 +24,18 @@ function fakeResponse(contentType) {
   return { headers: { get: (name) => (String(name).toLowerCase() === 'content-type' ? contentType : null) } };
 }
 
-async function buildApp(fetcher) {
+/** Catalogue fixture: the URLs the DB "stores", keyed like the real lookup. */
+function fixtureResolver(knownUrls) {
+  const urls = new Map(knownUrls.map((u) => [normalizeImageUrl(u), u]));
+  return (raw) => urls.get(normalizeImageUrl(raw)) || null;
+}
+
+async function buildApp(fetcher, knownUrls = []) {
   const app = Fastify({ logger: false });
-  await app.register(imageProxyRoutes, { fetcher });
+  await app.register(imageProxyRoutes, {
+    fetcher,
+    urlResolver: fixtureResolver(knownUrls),
+  });
   return app;
 }
 
@@ -47,18 +61,53 @@ describe('GET /media/image - input validation', () => {
     const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://x/' + 'a'.repeat(3000)) });
     assert.equal(res.statusCode, 400);
   });
+});
 
-  it('rejects loopback targets via the real SSRF guard (no network involved)', async () => {
-    const app = await buildApp(safeFetchBuffer);
-    const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('http://127.0.0.1:3000/admin') });
-    assert.equal(res.statusCode, 400);
-    assert.match(res.json().error, /non-public/i);
+describe('GET /media/image - the catalogue gate', () => {
+  it('refuses URLs the site does not use - we are not an open proxy', async () => {
+    let called = 0;
+    const app = await buildApp(async () => { called++; throw new Error('must not be called'); },
+      ['https://cdn.jsdelivr.net/used-by-an-item.png']);
+    const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://attacker.example/never-seen.png') });
+    assert.equal(res.statusCode, 403);
+    assert.equal(called, 0, 'nothing upstream is touched for unknown URLs');
+  });
+
+  it('fetches the database value for the requested key, never the query string itself', async () => {
+    const seen = [];
+    const app = await buildApp(
+      async (url) => { seen.push(url); return { buffer: PNG, response: fakeResponse('image/png') }; },
+      ['https://upload.wikimedia.org/w/cover.jpg'],
+    );
+    await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://upload.wikimedia.org/w/cover.jpg') });
+    assert.deepEqual(seen, ['https://upload.wikimedia.org/w/cover.jpg']);
+  });
+
+  it('matches catalogue URLs across harmless spelling differences', async () => {
+    // Trailing "?" normalises away, case of the scheme/host does too.
+    const res = await (await buildApp(
+      async () => ({ buffer: PNG, response: fakeResponse('image/png') }),
+      ['https://cdn.example.com/a.png'],
+    )).inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://CDN.EXAMPLE.COM/a.png?') });
+    assert.equal(res.statusCode, 200);
   });
 });
 
 describe('GET /media/image - successful fetches', () => {
+  const KNOWN = [
+    'https://cdn.example.com/a.png',
+    'https://cdn.example.com/a',
+    'https://cdn.example.com/a.svg',
+    'https://cdn.example.com/cached.png',
+    'https://evil.example.com/cover.png',
+    'https://evil.example.com/x.svg',
+    'https://cdn.jsdelivr.net/icon.png',
+    'https://cdn.example.com/huge.png',
+    'https://cdn.example.com/x.png',
+  ];
+
   it('serves upstream bytes with a validated content type and lockdown headers', async () => {
-    const app = await buildApp(async () => ({ buffer: PNG, response: fakeResponse('image/png') }));
+    const app = await buildApp(async () => ({ buffer: PNG, response: fakeResponse('image/png') }), KNOWN);
     const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://cdn.example.com/a.png') });
     assert.equal(res.statusCode, 200);
     assert.equal(res.headers['content-type'], 'image/png');
@@ -83,7 +132,7 @@ describe('GET /media/image - successful fetches', () => {
         },
       },
     });
-    const app = await buildApp(fetcher);
+    const app = await buildApp(fetcher, KNOWN);
     const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://cdn.jsdelivr.net/icon.png') });
     assert.equal(res.statusCode, 200);
     assert.equal(res.headers['set-cookie'], undefined, 'upstream Set-Cookie must not be echoed');
@@ -91,14 +140,14 @@ describe('GET /media/image - successful fetches', () => {
   });
 
   it('sniffs the real type when the CDN declares octet-stream', async () => {
-    const app = await buildApp(async () => ({ buffer: PNG, response: fakeResponse('application/octet-stream') }));
+    const app = await buildApp(async () => ({ buffer: PNG, response: fakeResponse('application/octet-stream') }), KNOWN);
     const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://cdn.example.com/a') });
     assert.equal(res.statusCode, 200);
     assert.equal(res.headers['content-type'], 'image/png');
   });
 
   it('serves clean SVG with the sandbox headers', async () => {
-    const app = await buildApp(async () => ({ buffer: SVG_CLEAN, response: fakeResponse('image/svg+xml') }));
+    const app = await buildApp(async () => ({ buffer: SVG_CLEAN, response: fakeResponse('image/svg+xml') }), KNOWN);
     const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://cdn.example.com/a.svg') });
     assert.equal(res.statusCode, 200);
     assert.equal(res.headers['content-type'], 'image/svg+xml');
@@ -107,7 +156,7 @@ describe('GET /media/image - successful fetches', () => {
 
   it('caches by URL: one upstream fetch serves many clients and honors If-None-Match', async () => {
     let calls = 0;
-    const app = await buildApp(async () => { calls++; return { buffer: PNG, response: fakeResponse('image/png') }; });
+    const app = await buildApp(async () => { calls++; return { buffer: PNG, response: fakeResponse('image/png') }; }, KNOWN);
     const url = '/media/image?u=' + encodeURIComponent('https://cdn.example.com/cached.png');
     const first = await app.inject({ method: 'GET', url });
     assert.equal(first.statusCode, 200);
@@ -123,15 +172,24 @@ describe('GET /media/image - successful fetches', () => {
 });
 
 describe('GET /media/image - refusal cases', () => {
+  const KNOWN = [
+    'https://evil.example.com/cover.png',
+    'https://evil.example.com/x.svg',
+    'https://cdn.example.com/huge.png',
+    'https://cdn.example.com/x.png',
+    'https://cdn.example.com/timeout.png',
+    'http://127.0.0.1:3000/admin',
+  ];
+
   it('refuses HTML payloads even when the URL ends in an image name', async () => {
     const html = Buffer.from('<!DOCTYPE html><html><body>not an image</body></html>');
-    const app = await buildApp(async () => ({ buffer: html, response: fakeResponse('text/html') }));
+    const app = await buildApp(async () => ({ buffer: html, response: fakeResponse('text/html') }), KNOWN);
     const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://evil.example.com/cover.png') });
     assert.equal(res.statusCode, 415);
   });
 
   it('refuses SVG with active markup (script, onload, external use)', async () => {
-    const app = await buildApp(async () => ({ buffer: SVG_ACTIVE, response: fakeResponse('image/svg+xml') }));
+    const app = await buildApp(async () => ({ buffer: SVG_ACTIVE, response: fakeResponse('image/svg+xml') }), KNOWN);
     const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://evil.example.com/x.svg') });
     assert.equal(res.statusCode, 415);
   });
@@ -139,18 +197,47 @@ describe('GET /media/image - refusal cases', () => {
   it('maps a size-cap breach to 413 and a timeout to 504', async () => {
     const tooBig = Object.assign(new Error('Remote file is too large'), { statusCode: 413 });
     const timeout = Object.assign(new Error('The operation timed out'), {});
-    const app413 = await buildApp(async () => { throw tooBig; });
-    const app504 = await buildApp(async () => { throw timeout; });
-    const u = encodeURIComponent('https://cdn.example.com/huge.png');
-    assert.equal((await app413.inject({ method: 'GET', url: '/media/image?u=' + u })).statusCode, 413);
-    assert.equal((await app504.inject({ method: 'GET', url: '/media/image?u=' + u + '&s=1' })).statusCode, 504);
+    const app413 = await buildApp(async () => { throw tooBig; }, KNOWN);
+    const app504 = await buildApp(async () => { throw timeout; }, KNOWN);
+    const big = '/media/image?u=' + encodeURIComponent('https://cdn.example.com/huge.png');
+    const slow = '/media/image?u=' + encodeURIComponent('https://cdn.example.com/timeout.png');
+    assert.equal((await app413.inject({ method: 'GET', url: big })).statusCode, 413);
+    assert.equal((await app504.inject({ method: 'GET', url: slow })).statusCode, 504);
   });
 
   it('maps an upstream failure to 502 without leaking internals', async () => {
-    const app = await buildApp(async () => { throw new Error('socket hangup ECONNRESET'); });
+    const app = await buildApp(async () => { throw new Error('socket hangup ECONNRESET'); }, KNOWN);
     const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('https://cdn.example.com/x.png') });
     assert.equal(res.statusCode, 502);
     assert.ok(!JSON.stringify(res.json()).includes('ECONNRESET'), 'socket details stay in the log');
+  });
+
+  it('rejects loopback targets via the real SSRF guard (no network involved)', async () => {
+    const app = await buildApp(safeFetchBuffer, KNOWN);
+    const res = await app.inject({ method: 'GET', url: '/media/image?u=' + encodeURIComponent('http://127.0.0.1:3000/admin') });
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /non-public/i);
+  });
+});
+
+describe('resolveCatalogueImageUrl', () => {
+  it('looks up the normalised key and returns the stored string', () => {
+    const urls = new Map([['https://cdn.example.com/a.png', ' https://cdn.example.com/a.png ']]);
+    const read = () => urls;
+    assert.equal(
+      resolveCatalogueImageUrl('https://cdn.example.com/a.png', { read }),
+      ' https://cdn.example.com/a.png ',
+    );
+    assert.equal(resolveCatalogueImageUrl('https://nope.example/x.png', { read: () => urls }), null);
+  });
+
+  it('refreshes once on a miss, so a freshly added cover renders immediately', () => {
+    let reads = 0;
+    const first = new Map();
+    const second = new Map([['https://cdn.example.com/new.png', 'https://cdn.example.com/new.png']]);
+    const read = ({ refresh } = {}) => { reads++; return refresh ? second : first; };
+    assert.equal(resolveCatalogueImageUrl('https://cdn.example.com/new.png', { read }), 'https://cdn.example.com/new.png');
+    assert.equal(reads, 2, 'exactly one refresh was needed');
   });
 });
 
