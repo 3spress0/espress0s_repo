@@ -3,15 +3,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { getDb } from '../db/index.js';
+import { emitEvent } from './eventBus.js';
 import { config } from '../config.js';
 import { unzip, zip, ZipError } from '../lib/zip.js';
 import {
-  itemSchema, downloadLinkSchema, externalImageUrlSchema, isExternalUrl,
+  itemSchema, downloadLinkSchema, externalImageUrlSchema, isExternalUrl, requirementsSchema, normalizeLinkProvider,
 } from '../utils/validation.js';
 import {
   serializeItem, getItemLinksForMany, encryptItemFields, encryptLinkFields,
 } from './itemSerializer.js';
 import { makeSlug } from '../utils/slug.js';
+import { loadExistingIndex } from './duplicateDetector.js';
 
 /**
  * Bulk catalogue import / export.
@@ -100,6 +102,7 @@ const catalogItemSchema = z.object({
   documentation_url: externalImageUrlSchema,
   external_url: externalImageUrlSchema,
   changelog: z.string().max(200000).optional().nullable(),
+  requirements: requirementsSchema.optional(),
   links: z.array(downloadLinkSchema.partial()).max(50).optional(),
   related: z.array(relationSchema).max(100).optional(),
 }).passthrough();
@@ -124,7 +127,7 @@ const IMPORTABLE_ITEM_FIELDS = [
   'status', 'storage_provider', 'storage_path', 'download_url', 'external_url',
   'featured', 'published', 'license_status', 'license_notes', 'tags',
   'icon_url', 'banner_url', 'image_url', 'screenshots', 'documentation_url',
-  'changelog',
+  'changelog', 'requirements',
 ];
 
 const ENCRYPTED_ITEM_COLUMNS = new Set(['storage_path', 'download_url', 'external_url', 'license_notes']);
@@ -258,8 +261,14 @@ function newReport(mode, dryRun) {
     relations: { created: 0, unchanged: 0, skipped: 0 },
     errors: [],
     errorCount: 0,
+    // Possible duplicates among entries that would be CREATED: an existing
+    // row or an earlier archive entry with a near-identical name/slug/version.
+    duplicates: [],
+    duplicateCount: 0,
   };
 }
+
+export const MAX_STORED_DUPLICATES = 500;
 
 /**
  * Walk a catalogue and either report or write it.
@@ -268,11 +277,30 @@ function newReport(mode, dryRun) {
  * @param {{ mode: string, apply: boolean }} options
  * @returns {object} report
  */
-export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {}) {
+export function runCatalogPlan(catalog, { mode = 'upsert', apply = false, detectDuplicates = true } = {}) {
   if (!IMPORT_MODES.includes(mode)) throw new CatalogError(`Unknown import mode "${mode}"`, 'CATALOG_BAD_MODE');
 
   const db = getDb();
   const report = newReport(mode, !apply);
+
+  // Fuzzy duplicate check for entries about to be created. Slug identity
+  // stays the rule for what gets written; this only warns, it never blocks.
+  const dupIndex = detectDuplicates && mode !== 'update-only' ? loadExistingIndex(db) : null;
+  const noteDuplicates = (entry, slug) => {
+    if (!dupIndex) return;
+    const matches = dupIndex.find({ name: entry.name, slug, version: entry.version ?? null }, { exclude: (r) => r.slug === slug });
+    if (matches.length) {
+      report.duplicateCount++;
+      if (report.duplicates.length < MAX_STORED_DUPLICATES) {
+        report.duplicates.push({
+          slug, name: entry.name, version: entry.version ?? null,
+          matches: matches.map((m) => ({ slug: m.slug, name: m.name, version: m.version, level: m.level, reason: m.reason, existing: m.id !== null })),
+        });
+      }
+    }
+    // Later entries in the same archive are compared against this one too.
+    dupIndex.add({ id: null, slug, name: entry.name, version: entry.version ?? null });
+  };
 
   const noteError = (slug, message, field) => {
     report.errorCount++;
@@ -346,7 +374,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
       stmt.run({
         item_id: itemId,
         label: d.label,
-        storage_provider: d.storage_provider || 'external',
+        storage_provider: normalizeLinkProvider(d).storage_provider || 'external',
         storage_path: enc.storage_path,
         download_url: enc.download_url,
         file_size: d.file_size ?? null,
@@ -452,6 +480,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
 
         // --- create --------------------------------------------------------
         if (!existing) {
+          noteDuplicates(item, slug);
           report.items.created++;
           if (apply) {
             const now = new Date().toISOString();
@@ -461,13 +490,13 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
                 file_name, file_size, file_type, platform, architecture, sha256, md5, status,
                 storage_provider, storage_path, download_url, external_url,
                 featured, published, license_status, license_notes, tags, icon_url, banner_url, image_url, screenshots,
-                documentation_url, changelog, created_at, updated_at, encryption_version
+                documentation_url, changelog, requirements, created_at, updated_at, encryption_version
               ) VALUES (
                 @name, @slug, @description, @long_description, @category_id, @folder_id, @version, @release_date,
                 @file_name, @file_size, @file_type, @platform, @architecture, @sha256, @md5, @status,
                 @storage_provider, @storage_path, @download_url, @external_url,
                 @featured, @published, @license_status, @license_notes, @tags, @icon_url, @banner_url, @image_url, @screenshots,
-                @documentation_url, @changelog, @created_at, @updated_at, @encryption_version
+                @documentation_url, @changelog, @requirements, @created_at, @updated_at, @encryption_version
               )`).run({
               name: item.name, slug: item.slug,
               description: item.description, long_description: item.long_description || null,
@@ -485,6 +514,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
               tags: tagsJson, icon_url: item.icon_url || null, banner_url: item.banner_url || null,
               image_url: item.image_url || null, screenshots: item.screenshots ? JSON.stringify(item.screenshots) : null,
               documentation_url: item.documentation_url || null, changelog: item.changelog || null,
+              requirements: item.requirements?.length ? JSON.stringify(item.requirements) : null,
               created_at: now, updated_at: now, encryption_version: 'v1',
             });
             insertLinks(Number(result.lastInsertRowid), valid.links);
@@ -521,6 +551,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
           image_url: item.image_url ?? undefined,
           documentation_url: item.documentation_url ?? undefined,
           changelog: item.changelog ?? undefined,
+          requirements: item.requirements === undefined ? undefined : (item.requirements || []),
           featured: item.featured === undefined ? undefined : (item.featured ? 1 : 0),
           published: item.published === undefined ? undefined : (item.published ? 1 : 0),
           tags: tagsJson === null ? undefined : item.tags,
@@ -555,6 +586,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false } = {})
               const sqlSets = changedSets.map(([k]) => `${k} = @${k}`);
               for (const [k, v] of changedSets) {
                 if (k === 'tags') params[k] = Array.isArray(v) ? JSON.stringify(v) : v;
+                else if (k === 'requirements') params[k] = Array.isArray(v) && v.length ? JSON.stringify(v) : null;
                 else if (ENCRYPTED_ITEM_COLUMNS.has(k)) params[k] = v ? encryptItemFields({ [k]: v })[k] : null;
                 else params[k] = v ?? null;
               }
@@ -635,17 +667,23 @@ export async function importCatalogArchive({ buffer, filename = 'catalog.zip', m
     db.prepare(`
       UPDATE catalog_imports SET
         status = ?, items_created = ?, items_updated = ?, items_unchanged = ?, items_skipped = ?,
-        relations_created = ?, error_count = ?, errors_json = ?, backup_path = ?,
+        relations_created = ?, error_count = ?, errors_json = ?, backup_path = ?, duplicate_count = ?,
         catalog_format = ?, catalog_version = ?, finished_at = ?
       WHERE id = ?
     `).run(
       status,
       report?.items.created ?? 0, report?.items.updated ?? 0, report?.items.unchanged ?? 0, report?.items.skipped ?? 0,
       report?.relations.created ?? 0, report?.errorCount ?? 0,
-      report ? JSON.stringify(report.errors) : null, backupPath,
+      report ? JSON.stringify(report.errors) : null, backupPath, report?.duplicateCount ?? 0,
       CATALOG_FORMAT, CATALOG_VERSION, new Date().toISOString(), historyId,
     );
-    return db.prepare('SELECT * FROM catalog_imports WHERE id = ?').get(historyId);
+    const row = db.prepare('SELECT * FROM catalog_imports WHERE id = ?').get(historyId);
+    // Applied imports are announced; previews and rejections are not.
+    if (apply && status === 'ok' && report) {
+      const { errors_json, backup_path, ...publicRow } = row;
+      emitEvent('import.completed', { import: publicRow }, { actorId: userId });
+    }
+    return row;
   };
 
   let catalog;
@@ -750,6 +788,7 @@ function toCatalogEntry(row, links) {
     external_url: s.external_url || null,
     documentation_url: s.documentation_url || null,
     changelog: s.changelog || null,
+    requirements: Array.isArray(s.requirements) ? s.requirements : [],
     icon_url: s.icon_url || null,
     banner_url: s.banner_url || null,
     links: (s.download_links || []).map((l) => ({

@@ -35,7 +35,7 @@ const MODE_ICON = { dark: Moon, light: Sun };
  * gallery used on the account page and in admin settings. Both are generated
  * from the THEMES registry, so a new palette needs no UI work.
  */
-export default function ThemePicker({ variant = 'menu', value, onChange, includeAuto = true }) {
+export default function ThemePicker({ variant = 'menu', value, onChange, includeAuto = true, className = '' }) {
   const { themes, choice, setTheme, themeId, allowUserChoice } = useTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -111,7 +111,7 @@ export default function ThemePicker({ variant = 'menu', value, onChange, include
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Change colour theme"
-        className="p-2 rounded-xl text-textMuted hover:text-primary hover:bg-surfaceHover transition-colors flex items-center gap-1.5"
+        className={`p-2 rounded-xl text-textMuted hover:text-primary hover:bg-surfaceHover transition-colors flex items-center gap-1.5 ${className}`}
       >
         <Palette className="w-[18px] h-[18px]" />
       </button>

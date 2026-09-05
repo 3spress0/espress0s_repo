@@ -1,4 +1,5 @@
 import { getDb } from '../db/index.js';
+import { emitEvent, itemSummary } from './eventBus.js';
 import { storageManager } from './storage/index.js';
 import { decryptLink } from './itemSerializer.js';
 import { settingsService } from './settingsService.js';
@@ -80,7 +81,10 @@ export class LinkHealthService {
     let outcome;
     try {
       const url = await this.resolveUrl(link);
-      if (!url || !/^https?:\/\//i.test(url)) {
+      if (url && /^magnet:/i.test(url)) {
+        // A magnet link has no server to ask; swarm health is out of scope.
+        outcome = { status: link.status || 'unknown', http_status: null, check_error: 'Skipped — magnet links cannot be probed', skipped: true };
+      } else if (!url || !/^https?:\/\//i.test(url)) {
         outcome = {
           status: link.status || 'unknown',
           http_status: null,
@@ -101,6 +105,7 @@ export class LinkHealthService {
       outcome = { status: 'unknown', http_status: null, check_error: `Resolver error: ${e.message}` };
     }
 
+    const previousStatus = linkRow.status || 'unknown';
     db.prepare(`
       UPDATE item_download_links
       SET status = @status, http_status = @http_status, check_error = @check_error,
@@ -114,6 +119,18 @@ export class LinkHealthService {
       duration: outcome.duration ?? null,
       now,
     });
+
+    // Only transitions are events: down stays down silently, and a flap back
+    // to 'up' after a recorded 'down' is a recovery.
+    if (!outcome.skipped && outcome.status !== previousStatus) {
+      const linkPublic = { id: linkRow.id, label: link.label, storage_provider: link.storage_provider, status: outcome.status, http_status: outcome.http_status, check_error: outcome.check_error };
+      const item = db.prepare('SELECT id, slug, name, version, category_id, platform, status, published, updated_at FROM items WHERE id = ?').get(linkRow.item_id);
+      if (outcome.status === 'down') {
+        emitEvent('link.down', { item: itemSummary(item), link: linkPublic, previous_status: previousStatus }, { itemId: linkRow.item_id });
+      } else if (outcome.status === 'up' && previousStatus === 'down') {
+        emitEvent('link.recovered', { item: itemSummary(item), link: linkPublic }, { itemId: linkRow.item_id });
+      }
+    }
 
     return {
       id: linkRow.id,

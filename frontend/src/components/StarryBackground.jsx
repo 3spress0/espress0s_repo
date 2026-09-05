@@ -21,6 +21,14 @@ export default function StarryBackground() {
 
   const { starfield, shootingStars: shootingEnabled, aurora: auroraEnabled, reducedMotion, starDensity } = effects;
 
+  // Phones: the animated blurred aurora blobs are the expensive part of this
+  // sky - each is a 60-90px filter re-evaluated every frame by the GPU while
+  // its transform animates, which is what makes the homepage feel laggy on
+  // mobile. On a coarse-pointer device the blobs stay (they are the colour of
+  // the scheme's sky) but go static and take a much smaller blur radius, so
+  // the GPU renders them once instead of every frame.
+  const isTouch = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -46,7 +54,9 @@ export default function StarryBackground() {
     const SHOOT = rgb('--c-shooting-star', '255 255 255');
     const SHOOT_GLOW = rgb('--c-shooting-star-glow', '255 255 255');
 
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Retina phones run 3x; drawing the full sky at 3x is wasted fill rate
+    // for sub-pixel dots. Cap at 1.5 on touch, keep 2 on desktop.
+    const dpr = Math.min(window.devicePixelRatio || 1, isTouch ? 1.5 : 2);
 
     const initStars = () => {
       stars = [];
@@ -101,7 +111,8 @@ export default function StarryBackground() {
 
       if (!reducedMotion && shootingEnabled) {
         // More falling stars: frequent spawns, up to 6 streaks at once
-        if (Math.random() < 0.03 && shooters.length < 6) {
+        // (3 on phones - same feel, half the trail overdraw)
+        if (Math.random() < (isTouch ? 0.02 : 0.03) && shooters.length < (isTouch ? 3 : 6)) {
           shooters.push({
             x: Math.random() * w,
             y: Math.random() * h * 0.5,
@@ -151,19 +162,29 @@ export default function StarryBackground() {
       window.removeEventListener('resize', resize);
     };
     // theme.id is in the deps so a scheme change re-reads the CSS variables.
+    // isTouch is a per-mount constant (pointer type does not change).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme.id, starfield, shootingEnabled, reducedMotion, starDensity]);
 
-  const auroraLayer = (index, className, style) => (
-    <div
-      key={index}
-      className={className}
-      style={{
-        ...style,
-        // Aurora animations are decorative; static blobs still read as a sky.
-        animation: reducedMotion ? 'none' : style.animation,
-      }}
-    />
-  );
+  // Touch equivalent of the 60-90px desktop blurs: still a soft glow, but
+  // cheap enough that the compositor can keep it cached.
+  const BLUR_TOUCH = { 'blur-[80px]': 'blur-[36px]', 'blur-[70px]': 'blur-[32px]', 'blur-[60px]': 'blur-[28px]', 'blur-[90px]': 'blur-[40px]' };
+  const auroraLayer = (index, className, style) => {
+    const cn = isTouch ? className.replace(/blur-\[\d+px\]/, m => BLUR_TOUCH[m] || m) : className;
+    return (
+      <div
+        key={index}
+        className={cn}
+        style={{
+          ...style,
+          // Aurora animations are decorative; static blobs still read as a sky.
+          // On phones they are *always* static: the animation is what forces
+          // the blur to re-render every frame.
+          animation: reducedMotion || isTouch ? 'none' : style.animation,
+        }}
+      />
+    );
+  };
 
   return (
     <div ref={containerRef} className="absolute inset-0 overflow-hidden pointer-events-none">

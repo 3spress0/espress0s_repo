@@ -29,6 +29,7 @@ const PROVIDERS = [
   { value: 'gdrive', label: 'Google Drive' },
   { value: 'onedrive', label: 'OneDrive' },
   { value: 'github', label: 'GitHub Releases' },
+  { value: 'torrent', label: 'Torrent / magnet' },
   { value: 'local', label: 'Local file' },
 ];
 
@@ -62,6 +63,15 @@ export function describeUrl(rawUrl) {
   const url = String(rawUrl || '').trim();
   if (!url) return null;
 
+  // Torrent mirrors: a magnet URI (display name from &dn= when present) or a
+  // plain http(s) link to a .torrent file.
+  if (/^magnet:\?/i.test(url)) {
+    const dn = url.match(/[?&]dn=([^&]+)/)?.[1];
+    let name = '';
+    try { name = dn ? decodeURIComponent(dn.replace(/\+/g, ' ')) : ''; } catch { name = ''; }
+    return { provider: 'torrent', label: name ? `Magnet — ${name}`.slice(0, 100) : 'Magnet link', storage_path: '', file_name: name };
+  }
+
   let host = '';
   let pathname = '';
   try {
@@ -74,6 +84,9 @@ export function describeUrl(rawUrl) {
   }
 
   const fileNameGuess = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
+  if (/\.torrent$/i.test(fileNameGuess)) {
+    return { provider: 'torrent', label: `Torrent — ${host.replace(/^www\./, '')}`, storage_path: '', file_name: fileNameGuess };
+  }
 
   if (host.includes('drive.google.com') || host.includes('docs.google.com')) {
     const id = url.match(/\/d\/([A-Za-z0-9_-]{10,})/)?.[1]
@@ -189,7 +202,7 @@ export default function DownloadLinksEditor({ links, onChange }) {
             value={pasted}
             onChange={(e) => { setPasted(e.target.value); setPasteError(''); }}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addFromUrl(); } }}
-            placeholder="https://drive.google.com/file/d/... or any direct link"
+            placeholder="https://drive.google.com/file/d/..., a direct link, or magnet:?xt=urn:btih:..."
             className="flex-1 min-w-[220px] px-3 py-2 bg-surface border border-border rounded-lg text-sm font-mono focus:outline-none focus:border-primary/50"
           />
           <button
@@ -285,7 +298,7 @@ export default function DownloadLinksEditor({ links, onChange }) {
                 <input
                   value={link.download_url || ''}
                   onChange={(e) => update(index, 'download_url', e.target.value)}
-                  placeholder="https://..."
+                  placeholder={link.storage_provider === 'torrent' ? 'magnet:?xt=urn:btih:... or https://.../file.torrent' : 'https://...'}
                   className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono focus:outline-none focus:border-primary/50"
                 />
               </div>

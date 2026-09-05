@@ -91,10 +91,13 @@ case "$CMD" in
     # cover the auto-updater's "no verified restart target, no live deployment"
     # rule, which no JS test can reach.
     if [ "${1:-}" = "--backend" ]; then
-      run bash -c "cd backend && node --test tests/*.test.js"
+      run bash -c "cd backend && npm test --silent"
     fi
     echo "== backend =="
-    (cd backend && node --test tests/*.test.js) || exit 1
+    (cd backend && npm test --silent) || exit 1
+    echo
+    echo "== frontend =="
+    (cd frontend && npm test --silent) || exit 1
     echo
     echo "== deployment / auto-update =="
     exec bash tests/auto-update.test.sh ;;

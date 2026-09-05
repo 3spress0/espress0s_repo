@@ -19,6 +19,26 @@ const httpUrl = z.string().refine((v) => {
   }
 }, { message: 'Must be an http(s) URL' });
 
+/**
+ * magnet: URIs for torrent mirrors (#22). Requires a BitTorrent info-hash
+ * (v1 btih, 32 base32 / 40 hex chars, or v2 btmh) and allows only the
+ * characters a magnet link legitimately uses - no quotes, angle brackets,
+ * spaces or control characters, so it is safe as an href.
+ */
+export const MAGNET_RE = /^magnet:\?(?=(?:.*&)?xt=urn:bt(?:ih|mh):[A-Za-z0-9]{32,68}(?:&|$))[A-Za-z0-9._~%+=&:/-]*$/i;
+export function isMagnetUri(value) { return typeof value === 'string' && MAGNET_RE.test(value); }
+const magnetUri = z.string().max(2000).refine(isMagnetUri, { message: 'Must be a magnet: link with a BitTorrent info-hash' });
+
+export const STORAGE_PROVIDERS = ['local', 'gdrive', 'onedrive', 'github', 'external'];
+/** Mirror rows also accept 'torrent' (magnet: URI or .torrent file URL). */
+export const LINK_PROVIDERS = [...STORAGE_PROVIDERS, 'torrent'];
+
+/** A magnet: URL always means a torrent mirror, whatever the form said. */
+export function normalizeLinkProvider(link) {
+  if (link && isMagnetUri(link.download_url)) return { ...link, storage_provider: 'torrent' };
+  return link;
+}
+
 const internalUploadPath = z.string().regex(/^\/api\/uploads\/[A-Za-z0-9._-]+$/, 'Not a valid upload path');
 const appRelativePath = z.string().regex(/^\/[A-Za-z0-9._~/-]*$/, 'Not a valid local path');
 
@@ -45,6 +65,30 @@ export function isExternalUrl(value) {
   }
 }
 
+export const REQUIREMENT_TYPES = ['os', 'runtime', 'hardware', 'dependency', 'other'];
+
+/**
+ * One dependency / system requirement line. Kept structured (not free text)
+ * so the detail page can group them and other tools can read them, e.g.
+ * { type: 'runtime', name: '.NET Framework', version: '>= 4.8' }.
+ */
+export const requirementSchema = z.object({
+  type: z.enum(REQUIREMENT_TYPES).default('other'),
+  name: z.string().trim().min(1).max(120),
+  version: z.string().trim().max(60).optional().nullable(),
+  optional: z.boolean().optional(),
+  note: z.string().trim().max(300).optional().nullable(),
+});
+
+/** Array of requirements; also accepts the JSON-encoded string the DB stores. */
+export const requirementsSchema = z.preprocess((v) => {
+  if (typeof v === 'string') {
+    if (!v.trim()) return null;
+    try { return JSON.parse(v); } catch { return v; }
+  }
+  return v;
+}, z.array(requirementSchema).max(100).nullable());
+
 export const itemSchema = z.object({
   name: z.string().min(2).max(200),
   slug: z.string().min(2).max(200).optional(),
@@ -65,7 +109,7 @@ export const itemSchema = z.object({
   architecture: z.string().max(50).optional().nullable(),
   sha256: z.string().max(128).optional().nullable(),
   md5: z.string().max(64).optional().nullable(),
-  storage_provider: z.enum(['local', 'gdrive', 'onedrive', 'github', 'external']).default('external'),
+  storage_provider: z.enum(STORAGE_PROVIDERS).default('external'),
   storage_path: z.string().max(1000).optional().nullable(),
   // httpUrl (not z.string().url()) so javascript:/data: URLs cannot be stored
   // and later handed to the browser as an href or a redirect target.
@@ -83,6 +127,7 @@ export const itemSchema = z.object({
   screenshots: z.string().or(z.array(imageUrlSchema)).optional().nullable(),
   documentation_url: httpUrl.or(z.literal('')).optional().nullable(),
   changelog: z.string().max(5000).optional().nullable(),
+  requirements: requirementsSchema.optional(),
 });
 
 export const categorySchema = z.object({
@@ -139,9 +184,9 @@ export const downloadLinkSchema = z.object({
   // to reset each mirror's download counter and health-check results.
   id: z.number().int().positive().optional(),
   label: z.string().min(2).max(100),
-  storage_provider: z.enum(['local', 'gdrive', 'onedrive', 'github', 'external']).default('external'),
+  storage_provider: z.enum(LINK_PROVIDERS).default('external'),
   storage_path: z.string().max(1000).optional().nullable(),
-  download_url: httpUrl.or(appRelativePath).or(z.literal('')).optional().nullable(),
+  download_url: httpUrl.or(appRelativePath).or(magnetUri).or(z.literal('')).optional().nullable(),
   file_size: z.number().int().nonnegative().optional().nullable(),
   is_primary: z.boolean().or(z.number()).optional(),
   is_down: z.boolean().or(z.number()).optional(),

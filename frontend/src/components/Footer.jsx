@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Database, Shield } from 'lucide-react';
+import { Database, Shield, Rss } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 import { safeHref } from '../lib/utils';
 import { LOGO_SRC } from '../lib/brand.js';
@@ -70,7 +70,7 @@ export default function Footer() {
           ))}
         </div>
 
-        <div className="mt-12 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="mt-12 pt-8 pb-safe border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-xs text-textMuted">
             {copyright || `© ${new Date().getFullYear()} ${siteName}`}
           </p>
@@ -78,6 +78,7 @@ export default function Footer() {
             {note && <span>{note}</span>}
             <span className="flex items-center gap-1.5"><Database className="w-3.5 h-3.5" /> SQLite • FTS5</span>
             <span className="flex items-center gap-1.5"><Shield className="w-3.5 h-3.5" /> Encrypted metadata</span>
+            <a href="/api/v1/feed.rss" className="flex items-center gap-1.5 hover:text-primary" title="RSS feed of new entries (Atom: /api/v1/feed.atom, changes: /api/v1/feed/changes.rss)"><Rss className="w-3.5 h-3.5" /> RSS</a>
           </div>
         </div>
       </div>

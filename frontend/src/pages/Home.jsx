@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Sparkles, Clock, Layers } from 'lucide-react';
 import Hero from '../components/Hero';
 import ItemCard from '../components/ItemCard';
+import RecentlyViewed from '../components/RecentlyViewed';
 import { statsApi, itemsApi, categoriesApi } from '../lib/api';
 
 export default function Home() {
@@ -64,6 +65,8 @@ export default function Home() {
             </div>
           </section>
         )}
+
+        <RecentlyViewed />
 
         {/* Newest */}
         {newest.length > 0 && (

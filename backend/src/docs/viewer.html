@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API reference</title>
+<style>
+  :root { color-scheme: dark light; --bg:#0b0f1a; --fg:#e6e8ef; --muted:#8b93a7; --card:#141a2a; --line:#232b3f; --get:#3b82f6; --post:#10b981; --put:#f59e0b; --patch:#a855f7; --delete:#ef4444; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f7f8fb; --fg:#111827; --muted:#6b7280; --card:#fff; --line:#e5e7eb; } }
+  body { margin:0; font:14px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:20px 24px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:20px; } header a { color:var(--muted); }
+  main { max-width:1100px; margin:0 auto; padding:16px 24px 64px; }
+  input[type=search] { width:100%; box-sizing:border-box; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); margin:12px 0 20px; }
+  h2 { font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:28px 0 8px; }
+  details { background:var(--card); border:1px solid var(--line); border-radius:10px; margin:6px 0; }
+  summary { padding:10px 12px; cursor:pointer; display:flex; gap:12px; align-items:center; list-style:none; }
+  summary::-webkit-details-marker { display:none; }
+  .m { font-weight:700; font-size:11px; width:56px; text-align:center; padding:3px 0; border-radius:6px; color:#fff; }
+  .GET{background:var(--get)} .POST{background:var(--post)} .PUT{background:var(--put)} .PATCH{background:var(--patch)} .DELETE{background:var(--delete)}
+  code { font-family: ui-monospace, monospace; }
+  .path { flex:1; }
+  .sum { color:var(--muted); }
+  .lock { color:var(--muted); font-size:12px; }
+  .body { padding:0 12px 12px 80px; color:var(--muted); }
+  .body pre { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; overflow:auto; font-size:12px; color:var(--fg); }
+  .body p { margin:6px 0; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">API reference</h1>
+  <a href="/api/docs/json">OpenAPI JSON</a>
+  <a href="/api/docs/yaml">YAML</a>
+  <span id="count" class="lock"></span>
+</header>
+<main>
+  <input id="q" type="search" placeholder="Filter by path, method or tag…" autocomplete="off">
+  <div id="root">Loading…</div>
+</main>
+<script src="/api/docs/viewer.js"></script>
+</body>
+</html>

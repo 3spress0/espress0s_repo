@@ -10,6 +10,7 @@ import Loading, { LoadingDots } from '../../components/Loading';
 import Progress from '../../components/Progress';
 import CatalogFilters from '../../components/admin/CatalogFilters';
 import BulkEditPanel from '../../components/admin/BulkEditPanel';
+import { useAuth } from '../../context/AuthContext';
 
 function formatSize(bytes) {
   if (!bytes) return '—';
@@ -98,6 +99,8 @@ export default function AdminItems() {
   const [loadingId, setLoadingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Editors may create and edit pages; delete and bulk actions are admin-only.
+  const { isAdmin } = useAuth();
   const [selected, setSelected] = useState([]); // ids
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null); // { kind, message }
@@ -172,6 +175,8 @@ export default function AdminItems() {
   // Deep link: /admin/items/:id opens that item's editor directly.
   useEffect(() => {
     if (!id) { setEditing(null); return; }
+    // /admin/items/new opens an empty editor (used by the command palette).
+    if (id === 'new') { setEditing(null); setCreating(true); navigate('/admin/items', { replace: true }); return; }
     let cancelled = false;
     setLoadingId(Number(id));
     itemsApi.get(id)
@@ -179,6 +184,8 @@ export default function AdminItems() {
       .catch(() => { if (!cancelled) setEditing(null); })
       .finally(() => { if (!cancelled) setLoadingId(null); });
     return () => { cancelled = true; };
+    // navigate is referentially stable in react-router; only the id matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Every filter is already applied server-side, so the table renders what
@@ -221,7 +228,8 @@ export default function AdminItems() {
   const togglePublished = async (item) => {
     setBusy(true);
     try {
-      await adminApi.bulkItems(item.published ? 'unpublish' : 'publish', [item.id]);
+      // PUT /items/:id rather than the admin bulk route so editors can do it too.
+      await itemsApi.update(item.id, { published: !item.published });
       setItems(list => list.map(i => (i.id === item.id ? { ...i, published: item.published ? 0 : 1 } : i)));
       notify('success', `“${item.name}” is now ${item.published ? 'a draft' : 'published'}`);
     } catch (e) {
@@ -442,7 +450,7 @@ export default function AdminItems() {
       )}
 
       {/* Bulk selection: quick toggles, any-field edits, archive and delete. */}
-      {selected.length > 0 && (
+      {isAdmin && selected.length > 0 && (
         <>
           <BulkEditPanel
             count={selected.length}
@@ -482,7 +490,8 @@ export default function AdminItems() {
                     type="checkbox"
                     checked={allVisibleSelected}
                     onChange={toggleSelectAll}
-                    className="accent-purple-500"
+                    disabled={!isAdmin}
+                    className="accent-purple-500 disabled:opacity-30"
                     aria-label="Select all pages"
                   />
                 </th>
@@ -504,7 +513,8 @@ export default function AdminItems() {
                       type="checkbox"
                       checked={selected.includes(item.id)}
                       onChange={() => toggleSelect(item.id)}
-                      className="accent-purple-500"
+                      disabled={!isAdmin}
+                      className="accent-purple-500 disabled:opacity-30"
                       aria-label={`Select ${item.name}`}
                     />
                   </td>
@@ -590,13 +600,15 @@ export default function AdminItems() {
                       >
                         <Eye className="w-4 h-4" />
                       </a>
-                      <button
-                        onClick={() => askDelete(item)}
-                        title="Delete"
-                        className="p-2 hover:bg-surfaceHover rounded-lg text-textMuted hover:text-red-400 transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {isAdmin && (
+                        <button
+                          onClick={() => askDelete(item)}
+                          title="Delete"
+                          className="p-2 hover:bg-surfaceHover rounded-lg text-textMuted hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

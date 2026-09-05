@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Shield, Database, HardDrive, FolderTree, Folder, Users, Activity, ExternalLink, Settings, Archive, FileArchive } from 'lucide-react';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Shield, Database, HardDrive, FolderTree, Folder, Users, Activity, ExternalLink, Settings, Archive, FileArchive, Webhook, Star, BarChart3 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import Loading from '../components/Loading';
 
@@ -9,32 +9,43 @@ import Loading from '../components/Loading';
  * inside one file, so every panel has a real, linkable, refreshable URL and its
  * own component file.
  */
+// `editor: true` marks the areas an editor may open; everything else is
+// admin-only (mirrors EDITOR_ROUTES in backend/src/routes/admin.js).
 const NAV = [
   { to: '/admin', end: true, label: 'Overview', icon: Database },
-  { to: '/admin/items', label: 'File pages', icon: HardDrive },
-  { to: '/admin/categories', label: 'Categories', icon: FolderTree },
-  { to: '/admin/folders', label: 'Folders', icon: Folder },
+  { to: '/admin/analytics', label: 'Analytics', icon: BarChart3 },
+  { to: '/admin/items', label: 'File pages', icon: HardDrive, editor: true },
+  { to: '/admin/categories', label: 'Categories', icon: FolderTree, editor: true },
+  { to: '/admin/folders', label: 'Folders', icon: Folder, editor: true },
   { to: '/admin/users', label: 'Users', icon: Users },
   { to: '/admin/storage', label: 'Storage', icon: ExternalLink },
   { to: '/admin/imports', label: 'Catalogue', icon: FileArchive },
   { to: '/admin/backup', label: 'Backup', icon: Archive },
+  { to: '/admin/reviews', label: 'Reviews', icon: Star, editor: true },
+  { to: '/admin/webhooks', label: 'Webhooks', icon: Webhook },
   { to: '/admin/settings', label: 'Site Settings', icon: Settings },
   { to: '/admin/monitoring', label: 'Monitoring', icon: Activity },
 ];
 
 export default function Admin() {
-  const { user, isAdmin, loading } = useAuth();
+  const { user, isAdmin, isEditor, loading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const nav = isAdmin ? NAV : NAV.filter(n => n.editor);
+  const allowedHere = isAdmin || nav.some(n => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to)));
 
   useEffect(() => {
-    if (!loading && !isAdmin) navigate('/login', { replace: true });
-  }, [loading, isAdmin, navigate]);
+    if (!loading && !isEditor) navigate('/login', { replace: true });
+    // An editor landing on an admin-only area (or /admin itself) goes to File pages.
+    else if (!loading && isEditor && !allowedHere) navigate('/admin/items', { replace: true });
+  }, [loading, isEditor, allowedHere, navigate]);
 
   if (loading) {
     return <Loading fullScreen text="Checking admin access…" />;
   }
 
-  if (!isAdmin) {
+  if (!isEditor) {
     return (
       <div className="max-w-md mx-auto px-4 py-20 text-center">
         <h1 className="text-xl font-bold text-textPrimary mb-2">Admin access required</h1>
@@ -50,15 +61,15 @@ export default function Admin() {
           <span className="w-10 h-10 rounded-xl bg-gradient-primary flex items-center justify-center">
             <Shield className="w-5 h-5 text-white" />
           </span>
-          Admin Panel
+          {isAdmin ? 'Admin Panel' : 'Editor Panel'}
         </h1>
         <p className="text-sm text-textMuted mt-1">
-          Signed in as {user?.username} • data encrypted at rest
+          Signed in as {user?.username} ({user?.role}) • data encrypted at rest
         </p>
       </div>
 
       <nav className="flex flex-wrap gap-2 mb-8 border-b border-white/5 pb-4">
-        {NAV.map(item => (
+        {nav.map(item => (
           <NavLink
             key={item.to}
             to={item.to}

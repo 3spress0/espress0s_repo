@@ -13,10 +13,12 @@ import Register from './pages/Register';
 import NotFound from './pages/NotFound';
 import Account from './pages/Account';
 import AskAIPopup from './components/AskAIPopup';
+import CommandPalette from './components/CommandPalette';
 import MaintenanceBanner from './components/MaintenanceBanner';
 import { AuthProvider } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { I18nProvider } from './i18n/index.jsx';
 
 /**
  * The admin panel, the inline item editor and the encryption explainer are
@@ -37,9 +39,12 @@ const AdminCategories = lazy(() => import('./pages/admin/Categories'));
 const AdminFolders = lazy(() => import('./pages/admin/Folders'));
 const AdminBackup = lazy(() => import('./pages/admin/Backup'));
 const AdminImports = lazy(() => import('./pages/admin/Imports'));
+const AdminReviews = lazy(() => import('./pages/admin/Reviews'));
+const AdminAnalytics = lazy(() => import('./pages/admin/Analytics'));
 const AdminStorage = lazy(() => import('./pages/admin/Storage'));
 const AdminSettings = lazy(() => import('./pages/admin/Settings'));
 const UserManager = lazy(() => import('./components/UserManager'));
+const WebhookManager = lazy(() => import('./components/WebhookManager'));
 const Monitoring = lazy(() => import('./components/Monitoring'));
 const Encryption = lazy(() => import('./pages/Encryption'));
 
@@ -81,7 +86,10 @@ function AppContent() {
               <Route path="users" element={<div className="glass rounded-2xl border border-white/5 p-6"><UserManager /></div>} />
               <Route path="storage" element={<AdminStorage />} />
               <Route path="imports" element={<AdminImports />} />
+              <Route path="reviews" element={<AdminReviews />} />
+              <Route path="analytics" element={<AdminAnalytics />} />
               <Route path="backup" element={<AdminBackup />} />
+              <Route path="webhooks" element={<div className="glass rounded-2xl border border-white/5 p-6"><WebhookManager scope="admin" /></div>} />
               <Route path="settings" element={<AdminSettings />} />
               <Route path="monitoring" element={<Monitoring />} />
             </Route>
@@ -93,6 +101,7 @@ function AppContent() {
       </main>
       <Footer />
       <AskAIPopup isOpen={askOpen} onClose={() => setAskOpen(false)} />
+      <CommandPalette onAskOpen={() => setAskOpen(true)} />
     </div>
   );
 }
@@ -103,9 +112,11 @@ function App() {
       {/* Theme sits inside Settings: the admin's default scheme is a setting. */}
       <ThemeProvider>
         <AuthProvider>
-          <Router>
-            <AppContent />
-          </Router>
+          <I18nProvider>
+            <Router>
+              <AppContent />
+            </Router>
+          </I18nProvider>
         </AuthProvider>
       </ThemeProvider>
     </SettingsProvider>

@@ -144,7 +144,7 @@ export default function People() {
           <button
             type="button"
             onClick={() => { setLocalQuery(''); updateParam('q', ''); }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-textMuted hover:text-primary"
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-lg text-textMuted hover:text-primary"
             aria-label="Clear search"
           >
             <X className="w-4 h-4" />
@@ -186,7 +186,7 @@ export default function People() {
           {pagination.totalPages > 1 && (
             <div className="flex items-center justify-center gap-2 pb-4">
               <button onClick={() => updateParam('page', Math.max(1, page - 1))} disabled={page <= 1}
-                className="p-2.5 rounded-xl bg-surface border border-border disabled:opacity-40 hover:border-primary/30 transition-colors">
+                className="inline-flex items-center justify-center w-11 h-11 sm:w-9 sm:h-9 rounded-xl bg-surface border border-border disabled:opacity-40 hover:border-primary/30 transition-colors">
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <div className="flex items-center gap-1">
@@ -195,14 +195,14 @@ export default function People() {
                   if (p > pagination.totalPages) return null;
                   return (
                     <button key={p} onClick={() => updateParam('page', p)}
-                      className={`w-9 h-9 rounded-xl text-sm font-medium transition-colors ${
+                      className={`w-11 h-11 sm:w-9 sm:h-9 rounded-xl text-sm font-medium transition-colors ${
                         p === page ? 'bg-gradient-primary text-white' : 'bg-surface border border-border text-textSecondary hover:border-primary/30'
                       }`}>{p}</button>
                   );
                 })}
               </div>
               <button onClick={() => updateParam('page', Math.min(pagination.totalPages, page + 1))} disabled={page >= pagination.totalPages}
-                className="p-2.5 rounded-xl bg-surface border border-border disabled:opacity-40 hover:border-primary/30 transition-colors">
+                className="inline-flex items-center justify-center w-11 h-11 sm:w-9 sm:h-9 rounded-xl bg-surface border border-border disabled:opacity-40 hover:border-primary/30 transition-colors">
                 <ChevronRight className="w-4 h-4" />
               </button>
               <span className="text-xs text-textMuted ml-2">Page {pagination.page} / {pagination.totalPages}</span>

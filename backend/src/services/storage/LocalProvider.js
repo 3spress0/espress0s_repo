@@ -72,6 +72,27 @@ export class ExternalProvider extends StorageProvider {
   }
 }
 
+/**
+ * Torrent mirrors (#22): download_url is a magnet: URI or an http(s) URL to a
+ * .torrent file. Nothing is hosted; the browser hands the link to whatever
+ * BitTorrent client is registered for it.
+ */
+export class TorrentProvider extends StorageProvider {
+  constructor(config) {
+    super(config);
+    this.name = 'torrent';
+  }
+
+  async getDownloadUrl(storagePath, item) {
+    if (item && item.download_url) return item.download_url;
+    if (storagePath && /^(magnet:|https?:)/i.test(storagePath)) return storagePath;
+    throw new Error('Torrent provider requires a magnet: link or a .torrent URL');
+  }
+
+  async validatePath() { return true; }
+  shouldRedirect() { return true; }
+}
+
 export class GitHubProvider extends StorageProvider {
   constructor(config) {
     super(config);

@@ -39,7 +39,6 @@ export default function ImagePicker({ label, value, onChange, hint }) {
 
   useEffect(() => {
     if (tab === 'library') loadLibrary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
   const doUpload = async (file) => {

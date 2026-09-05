@@ -100,7 +100,7 @@ export default function FavoriteButton({
         aria-pressed={favorited}
         title={isAuthenticated ? label : 'Log in to favourite this file'}
         aria-label={label}
-        className={`p-2 rounded-xl border transition-all disabled:opacity-60 ${
+        className={`p-2.5 rounded-xl border transition-all disabled:opacity-60 ${
           favorited
             ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
             : 'bg-surface border-border text-textSecondary hover:text-amber-400 hover:border-amber-500/30'

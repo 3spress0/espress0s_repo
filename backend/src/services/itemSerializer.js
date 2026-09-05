@@ -102,6 +102,7 @@ export function serializeItem(raw, links = null) {
     ...dec,
     tags: parseJsonColumn(dec.tags, []),
     screenshots: parseJsonColumn(dec.screenshots, []),
+    requirements: parseJsonColumn(dec.requirements, []),
     download_links: links ?? getItemLinks(dec.id),
   };
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Shield, Eye, EyeOff, Lock, User, AlertCircle, Bug } from 'lucide-react';
+import { Shield, Eye, EyeOff, Lock, User, AlertCircle, Bug, KeyRound } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import Captcha from '../components/Captcha';
@@ -16,8 +16,30 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [captcha, setCaptcha] = useState({ id: '', answer: '', token: '' });
   const [captchaKey, setCaptchaKey] = useState(0); // to force refresh
-  const { login } = useAuth();
+  const { login, verifyMfa } = useAuth();
   const navigate = useNavigate();
+  // Second step for accounts with two-factor on: the password step handed us
+  // a short-lived mfaToken, now we need a code from the authenticator app.
+  const [mfa, setMfa] = useState(null); // { mfaToken }
+  const [code, setCode] = useState('');
+
+  const afterLogin = (data) => navigate(data?.user?.role === 'viewer' ? '/account' : '/admin');
+
+  const handleMfaSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const data = await verifyMfa(mfa.mfaToken, code.trim());
+      afterLogin(data);
+    } catch (err) {
+      const data = err.response?.data;
+      if (data?.restart) { setMfa(null); setCode(''); setCaptchaKey(k => k + 1); }
+      setError(data?.error || 'Verification failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -25,8 +47,9 @@ export default function Login() {
     setLoading(true);
 
     try {
-      await login(username, password, captcha);
-      navigate('/admin');
+      const data = await login(username, password, captcha);
+      if (data?.mfaRequired) { setMfa({ mfaToken: data.mfaToken }); return; }
+      afterLogin(data);
     } catch (err) {
       const data = err.response?.data;
       if (data?.captchaRequired) {
@@ -51,7 +74,45 @@ export default function Login() {
           <p className="text-sm text-textMuted mt-1">Sign in to espress0's repo</p>
         </div>
 
-        <div className="glass rounded-3xl border border-white/5 p-8 shadow-2xl">
+        <div className="glass rounded-3xl border border-white/5 p-5 sm:p-8 shadow-2xl">
+          {mfa ? (
+          <form onSubmit={handleMfaSubmit} className="space-y-5">
+            <div>
+              <label className="text-xs font-medium text-textMuted uppercase tracking-widest mb-2 block">Two-factor code</label>
+              <div className="relative">
+                <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-textMuted" />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoFocus
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="123456 or a recovery code"
+                  className="w-full pl-10 pr-4 py-3 bg-surface border border-border rounded-xl focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 text-sm font-mono tracking-widest"
+                  required
+                  autoComplete="one-time-code"
+                />
+              </div>
+              <p className="text-xs text-textMuted mt-2">Open your authenticator app and enter the 6-digit code for this site. Lost the device? Use one of your recovery codes.</p>
+            </div>
+            {error && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-400 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 bg-gradient-primary hover:bg-gradient-primary-hover disabled:opacity-50 text-white rounded-xl font-medium shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-2"
+            >
+              {loading ? <><LoadingDots size={16} /> Verifying...</> : 'Verify'}
+            </button>
+            <button type="button" onClick={() => { setMfa(null); setCode(''); setError(''); setCaptchaKey(k => k + 1); }} className="w-full text-xs text-textMuted hover:text-textPrimary">
+              Back to password
+            </button>
+          </form>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="text-xs font-medium text-textMuted uppercase tracking-widest mb-2 block">Username or Email</label>
@@ -85,7 +146,8 @@ export default function Login() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-textMuted hover:text-textPrimary"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-lg text-textMuted hover:text-textPrimary"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -109,6 +171,7 @@ export default function Login() {
               {loading ? <><LoadingDots size={16} /> Signing in...</> : 'Sign In'}
             </button>
           </form>
+          )}
 
           <div className="mt-6 pt-6 border-t border-white/5 space-y-4">
             <div className="text-center">

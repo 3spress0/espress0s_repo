@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose an improvement or new capability
+title: "[feat] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that is hard or impossible today? Describe the problem before the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should it work? Mention which existing module it would extend (routes/services/pages) - we avoid parallel implementations.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Backend / API
+        - Frontend / UI
+        - Admin / editor
+        - Import / export / catalogue
+        - Integrations (webhooks, feeds, public API)
+        - AI features
+        - CLI / deployment
+        - Docs
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I checked the README feature list and this does not already exist
+          required: true
+        - label: I am willing to open a PR for this

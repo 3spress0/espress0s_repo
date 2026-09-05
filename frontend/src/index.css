@@ -50,6 +50,11 @@
   box-sizing: border-box;
 }
 
+html {
+  /* iOS otherwise inflates body text to 16px+ after a pinch-zoom. */
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   background-color: rgb(var(--c-background));
   color: rgb(var(--c-text-primary));
@@ -57,7 +62,72 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  /* No gray flash on taps - the site has its own pressed/hover styles. */
+  -webkit-tap-highlight-color: transparent;
   transition: background-color 0.3s, color 0.3s;
+}
+
+/* Viewport-height helpers.
+ *
+ * 100vh on a phone is the *large* viewport: on iOS it stays the height the
+ * URL bar had when it was fully expanded, so a "min-height: 100vh" hero is
+ * taller than the screen the user actually sees and the page scrolls before
+ * the content even starts. 100dvh tracks the visible viewport instead. The
+ * plain-vh rule is the fallback for browsers without dynamic units. */
+.min-h-dvh { min-height: 100vh; }
+.min-h-90dvh { min-height: 90vh; }
+.min-h-hero { min-height: calc(100vh - 4rem); }
+.max-h-85dvh { max-height: 85vh; }
+@supports (height: 1dvh) {
+  .min-h-dvh { min-height: 100dvh; }
+  .min-h-90dvh { min-height: 90dvh; }
+  .min-h-hero { min-height: calc(100dvh - 4rem); }
+  .max-h-85dvh { max-height: 85dvh; }
+}
+
+/* iPhone home-indicator / notch. With viewport-fit=cover the content runs
+ * edge-to-edge in standalone mode, so anything pinned to a screen edge pads
+ * itself by the safe-area inset. The 1rem fallback doubles as the normal
+ * bottom padding on devices without an inset (Android) - pair it with a
+ * matching pt-* utility, not py-*, so the two never fight over the same
+ * side. In normal browsing the inset is 0 and the fallback keeps the
+ * desktop look. */
+.pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 1rem); }
+.pt-safe { padding-top: max(env(safe-area-inset-top), 0px); }
+
+/* ---- Phone (coarse pointer) treatment ---------------------------------
+ *
+ * `pointer: coarse` is the phone test: a mouse is fine even on a big touch
+ * screen, and it is also what the browser exposes in device emulation, so
+ * these changes are what a phone actually gets. */
+@media (pointer: coarse) {
+  /* Backdrop blur is the single biggest mobile scroll cost: the sticky
+     navbar and every glass card force the GPU to re-blur the page behind
+     them on every scroll frame, and the Tailwind backdrop-blur-* utilities
+     are worse - the hero search box sits over the *animated* starfield
+     canvas, so its blur is recomputed on every animation frame. Kill blur
+     site-wide on touch devices; phones do not need the frosted look to read
+     the UI, and a more opaque surface costs nothing. Desktop keeps it. */
+  * {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .glass { background: rgb(var(--c-surface) / calc(var(--glass-alpha) + 0.12)); }
+  .glass-strong { background: rgb(var(--c-surface) / 0.97); }
+
+  /* iOS Safari auto-zooms any focused input whose computed font size is
+     under 16px, which made every search box and form on a phone lurch
+     forward on tap. The site's inputs use text-sm (14px), so force the
+     16px minimum here instead of re-styling every component. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    font-size: 16px;
+  }
 }
 
 /* Scrollbar */

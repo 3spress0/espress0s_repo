@@ -31,10 +31,19 @@ import { uploadsRoutes } from './routes/uploads.js';
 import { linkHealthRoutes } from './routes/linkHealth.js';
 import { backupRoutes } from './routes/backup.js';
 import { catalogRoutes } from './routes/catalog.js';
+import { webhookRoutes } from './routes/webhooks.js';
+import { publicApiRoutes } from './routes/publicApi.js';
+import { subscriptionRoutes } from './routes/subscriptions.js';
+import { reviewRoutes } from './routes/reviews.js';
+import { importJobRoutes } from './routes/importJobs.js';
 import multipart from '@fastify/multipart';
 import { monitoringService } from './services/monitoringService.js';
 import { linkHealthService } from './services/linkHealthService.js';
+import { webhookService } from './services/webhookService.js';
+import { importJobService } from './services/importJobService.js';
+import { setEventLogger } from './services/eventBus.js';
 import { rateLimitKey, rateLimitMax } from './middleware/rateLimit.js';
+import { openapiPlugin } from './docs/openapi.js';
 
 // Boot-time configuration audit. In production this throws; in development it
 // prints the same list so the gap is visible before deploy day.
@@ -216,6 +225,9 @@ fastify.addHook('onResponse', async (request, reply) => {
 
 getDb();
 
+// OpenAPI: must be registered before any route so its onRoute hook sees them.
+await fastify.register(openapiPlugin);
+
 /**
  * Health, and the proof of which release is actually serving it.
  *
@@ -256,6 +268,11 @@ await fastify.register(async (api) => {
   await api.register(linkHealthRoutes);
   await api.register(backupRoutes);
   await api.register(catalogRoutes);
+  await api.register(webhookRoutes);
+  await api.register(publicApiRoutes);
+  await api.register(subscriptionRoutes);
+  await api.register(reviewRoutes);
+  await api.register(importJobRoutes);
 }, { prefix: '/api' });
 
 // Serve the built frontend when it exists, in any environment. Deep links
@@ -320,6 +337,9 @@ const start = async () => {
     await fastify.listen({ port: config.port, host: config.host });
     // Periodic download-link checks; idle unless linkcheck_enabled is set.
     linkHealthService.start(fastify.log);
+    setEventLogger(fastify.log);
+    webhookService.start(fastify.log);
+    importJobService.start(fastify.log);
     console.log(`
   ░█▀▀░█▀▀░█▀█░█▀▄░█▀▀░█▀▀░█▀▀░▄▀▄░▀░█▀▀░░░█▀▄░█▀▀░█▀█░█▀█
   ░█▀▀░▀▀█░█▀▀░█▀▄░█▀▀░▀▀█░▀▀█░█/█░░░▀▀█░░░█▀▄░█▀▀░█▀▀░█░█

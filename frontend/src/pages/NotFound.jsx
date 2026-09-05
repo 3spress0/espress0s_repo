@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Home, Search, ArrowLeft, FileQuestion, Sparkles } from 'lucide-react';
+import { Home, Search, FileQuestion, Sparkles } from 'lucide-react';
 import StarryBackground from '../components/StarryBackground';
 import { LogoLarge } from '../components/Logo';
 

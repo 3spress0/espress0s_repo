@@ -77,7 +77,7 @@ export default function Register() {
   const strengthColors = ['bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-blue-500', 'bg-green-500', 'bg-emerald-500'];
 
   return (
-    <div className="min-h-[90vh] flex items-center justify-center px-4 py-12">
+    <div className="min-h-90dvh flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-primary flex items-center justify-center shadow-xl shadow-purple-500/20">
@@ -87,7 +87,7 @@ export default function Register() {
           <p className="text-sm text-textMuted mt-1">Join espress0's repo archive</p>
         </div>
 
-        <div className="glass rounded-3xl border border-white/5 p-8 shadow-2xl">
+        <div className="glass rounded-3xl border border-white/5 p-5 sm:p-8 shadow-2xl">
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="text-xs font-medium text-textMuted uppercase tracking-widest mb-2 block">Username *</label>
@@ -136,7 +136,7 @@ export default function Register() {
                   className="w-full pl-10 pr-12 py-3 bg-surface border border-border rounded-xl focus:outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 text-sm"
                   required
                 />
-                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-textMuted hover:text-textPrimary">
+                <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'} className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-lg text-textMuted hover:text-textPrimary">
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
@@ -178,7 +178,7 @@ export default function Register() {
                     formData.password === formData.confirmPassword ? <Check className="w-4 h-4 text-green-400" /> : <X className="w-4 h-4 text-red-400" />
                   )}
                 </div>
-                <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-textMuted hover:text-textPrimary">
+                <button type="button" onClick={() => setShowConfirm(!showConfirm)} aria-label={showConfirm ? 'Hide password' : 'Show password'} className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-lg text-textMuted hover:text-textPrimary">
                   {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>

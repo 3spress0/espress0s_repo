@@ -4,6 +4,7 @@ import {
   importCatalogArchive, buildCatalogZip, buildTemplateZip,
   listImports, getImport, CatalogError,
 } from '../services/catalogService.js';
+import { toCatalogArchive, csvTemplate } from '../services/bulkFormats.js';
 import { ZipError } from '../lib/zip.js';
 
 /**
@@ -26,6 +27,12 @@ function csvEscape(value) {
 export async function catalogRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
   fastify.addHook('preHandler', requireAdmin);
+
+  // GET /api/admin/catalog/template.csv - starter spreadsheet for bulk import
+  fastify.get('/admin/catalog/template.csv', async (request, reply) => reply
+    .header('Content-Type', 'text/csv; charset=utf-8')
+    .header('Content-Disposition', 'attachment; filename="catalog-template.csv"')
+    .send(csvTemplate()));
 
   // GET /api/admin/catalog/template - a starter archive to edit
   fastify.get('/admin/catalog/template', async (request, reply) => {
@@ -81,6 +88,16 @@ export async function catalogRoutes(fastify) {
 
     if (!buffer || !buffer.length) return reply.code(400).send({ error: 'Uploaded file is empty' });
 
+    // .json and .csv are converted to the archive shape here, so everything
+    // below (validation, modes, duplicates, snapshot, history) is shared.
+    let converted = null;
+    try {
+      ({ buffer, filename, converted } = toCatalogArchive(buffer, filename));
+    } catch (e) {
+      if (e instanceof CatalogError) return reply.code(400).send({ error: e.message, code: e.code });
+      throw e;
+    }
+
     try {
       const { report, history } = await importCatalogArchive({
         buffer,
@@ -98,12 +115,16 @@ export async function catalogRoutes(fastify) {
         importId: history.id,
         backupPath: history.backup_path || null,
         warnings: report.warnings || [],
+        converted,
         categories: report.categories,
         folders: report.folders,
         items: report.items,
         relations: report.relations,
         errorCount: report.errorCount,
         errors: inline,
+        duplicateCount: report.duplicateCount || 0,
+        duplicates: (report.duplicates || []).slice(0, MAX_INLINE_ERRORS),
+        duplicatesTruncated: (report.duplicateCount || 0) > Math.min(report.duplicates?.length || 0, MAX_INLINE_ERRORS),
         errorsTruncated: report.errorCount > inline.length,
         errorsUrl: report.errorCount
           ? `/api/admin/catalog/imports/${history.id}/errors`

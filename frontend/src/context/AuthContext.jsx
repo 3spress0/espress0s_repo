@@ -31,6 +31,15 @@ export function AuthProvider({ children }) {
       captchaAnswer: captcha.answer,
       captchaToken: captcha.token,
     });
+    // Accounts with two-factor on get { mfaRequired, mfaToken } here and no
+    // session yet; the caller must follow up with verifyMfa().
+    if (data.mfaRequired) return data;
+    setUser(data.user);
+    return data;
+  };
+
+  const verifyMfa = async (mfaToken, code) => {
+    const data = await authApi.mfaVerify(mfaToken, code);
     setUser(data.user);
     return data;
   };
@@ -65,10 +74,16 @@ export function AuthProvider({ children }) {
       user, 
       loading, 
       login, 
+      verifyMfa,
       register,
       logout, 
       logoutAll,
       isAdmin: user?.role === 'admin',
+      /** Merge a partial update into the cached user (e.g. mfa_enabled). */
+      patchUser: (patch) => setUser(u => (u ? { ...u, ...patch } : u)),
+      // Staff = editor or admin: may create/edit content and see drafts.
+      isEditor: user?.role === 'admin' || user?.role === 'editor',
+      role: user?.role || null,
       isAuthenticated: !!user 
     }}>
       {children}

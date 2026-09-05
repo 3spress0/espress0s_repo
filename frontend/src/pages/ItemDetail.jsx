@@ -1,13 +1,20 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Download, HardDrive, Calendar, Tag, Shield, Cpu, Monitor, FileType, Hash, ExternalLink, ArrowLeft, Eye, Clock, Music, Video, Play, Image as ImageIcon, Disc, File, Link2, Star, Lock, AlertTriangle, Pencil, Folder } from 'lucide-react';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Download, HardDrive, Calendar, Tag, Cpu, Monitor, FileType, Hash, ArrowLeft, Eye, Clock, Music, Video, Play, Image as Disc, File, Link2, Star, Lock, AlertTriangle, Pencil, Folder } from 'lucide-react';
 import { itemsApi } from '../lib/api';
 import { formatBytes, formatDate, startDownload } from '../lib/utils';
-import { ItemPlaceholder } from '../components/Logo';
 import Markdown from '../lib/markdown.jsx';
 import { useAuth } from '../context/AuthContext';
 import FavoriteButton from '../components/FavoriteButton';
+import FollowButton from '../components/FollowButton';
+import PreviewLinkButton from '../components/admin/PreviewLinkButton';
+import Reviews from '../components/Reviews';
+import SimilarSoftware from '../components/SimilarSoftware';
 import Loading, { LoadingDots } from '../components/Loading';
+import { useI18n } from '../i18n/index.jsx';
+import { recordView } from '../lib/recentlyViewed';
+
+const REQ_LABEL = { os: 'OS', runtime: 'Runtime', hardware: 'Hardware', dependency: 'Depends on', other: 'Other' };
 
 // The editor is ~1k lines and only appears when an admin clicks "Edit this
 // page", so it is not worth putting in the bundle every visitor parses.
@@ -16,7 +23,10 @@ const ItemEditor = lazy(() => import('../components/admin/ItemEditor'));
 export default function ItemDetail() {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const { isAuthenticated, isAdmin, loading: authLoading } = useAuth();
+  const [searchParams] = useSearchParams();
+  const previewToken = searchParams.get('preview');
+  const { t } = useI18n();
+  const { isAuthenticated, isEditor, loading: authLoading } = useAuth();
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -28,11 +38,11 @@ export default function ItemDetail() {
 
   useEffect(() => {
     setLoading(true);
-    itemsApi.get(slug)
-      .then(setItem)
+    itemsApi.get(slug, previewToken ? { preview: previewToken } : undefined)
+      .then((data) => { setItem(data); if (!data.preview) recordView(data); })
       .catch(err => setError(err.response?.data?.error || 'Failed to load'))
       .finally(() => setLoading(false));
-  }, [slug]);
+  }, [slug, previewToken]);
 
   // Auth is an httpOnly cookie - fetch() with credentials sends it for us;
   // no token ever touches JS-readable storage.
@@ -141,10 +151,21 @@ export default function ItemDetail() {
     'abandonware': 'bg-purple-500/10 text-purple-400 border-purple-500/20',
   };
 
-  const providerIcons = { 'gdrive': 'G', 'onedrive': 'O', 'external': 'E', 'github': 'GH', 'local': 'L' };
+  const providerIcons = { 'gdrive': 'G', 'onedrive': 'O', 'external': 'E', 'github': 'GH', 'local': 'L', 'torrent': '⇅' };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-28 md:pb-8">
+      {(item.preview || (!item.published && isEditor)) && (
+        <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200 flex flex-wrap items-center gap-3">
+          <Eye className="w-4 h-4 flex-shrink-0" />
+          <span className="flex-1">
+            {item.preview
+              ? 'Draft preview - this page is not published. Download links are hidden and this view is not counted.'
+              : 'Draft - only staff can see this page. Share a read-only preview with anyone using a preview link.'}
+          </span>
+          {isEditor && <PreviewLinkButton itemId={item.id} published={!!item.published} onError={setFavoriteError} />}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <Link to="/browse" className="inline-flex items-center gap-2 text-sm text-textSecondary hover:text-primary transition-colors">
           <ArrowLeft className="w-4 h-4" />
@@ -159,9 +180,10 @@ export default function ItemDetail() {
             count={item.favorites_count}
             onError={(message) => setFavoriteError(message)}
           />
+          <FollowButton slug={item.slug} tags={item.tags || []} onError={(message) => setFavoriteError(message)} />
 
           {/* Admins edit the page they are looking at - no detour through /admin. */}
-          {isAdmin && !editing && (
+          {isEditor && !editing && (
             <button
               onClick={() => setEditing(true)}
               className="px-4 py-2 bg-gradient-primary text-white rounded-xl text-sm font-medium shadow-lg shadow-purple-500/20 flex items-center gap-2"
@@ -193,7 +215,7 @@ export default function ItemDetail() {
             onClose={() => setEditing(false)}
             onSaved={async () => {
               setEditing(false);
-              const fresh = await itemsApi.get(slug).catch(() => null);
+              const fresh = await itemsApi.get(slug, previewToken ? { preview: previewToken } : undefined).catch(() => null);
               if (fresh) setItem(fresh);
             }}
           />
@@ -204,16 +226,16 @@ export default function ItemDetail() {
       <div className="glass rounded-3xl border border-white/5 overflow-hidden mb-6">
         <div className="h-1 w-full bg-gradient-primary" />
         {(item.image_url || item.icon_url) && (
-          <div className="relative h-64 sm:h-80 overflow-hidden bg-surfaceHover">
+          <div className="relative h-52 sm:h-64 md:h-80 overflow-hidden bg-surfaceHover">
             <img src={item.image_url || item.icon_url} alt={item.name} decoding="async" className="w-full h-full object-cover" onError={(e) => e.target.style.display = 'none'} />
             <div className="absolute inset-0 bg-gradient-to-t from-surface via-surface/50 to-transparent" />
-            <div className="absolute bottom-4 left-8 right-8">
+            <div className="absolute bottom-4 left-4 right-4 sm:left-8 sm:right-8">
               <h1 className="text-3xl sm:text-4xl font-bold text-white leading-tight drop-shadow-lg">{item.name}</h1>
               <p className="text-white/80 mt-2 drop-shadow">{item.description}</p>
             </div>
           </div>
         )}
-        <div className="p-8">
+        <div className="p-4 sm:p-6 lg:p-8">
           <div className="flex flex-col md:flex-row gap-6">
             {!(item.image_url || item.icon_url) && (
               <div className="w-20 h-20 rounded-2xl bg-gradient-subtle border border-white/5 flex items-center justify-center flex-shrink-0">
@@ -387,15 +409,31 @@ export default function ItemDetail() {
         <div className="lg:col-span-2 space-y-6">
           {item.long_description && (
             <div className="glass rounded-2xl border border-white/5 p-6">
-              <h2 className="font-semibold text-textPrimary mb-3">About</h2>
+              <h2 className="font-semibold text-textPrimary mb-3">{t('item.about')}</h2>
               {/* Admin-authored markdown, rendered as React elements (no raw HTML). */}
               <Markdown>{item.long_description}</Markdown>
             </div>
           )}
           {item.changelog && (
             <div className="glass rounded-2xl border border-white/5 p-6">
-              <h2 className="font-semibold text-textPrimary mb-3">Changelog</h2>
+              <h2 className="font-semibold text-textPrimary mb-3">{t('item.changelog')}</h2>
               <Markdown>{item.changelog}</Markdown>
+            </div>
+          )}
+          {Array.isArray(item.requirements) && item.requirements.length > 0 && (
+            <div className="glass rounded-2xl border border-white/5 p-6">
+              <h2 className="font-semibold text-textPrimary mb-4 flex items-center gap-2"><Cpu className="w-4 h-4 text-primary" />{t('item.requirements')}</h2>
+              <ul className="space-y-2 text-sm">
+                {item.requirements.map((r, i) => (
+                  <li key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-[11px] uppercase tracking-wide text-textMuted w-24 flex-shrink-0">{REQ_LABEL[r.type] || 'Other'}</span>
+                    <span className="text-textPrimary font-medium">{r.name}</span>
+                    {r.version && <span className="font-mono text-xs text-textSecondary">{r.version}</span>}
+                    {r.optional && <span className="text-[11px] px-1.5 py-0.5 rounded bg-surface border border-border text-textMuted">optional</span>}
+                    {r.note && <span className="text-xs text-textMuted">— {r.note}</span>}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           <div className="glass rounded-2xl border border-white/5 p-6">
@@ -468,6 +506,49 @@ export default function ItemDetail() {
           </div>
         </div>
       </div>
+
+      {/* Phones: the primary action stays one thumb-tap away no matter how
+          far down the page the reader is. The 5xl header card sits below the
+          fold on a small phone, so without this the Download button is a
+          scroll away on the page that matters most. Hidden at md+ where the
+          header button is already reachable. */}
+      {(downloadLinks.length > 0 || !isAuthenticated) && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-surface md:hidden">
+          <div className="px-4 pt-3 pb-safe">
+            {authLoading ? (
+              <div className="flex items-center justify-center gap-2 py-2 text-sm text-textMuted">
+                <LoadingDots size={16} /> Checking login…
+              </div>
+            ) : !isAuthenticated ? (
+              <Link
+                to={`/login?redirect=${encodeURIComponent(`/file/${item.slug}`)}`}
+                className="flex items-center justify-center gap-2 w-full py-3 bg-gradient-primary text-white rounded-xl font-semibold text-sm"
+              >
+                <Lock className="w-4 h-4" /> Login to Download
+              </Link>
+            ) : availableLinks.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 py-3 text-sm font-medium text-red-400">
+                <AlertTriangle className="w-4 h-4" /> All mirrors down
+              </div>
+            ) : (
+              <button
+                onClick={() => handleDownload()}
+                className="flex items-center justify-center gap-2 w-full py-3 bg-gradient-primary active:bg-gradient-primary-hover text-white rounded-xl font-semibold text-sm"
+              >
+                <Download className="w-5 h-5" />
+                <span className="truncate">Download{primaryLink ? ` • ${primaryLink.label}` : ''}</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {item.published && !editing && (
+        <>
+          <SimilarSoftware slug={item.slug} />
+          <Reviews slug={item.slug} initialSummary={item.rating} />
+        </>
+      )}
     </div>
   );
 }

@@ -60,7 +60,7 @@ const IMPORTABLE_ITEM_FIELDS = [
   'file_size', 'file_type', 'platform', 'architecture', 'sha256', 'md5',
   'storage_provider', 'storage_path', 'download_url', 'external_url',
   'featured', 'published', 'license_status', 'license_notes', 'tags',
-  'icon_url', 'image_url', 'screenshots', 'documentation_url', 'changelog',
+  'icon_url', 'image_url', 'screenshots', 'documentation_url', 'changelog', 'requirements',
 ];
 
 const eqJson = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -250,13 +250,13 @@ export async function backupRoutes(fastify) {
                   file_name, file_size, file_type, platform, architecture, sha256, md5,
                   storage_provider, storage_path, download_url, external_url,
                   featured, published, license_status, license_notes, tags, icon_url, image_url, screenshots,
-                  documentation_url, changelog, created_at, updated_at, encryption_version
+                  documentation_url, changelog, requirements, created_at, updated_at, encryption_version
                 ) VALUES (
                   @name, @slug, @description, @long_description, @category_id, @folder_id, @version, @release_date,
                   @file_name, @file_size, @file_type, @platform, @architecture, @sha256, @md5,
                   @storage_provider, @storage_path, @download_url, @external_url,
                   @featured, @published, @license_status, @license_notes, @tags, @icon_url, @image_url, @screenshots,
-                  @documentation_url, @changelog, @created_at, @updated_at, @encryption_version
+                  @documentation_url, @changelog, @requirements, @created_at, @updated_at, @encryption_version
                 )`).run({
                 name: item.name, slug: item.slug,
                 description: item.description, long_description: item.long_description || null,
@@ -271,7 +271,8 @@ export async function backupRoutes(fastify) {
                 license_status: item.license_status || 'check-license', license_notes: enc.license_notes,
                 tags: tagsJson, icon_url: item.icon_url || null, image_url: item.image_url || null,
                 screenshots: shotsJson, documentation_url: item.documentation_url || null,
-                changelog: item.changelog || null, created_at: now, updated_at: now, encryption_version: 'v1',
+                changelog: item.changelog || null, requirements: item.requirements?.length ? JSON.stringify(item.requirements) : null,
+                created_at: now, updated_at: now, encryption_version: 'v1',
               });
               insertLinks(result.lastInsertRowid, rawItem.links);
             }
@@ -307,6 +308,7 @@ export async function backupRoutes(fastify) {
             image_url: item.image_url,
             documentation_url: item.documentation_url,
             changelog: item.changelog,
+            requirements: item.requirements === undefined ? undefined : (item.requirements || []),
             tags: tagsJson === null ? undefined : (Array.isArray(item.tags) ? item.tags : current.tags),
             screenshots: shotsJson === null ? undefined : (Array.isArray(item.screenshots) ? item.screenshots : current.screenshots),
             featured: item.featured === undefined ? undefined : (item.featured ? 1 : 0),
@@ -343,6 +345,7 @@ export async function backupRoutes(fastify) {
               const sqlSets = changedSets.map(([k]) => `${k} = @${k}`);
               for (const [k, v] of changedSets) {
                 if (k === 'tags' || k === 'screenshots') params[k] = Array.isArray(v) ? JSON.stringify(v) : v;
+                else if (k === 'requirements') params[k] = Array.isArray(v) && v.length ? JSON.stringify(v) : null;
                 else if (ENCRYPTED.has(k)) params[k] = v ? encryptItemFields({ [k]: v })[k] : null;
                 else params[k] = v ?? null;
               }

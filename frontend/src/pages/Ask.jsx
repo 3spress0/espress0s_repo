@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Coffee, Send, Database, AlertCircle, ExternalLink, Lightbulb, Search, Sparkles } from 'lucide-react';
+import { Coffee, Send, Database, ExternalLink, Lightbulb, Search, Sparkles } from 'lucide-react';
 import { aiApi, describeAi, describeApiError } from '../lib/api';
 import { LoadingDots } from '../components/Loading';
 import StarryBackground from '../components/StarryBackground';
@@ -70,7 +70,7 @@ export default function Ask() {
   const ai = describeAi(status);
 
   return (
-    <div className="relative min-h-screen">
+    <div className="relative min-h-dvh">
       <StarryBackground />
       
       <div className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

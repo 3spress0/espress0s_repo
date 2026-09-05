@@ -1,0 +1,40 @@
+{
+  "_meta": { "name": "Nederlands", "code": "nl", "dir": "ltr" },
+  "nav": {
+    "browse": "Bladeren",
+    "people": "Mensen",
+    "admin": "Beheer",
+    "editor": "Redactie",
+    "login": "Inloggen",
+    "register": "Registreren",
+    "account": "Account",
+    "askAi": "Vraag AI",
+    "search": "Zoeken",
+    "menu": "Menu"
+  },
+  "logout": {
+    "button": "Uitloggen",
+    "confirmTitle": "Uitloggen bevestigen?",
+    "confirmBody": "Je moet opnieuw inloggen om bestanden te downloaden.",
+    "cancel": "Annuleren"
+  },
+  "common": {
+    "loading": "Laden…",
+    "save": "Opslaan",
+    "cancel": "Annuleren",
+    "delete": "Verwijderen",
+    "close": "Sluiten",
+    "download": "Downloaden",
+    "language": "Taal",
+    "languageHint": "Taal van de interface. De inhoud van de catalogus blijft in de taal waarin hij is geschreven.",
+    "auto": "Automatisch ({{name}})"
+  },
+  "item": {
+    "about": "Over",
+    "changelog": "Wijzigingen",
+    "requirements": "Vereisten",
+    "fileDetails": "Bestandsgegevens",
+    "downloads": "{{count}} download",
+    "downloads_plural": "{{count}} downloads"
+  }
+}

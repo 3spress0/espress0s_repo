@@ -1,11 +1,17 @@
 import { getDb } from '../db/index.js';
 import { makeSlug, formatBytes } from '../utils/slug.js';
-import { itemSchema, downloadLinkSchema } from '../utils/validation.js';
-import { authenticate, optionalAuthenticate, requireAdmin } from '../middleware/auth.js';
+import { itemSchema, downloadLinkSchema, normalizeLinkProvider, isMagnetUri } from '../utils/validation.js';
+import { parseRequirements } from '../utils/requirements.js';
+import { authenticate, optionalAuthenticate, requireAdmin, requireEditor, roleAtLeast } from '../middleware/auth.js';
 import { storageManager } from '../services/storage/index.js';
 import { encryptionService, ENCRYPTED_ITEM_FIELDS } from '../services/encryptionService.js';
 import { recordItemVersion } from '../services/versionService.js';
+import { emitEvent, itemSummary } from '../services/eventBus.js';
 import { getFavorite, countItemFavorites, getPublicFavoritedBy } from '../services/favoritesService.js';
+import { createPreviewToken, verifyPreviewToken, DEFAULT_TTL_HOURS } from '../services/previewLinkService.js';
+import { ratingSummary } from '../services/reviewService.js';
+import { similarItems } from '../services/similarService.js';
+import { aiService } from '../services/aiService.js';
 
 function decryptItem(item) {
   if (!item) return item;
@@ -22,7 +28,8 @@ function decryptItem(item) {
 
 /** Only admins may see unpublished (draft) items or their mirrors. */
 function isAdmin(request) {
-  return request.user?.role === 'admin';
+  // Staff (editor or admin) may see drafts; the name is kept for the call sites.
+  return roleAtLeast(request.user?.role, 'editor');
 }
 
 /**
@@ -46,7 +53,7 @@ function parseDownloadLinks(raw) {
   raw.forEach((entry, index) => {
     const parsed = downloadLinkSchema.safeParse(entry);
     if (parsed.success) {
-      links.push(parsed.data);
+      links.push(normalizeLinkProvider(parsed.data));
       return;
     }
     errors.push({
@@ -143,9 +150,10 @@ function syncDownloadLinks(db, itemId, wanted) {
  * `javascript:`/`data:` URL back to the browser or put one in a Location
  * header, whatever an admin (or an imported feed) may have stored.
  */
-function isSafeRedirectUrl(url) {
+function isSafeRedirectUrl(url, { allowMagnet = false } = {}) {
   if (typeof url !== 'string' || !url) return false;
   if (url.startsWith('/')) return !url.startsWith('//');
+  if (allowMagnet && isMagnetUri(url)) return true;
   return /^https?:\/\//i.test(url);
 }
 
@@ -249,6 +257,7 @@ export async function itemsRoutes(fastify) {
           file_size_formatted: formatBytes(dec.file_size),
           tags: dec.tags ? JSON.parse(dec.tags || '[]') : [],
           screenshots: dec.screenshots ? JSON.parse(dec.screenshots || '[]') : [],
+          requirements: parseRequirements(dec.requirements),
           download_links: links,
           available_links: availableLinks,
           download_links_count: links.length,
@@ -280,8 +289,10 @@ export async function itemsRoutes(fastify) {
     if (!item) return reply.code(404).send({ error: 'Item not found' });
 
     // Drafts are invisible to everyone but admins - 404, not 403, so the
-    // endpoint does not confirm that a hidden slug exists.
-    if (!item.published && !isAdmin(request)) {
+    // endpoint does not confirm that a hidden slug exists. A signed preview
+    // token (see previewLinkService) opens one draft to whoever holds it.
+    const previewing = !item.published && !isAdmin(request) && verifyPreviewToken(item.id, request.query?.preview);
+    if (!item.published && !isAdmin(request) && !previewing) {
       return reply.code(404).send({ error: 'Item not found' });
     }
 
@@ -297,7 +308,12 @@ export async function itemsRoutes(fastify) {
     `).all(item.category_id, item.id);
 
     const decrypted = decryptItem(item);
-    const links = getItemLinks(item.id);
+    let links = getItemLinks(item.id);
+    if (previewing) {
+      // Content review only: no URLs or paths leave the server on a preview.
+      for (const f of ['storage_path', 'download_url', 'external_url', 'license_notes']) decrypted[f] = null;
+      links = links.map(l => ({ ...l, storage_path: null, download_url: null }));
+    }
     const availableLinks = links.filter(l => !l.is_down && l.status !== 'down');
 
     // Favourite state for the signed-in viewer. Anonymous visitors get false
@@ -310,6 +326,7 @@ export async function itemsRoutes(fastify) {
       file_size_formatted: formatBytes(decrypted.file_size),
       tags: decrypted.tags ? JSON.parse(decrypted.tags || '[]') : [],
       screenshots: decrypted.screenshots ? JSON.parse(decrypted.screenshots || '[]') : [],
+      requirements: parseRequirements(decrypted.requirements),
       related: related.map(r => decryptItem(r)),
       download_links: links,
       available_links: availableLinks,
@@ -326,13 +343,16 @@ export async function itemsRoutes(fastify) {
       shared_by: getPublicFavoritedBy(item.id),
       is_favorite: Boolean(ownFavorite),
       favorite_is_public: Boolean(ownFavorite?.favorite?.is_public),
+      // Star rating aggregate over visible reviews (see routes/reviews.js).
+      rating: ratingSummary(item.id),
+      preview: previewing || undefined,
       primary_download: availableLinks.find(l => l.is_primary) || availableLinks[0] || links.find(l => l.is_primary) || links[0] || null,
       encryption: { atRest: 'storage_path, download_url, external_url, license_notes encrypted', version: item.encryption_version || 'v1' }
     };
   });
 
   // POST /api/items - create (admin)
-  fastify.post('/items', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.post('/items', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const links = parseDownloadLinks(request.body.download_links);
     if (links.errors) {
       // Refuse rather than drop: a page saved without the mirror it was
@@ -390,13 +410,13 @@ export async function itemsRoutes(fastify) {
         file_name, file_size, file_type, platform, architecture, sha256, md5,
         storage_provider, storage_path, download_url, external_url,
         featured, published, license_status, license_notes, tags, icon_url, image_url, screenshots,
-        documentation_url, changelog, created_at, updated_at, encryption_version
+        documentation_url, changelog, requirements, created_at, updated_at, encryption_version
       ) VALUES (
         @name, @slug, @description, @long_description, @category_id, @folder_id, @version, @release_date,
         @file_name, @file_size, @file_type, @platform, @architecture, @sha256, @md5,
         @storage_provider, @storage_path, @download_url, @external_url,
         @featured, @published, @license_status, @license_notes, @tags, @icon_url, @image_url, @screenshots,
-        @documentation_url, @changelog, @created_at, @updated_at, @encryption_version
+        @documentation_url, @changelog, @requirements, @created_at, @updated_at, @encryption_version
       )
     `).run({
       name: data.name, slug, description: data.description,
@@ -417,13 +437,20 @@ export async function itemsRoutes(fastify) {
       license_notes: encryptedData.license_notes,
       tags: tagsJson, icon_url: data.icon_url || null, image_url: data.image_url || null,
       screenshots: screenshotsJson, documentation_url: data.documentation_url || null,
-      changelog: data.changelog || null, created_at: now, updated_at: now, encryption_version: 'v1',
+      changelog: data.changelog || null,
+      requirements: data.requirements?.length ? JSON.stringify(data.requirements) : null,
+      created_at: now, updated_at: now, encryption_version: 'v1',
     });
 
     const insertLink = db.prepare(INSERT_LINK_SQL);
     (links.links || []).forEach((ld, i) => insertLink.run(linkRow(result.lastInsertRowid, ld, i)));
 
     recordItemVersion(result.lastInsertRowid, request.user?.id, 'Created');
+    {
+      const created = db.prepare('SELECT * FROM items WHERE id = ?').get(result.lastInsertRowid);
+      emitEvent('item.created', { item: itemSummary(created) }, { actorId: request.user?.id });
+      if (created.published) emitEvent('item.published', { item: itemSummary(created) }, { actorId: request.user?.id });
+    }
 
     const newItemRaw = db.prepare('SELECT * FROM items WHERE id = ?').get(result.lastInsertRowid);
     const newItem = decryptItem(newItemRaw);
@@ -432,7 +459,7 @@ export async function itemsRoutes(fastify) {
   });
 
   // PUT /api/items/:id - update (admin)
-  fastify.put('/items/:id', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.put('/items/:id', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
     const existing = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
@@ -465,6 +492,7 @@ export async function itemsRoutes(fastify) {
         if (ENCRYPTED_ITEM_FIELDS.includes(key) && value) finalValue = encryptionService.encrypt(value);
         if (key === 'tags' && Array.isArray(value)) { updates.push(`${key} = @${key}`); params[key] = JSON.stringify(value); }
         else if (key === 'screenshots' && Array.isArray(value)) { updates.push(`${key} = @${key}`); params[key] = JSON.stringify(value); }
+        else if (key === 'requirements') { updates.push(`${key} = @${key}`); params[key] = Array.isArray(value) && value.length ? JSON.stringify(value) : null; }
         else if (key === 'featured' || key === 'published') { updates.push(`${key} = @${key}`); params[key] = value ? 1 : 0; }
         else { updates.push(`${key} = @${key}`); params[key] = finalValue; }
       }
@@ -482,16 +510,59 @@ export async function itemsRoutes(fastify) {
     recordItemVersion(Number(id), request.user?.id);
 
     const updatedRaw = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
+    {
+      // Which public fields changed, for subscribers ("version: 1.2 -> 1.3").
+      const changed = Object.keys(data).filter(k => k !== 'download_links' && String(existing[k] ?? '') !== String(updatedRaw[k] ?? ''));
+      if (wantedLinks.links !== null) changed.push('download_links');
+      const summary = itemSummary(updatedRaw);
+      const actor = { actorId: request.user?.id };
+      if (!existing.published && updatedRaw.published) emitEvent('item.published', { item: summary }, actor);
+      else if (existing.published && !updatedRaw.published) emitEvent('item.unpublished', { item: summary }, actor);
+      if (changed.length) emitEvent('item.updated', { item: summary, changes: changed }, actor);
+    }
     const decrypted = decryptItem(updatedRaw);
     const links = getItemLinks(id);
     return { ...decrypted, download_links: links, download_links_count: links.length };
   });
 
+  // POST /api/items/:id/preview-link - signed, expiring link to a draft.
+  // "Similar software" (#21): deterministic catalogue scoring, optionally
+  // reranked by the configured AI provider. Never returns anything outside the
+  // published catalogue; the AI can only reorder what the scorer proposed.
+  fastify.get('/items/:slug/similar', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    schema: { tags: ['Items'], summary: 'Similar entries (deterministic scoring, optional AI rerank)' },
+  }, async (request, reply) => {
+    const db = getDb();
+    const key = String(request.params.slug).slice(0, 200);
+    const item = db.prepare('SELECT id FROM items WHERE (slug = ? OR id = ?) AND published = 1').get(key, /^\d+$/.test(key) ? Number(key) : -1);
+    if (!item) return reply.code(404).send({ error: 'Item not found' });
+    const noAi = String(request.query?.ai ?? '') === '0';
+    const res = await similarItems(item.id, { limit: request.query?.limit, aiService: noAi ? null : aiService });
+    return { ...res, items: res.items.map(i => ({ ...decryptItem(i), score: i.score, why: i.why })) };
+  });
+
+  fastify.post('/items/:id/preview-link', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
+    const db = getDb();
+    const item = db.prepare('SELECT id, slug, published FROM items WHERE id = ?').get(request.params.id);
+    if (!item) return reply.code(404).send({ error: 'Item not found' });
+    const ttlHours = request.body?.ttl_hours ?? DEFAULT_TTL_HOURS;
+    const { token, expires_at } = createPreviewToken(item.id, { ttlHours });
+    return {
+      path: `/file/${item.slug}?preview=${token}`,
+      expires_at,
+      published: !!item.published,
+      note: item.published ? 'This entry is already public; the link works but is not needed.' : 'Anyone with this link can read the draft (no downloads) until it expires or the entry is published.',
+    };
+  });
+
   fastify.delete('/items/:id', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
-    if (!db.prepare('SELECT id FROM items WHERE id = ?').get(id)) return reply.code(404).send({ error: 'Item not found' });
+    const doomed = db.prepare('SELECT id, slug, name, published FROM items WHERE id = ?').get(id);
+    if (!doomed) return reply.code(404).send({ error: 'Item not found' });
     db.prepare('DELETE FROM items WHERE id = ?').run(id);
+    emitEvent('item.deleted', { item: { id: doomed.id, slug: doomed.slug, name: doomed.name, published: !!doomed.published } }, { actorId: request.user?.id, itemId: doomed.id });
     return { success: true, message: 'Item deleted' };
   });
 
@@ -507,7 +578,7 @@ export async function itemsRoutes(fastify) {
   });
 
   // POST /api/items/:id/links
-  fastify.post('/items/:id/links', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.post('/items/:id/links', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
     const item = db.prepare('SELECT id FROM items WHERE id = ? OR slug = ?').get(id, id);
@@ -516,7 +587,7 @@ export async function itemsRoutes(fastify) {
     const parsed = downloadLinkSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
 
-    const ld = parsed.data;
+    const ld = normalizeLinkProvider(parsed.data);
     const encLink = encryptLinkFields({ storage_path: ld.storage_path || null, download_url: ld.download_url || null, down_reason: ld.down_reason || null });
 
     if (ld.is_primary) db.prepare('UPDATE item_download_links SET is_primary = 0 WHERE item_id = ?').run(item.id);
@@ -536,7 +607,7 @@ export async function itemsRoutes(fastify) {
   });
 
   // PUT /api/items/:id/links/:linkId
-  fastify.put('/items/:id/links/:linkId', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.put('/items/:id/links/:linkId', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const { id, linkId } = request.params;
     const db = getDb();
     const item = db.prepare('SELECT id FROM items WHERE id = ? OR slug = ?').get(id, id);
@@ -548,7 +619,7 @@ export async function itemsRoutes(fastify) {
     const parsed = downloadLinkSchema.partial().safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
 
-    const data = parsed.data;
+    const data = normalizeLinkProvider(parsed.data);
     if (data.is_primary) db.prepare('UPDATE item_download_links SET is_primary = 0 WHERE item_id = ?').run(item.id);
 
     const updates = [];
@@ -627,7 +698,8 @@ export async function itemsRoutes(fastify) {
 
       if (!downloadUrl) return reply.code(404).send({ error: 'No download URL configured' });
       if (downloadUrl.startsWith('/api/files/')) return reply.code(501).send({ error: 'Local file serving not configured' });
-      if (!isSafeRedirectUrl(downloadUrl)) {
+      const isTorrent = (usedLink?.storage_provider || item.storage_provider) === 'torrent';
+      if (!isSafeRedirectUrl(downloadUrl, { allowMagnet: isTorrent })) {
         request.log.error({ itemId: item.id }, 'Refusing to serve unsafe download URL');
         return reply.code(502).send({ error: 'Stored download URL is not a valid http(s) link' });
       }
@@ -682,7 +754,7 @@ export async function itemsRoutes(fastify) {
       const downloadUrl = await storageManager.getDownloadUrl(link.storage_provider, link.storage_path, link);
       if (!downloadUrl) return reply.code(404).send({ error: 'No download URL configured' });
       if (downloadUrl.startsWith('/api/files/')) return reply.code(501).send({ error: 'Local file serving not configured' });
-      if (!isSafeRedirectUrl(downloadUrl)) {
+      if (!isSafeRedirectUrl(downloadUrl, { allowMagnet: link.storage_provider === 'torrent' })) {
         request.log.error({ itemId: item.id, linkId: link.id }, 'Refusing to serve unsafe download URL');
         return reply.code(502).send({ error: 'Stored download URL is not a valid http(s) link' });
       }
