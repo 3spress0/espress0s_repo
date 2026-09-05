@@ -124,3 +124,7 @@ echo "  logs:    tmux attach -t $SESSION      (Ctrl-B D to detach, Ctrl-B N/P to
 echo "  stop:    ./scripts/start-tmux.sh stop"
 echo
 echo "Auto-update: checks origin every 5 min; pause it with: touch data/.auto-update-disabled"
+echo
+echo "Note: tmux does NOT survive a reboot — nothing will restart the app after one,"
+echo "      and the site then stays stuck on the 'Loading espress0's repo' screen."
+echo "      For always-on servers use: sudo ./espress0 deploy   (systemd, starts at boot)"

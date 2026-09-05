@@ -18,6 +18,11 @@ StandardError=journal
 SyslogIdentifier=espress0-repo
 
 # Security hardening
+# NOTE for installations under a home directory (e.g. ~/espress0s_repo):
+# ProtectHome=true hides /home, /root and /run/user from the service, so the
+# app would never start — the site stays stuck on the "Loading" screen.
+# deploy-ubuntu.sh rewrites this to ProtectHome=false automatically for those
+# layouts; change it by hand if you install this unit yourself.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
