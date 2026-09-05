@@ -134,12 +134,17 @@ export async function previewRoutes(fastify) {
           PREVIEW_DIR,
           `.${cacheKey}.${crypto.randomBytes(8).toString('hex')}.tmp`
         );
-        // Deliberately suppressed: caching fetched bytes is the feature, and
-        // the controls are the ones around it. safeFetchBuffer refused any
-        // non-public target and re-checked every redirect hop, the size is
-        // capped, the name is our own hash plus random suffix, the file is
-        // private, and the bytes are only ever served back behind login with
-        // nosniff, a default-src 'none' CSP and X-Frame-Options: DENY.
+        // Accepted, not fixable in code: caching fetched bytes is the feature,
+        // and js/http-to-file-access defines no sanitizers at all (its sink is
+        // the data argument of a file write), so no amount of validation here
+        // clears it. The controls that make it safe are the ones around it:
+        // safeFetchBuffer refused any non-public target and re-checked every
+        // redirect hop, the size is capped, the name is our own hash plus a
+        // random suffix, the file is private, and the bytes are only served
+        // back behind login with nosniff, a default-src 'none' CSP and
+        // X-Frame-Options: DENY. The comment below tags the result in the
+        // SARIF; GitHub's pull-request check still counts it, so the alert
+        // itself is meant to be dismissed in Security -> Code scanning.
         // codeql[js/http-to-file-access]
         fs.writeFileSync(tmpPath, buffer, { mode: 0o600 });
         fs.renameSync(tmpPath, cachedPath);
