@@ -335,24 +335,16 @@ Backups can be used to restore catalogue data when necessary.
 ## Keyboard shortcuts
 
 `Ctrl/⌘ K` (or `/`) opens the command palette: live catalogue search plus
-navigation, theme, language and admin commands filtered by role. `g` then
+navigation, theme and admin commands filtered by role. `g` then
 `h` / `b` / `f` / `a` jumps to home, Browse, favourites, Admin; `?` lists all
 shortcuts. Nothing fires while typing in a field; `Ctrl/⌘ S` still saves in
 the item editor.
 
-## Languages
+## Interface language
 
-The interface has a small, dependency-free i18n layer (`frontend/src/i18n/`).
-Strings live in `locales/<code>.json` (English is the source of truth;
-Dutch ships as the first translation); components call `const { t } = useI18n()`
-and `t('nav.browse')`, with `{{placeholders}}` and a `_plural` key for counts.
-The active language follows the browser and can be overridden from the navbar
-or Account → Appearance (stored per browser). Dates and numbers use `Intl`
-for the active locale. Catalogue content is not translated. To add a language,
-copy `en.json`, translate it, and register it in `i18n/index.jsx`;
-`npm test` in `frontend/` checks every locale has the same keys as English.
-Only the navigation, log-out dialog and item page headings are wired so far;
-the rest of the UI is still literal English and can be migrated file by file.
+The interface is English only. UI copy is written inline in the components
+that render it - there is no translation layer, no locale files and no
+language picker. Catalogue content is whatever language an admin wrote it in.
 
 ## Administration
 

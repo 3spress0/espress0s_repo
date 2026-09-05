@@ -16,7 +16,8 @@
  *                    (slug `<prefix>-<tag>`), each asset one download link
  *                    (storage_provider 'github', direct browser_download_url).
  *                    Options: prefix, category, folder, tags, include_prereleases,
- *                    max_releases, asset_pattern (regex), platform, license_status.
+ *                    max_releases, asset_pattern (glob: * and ?), platform,
+ *                    license_status.
  *
  * Runs are serialised per process; a run that is already going is skipped.
  * Everything fetched goes through the SSRF-safe fetcher (public hosts only).
@@ -30,6 +31,7 @@ import { makeSlug } from '../utils/slug.js';
 export const SOURCE_TYPES = ['catalog', 'github-releases'];
 const MIN_INTERVAL_MINUTES = 15;
 const MAX_FETCH_BYTES = 20 * 1024 * 1024;
+const MAX_ASSET_PATTERN_LENGTH = 200;
 const GITHUB_API = 'https://api.github.com';
 
 const nowIso = () => new Date().toISOString();
@@ -49,6 +51,25 @@ function rowToJob(row) {
   };
 }
 
+/**
+ * Compile an admin's asset filter into a RegExp.
+ *
+ * The filter is a glob - `*` and `?` are the only metacharacters, everything
+ * else in the string is escaped - not a regular expression. The value is
+ * stored in the database and editable by anyone who can edit a job, so a
+ * RegExp built straight from it is theirs to control: `(a+)+$` backtracks
+ * catastrophically and stalls the importer on an ordinary asset name, and no
+ * blacklist of "dangerous" patterns closes that reliably. Treating the string
+ * as data keeps the filters people actually write (`*linux*x64*`, `*.iso`)
+ * while removing the injection.
+ */
+export function assetFilterToRegExp(pattern) {
+  const glob = String(pattern ?? '').trim();
+  if (!glob) return null;
+  const source = glob.replace(/[.*+?^${}()|[\]\\]/g, (ch) => (ch === '*' ? '.*' : ch === '?' ? '.' : `\\${ch}`));
+  return new RegExp(source, 'i');
+}
+
 /** Validate user input for create/update. */
 export function validateJobInput({ name, source_type, source_url, mode, interval_minutes, options }) {
   const cleanName = String(name || '').trim().slice(0, 100);
@@ -59,9 +80,15 @@ export function validateJobInput({ name, source_type, source_url, mode, interval
   if (source_type === 'github-releases' && !parseRepo(url)) throw new ImportJobValidationError('source_url must be owner/repo or a github.com repository URL');
   if (!IMPORT_MODES.includes(mode)) throw new ImportJobValidationError(`mode must be one of ${IMPORT_MODES.join(', ')}`);
   const interval = Math.max(MIN_INTERVAL_MINUTES, parseInt(interval_minutes, 10) || 360);
-  const opts = options && typeof options === 'object' ? options : {};
-  if (opts.asset_pattern) {
-    try { new RegExp(opts.asset_pattern); } catch { throw new ImportJobValidationError('options.asset_pattern is not a valid regular expression'); }
+  // Copied, so normalising a field here never mutates the caller's object.
+  const opts = options && typeof options === 'object' ? { ...options } : {};
+  if (opts.asset_pattern !== undefined && opts.asset_pattern !== null) {
+    const filter = String(opts.asset_pattern).trim();
+    if (filter.length > MAX_ASSET_PATTERN_LENGTH) {
+      throw new ImportJobValidationError(`options.asset_pattern must be ${MAX_ASSET_PATTERN_LENGTH} characters or fewer`);
+    }
+    if (filter) opts.asset_pattern = filter;
+    else delete opts.asset_pattern;
   }
   return { name: cleanName, source_type, source_url: source_type === 'github-releases' ? parseRepo(url) : url, mode, interval_minutes: interval, options: opts };
 }
@@ -96,7 +123,7 @@ function ghHeaders() {
 export function releasesToCatalog(repo, releases, options = {}) {
   const [owner, name] = repo.split('/');
   const prefix = options.prefix ? makeSlug(String(options.prefix)) : makeSlug(name);
-  const pattern = options.asset_pattern ? new RegExp(options.asset_pattern, 'i') : null;
+  const pattern = assetFilterToRegExp(options.asset_pattern);
   const max = Math.min(Math.max(parseInt(options.max_releases, 10) || 20, 1), 200);
   const items = [];
   for (const rel of releases) {

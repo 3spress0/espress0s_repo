@@ -222,3 +222,21 @@ describe('totp: "require two-factor auth for admins" setting', () => {
     db.prepare('UPDATE users SET totp_enabled = 0 WHERE id = ?').run(userId);
   });
 });
+
+describe('the path the 2FA gate is compared against', () => {
+  it('normalises what it matches, and fails closed on what it cannot', async () => {
+    const { requestPathname } = await import('../src/middleware/auth.js');
+
+    // The router's view of the request, not the raw target.
+    assert.equal(requestPathname({ raw: { url: '/api/auth/mfa?from=x' } }), '/api/auth/mfa');
+    assert.equal(requestPathname({ raw: { url: '/api/auth/mfa/' } }), '/api/auth/mfa', 'trailing slash');
+    assert.equal(requestPathname({ raw: { url: '/api/auth/%6dfa' } }), '/api/auth/mfa', 'percent-encoded');
+
+    // An encoded separator is decoded, so it cannot smuggle a segment past the
+    // allowlist: /api/auth/mfa/setup is an enrol route, but the traversal form
+    // below is not, and neither is a malformed escape.
+    assert.equal(requestPathname({ raw: { url: '/api/auth/mfa%2Fsetup' } }), '/api/auth/mfa/setup');
+    assert.equal(requestPathname({ raw: { url: '/api/auth/mfa%zz' } }), null);
+    assert.equal(requestPathname({}), '', 'a request with no url matches nothing');
+  });
+});

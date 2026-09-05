@@ -96,8 +96,8 @@ Reference the issue in the body (`Closes #12`).
 - Use the existing `lib/api.js` client; add one `xxxApi` object per backend
   route group.
 - Anything rendered as an `href` must pass `safeHref()` in `lib/utils.js`.
-- New user-facing strings should go through the i18n helper where the page
-  already uses it (`useI18n`).
+- The interface is English only: write user-facing strings inline in the
+  component. There is no i18n layer to route them through.
 
 ### Backend notes
 

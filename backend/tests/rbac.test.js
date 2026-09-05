@@ -143,7 +143,7 @@ const ADMIN_ONLY = [
 
 function item() { return db.prepare("SELECT id FROM items WHERE slug = 'rbac-item'").get(); }
 /** Test titles are built before `before()` runs, so show the template, not the id. */
-function label(route) { return typeof route.url === 'function' ? route.url.toString().replace(/^.*?`|`.*$/gs, '').replace('${item().id}', ':id') : route.url; }
+function label(route) { return typeof route.url === 'function' ? route.url.toString().replace(/^.*?`|`.*$/gs, '').replace(/\$\{[^}]+\}/g, ':id') : route.url; }
 
 async function call(route, role) {
   const url = typeof route.url === 'function' ? route.url() : route.url;

@@ -688,9 +688,22 @@ ${subject ? `\nCurrent subject of the conversation: ${subject}\n` : ''}
     const hasItemLink = answer.includes('/file/');
 
     if (hasHttp && !hasItemLink) {
-      const allowedDomains = ['drive.google.com', 'onedrive.live.com', '1drv.ms', 'github.com', 'espress0'];
+      // Compare parsed hostnames, not substrings. `url.includes('github.com')`
+      // is just as true for `github.com.attacker.example`, which is precisely
+      // the link that should earn the disclaimer. Links to our own file pages
+      // never reach this check: step 1 collapsed them to relative /file/... .
+      const allowedHosts = ['drive.google.com', 'docs.google.com', 'onedrive.live.com', '1drv.ms', 'sharepoint.com', 'github.com'];
+      const isAllowedHost = (rawUrl) => {
+        let host;
+        try {
+          host = new URL(rawUrl).hostname.toLowerCase().replace(/\.$/, '');
+        } catch {
+          return false; // unparseable: treat as unverified
+        }
+        return allowedHosts.some(d => host === d || host.endsWith(`.${d}`));
+      };
       const urls = answer.match(/https?:\/\/[^\s]+/g) || [];
-      const suspicious = urls.filter(url => !allowedDomains.some(d => url.includes(d)));
+      const suspicious = urls.filter(url => !isAllowedHost(url));
 
       if (suspicious.length > 0) {
         answer += `\n\nNote: Some links in this answer may not be verified. Always download from the official item page at /file/{slug} to ensure integrity.`;

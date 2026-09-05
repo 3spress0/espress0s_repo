@@ -151,7 +151,8 @@ export async function uploadsRoutes(fastify) {
     const maxBytes = getSetting('uploads_max_bytes', DEFAULT_MAX_BYTES) || DEFAULT_MAX_BYTES;
 
     let buffer = null;
-    let originalName = 'upload';
+    // Assigned by both branches below; no default to overwrite.
+    let originalName;
 
     if (request.isMultipart?.()) {
       const file = await request.file({ limits: { fileSize: maxBytes } });
@@ -194,7 +195,25 @@ export async function uploadsRoutes(fastify) {
     const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
     const storedName = `${Date.now().toString(36)}-${hash}.${detected.ext}`;
 
-    fs.writeFileSync(path.join(UPLOAD_DIR, storedName), buffer);
+    // The bytes came off the network, so the only thing we get to choose is
+    // where they land - and that name is generated here (timestamp + content
+    // hash + an extension from the fixed signature table), never taken from
+    // the upload. Resolve it and refuse anything outside UPLOAD_DIR, the same
+    // way the DELETE below guards before it unlinks.
+    const target = path.resolve(UPLOAD_DIR, storedName);
+    if (!target.startsWith(UPLOAD_DIR + path.sep)) {
+      return reply.code(500).send({ error: 'Refusing to store this upload' });
+    }
+    // Accepted, not fixable in code: storing an upload is the feature, and
+    // js/http-to-file-access has no sanitizers to satisfy (see the same note
+    // in routes/preview.js). The controls: the buffer is sniffed against a
+    // fixed signature table rather than the client's claim, SVG is scanned for
+    // script, event handlers and entities, the size is capped by the multipart
+    // limit and by the check above, the caller is an authenticated editor, the
+    // name is ours, and the path is resolved inside UPLOAD_DIR. Dismiss the
+    // alert in Security -> Code scanning; the check counts it regardless.
+    // codeql[js/http-to-file-access]
+    fs.writeFileSync(target, buffer);
 
     const db = getDb();
     const info = db.prepare(`

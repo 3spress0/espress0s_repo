@@ -121,7 +121,7 @@ export default function ImportJobs({ onNotify }) {
               <input value={form.options.folder} onChange={e => setOpt('folder', e.target.value)} placeholder="Folder slug (optional)" className={input} />
               <input value={form.options.prefix} onChange={e => setOpt('prefix', e.target.value)} placeholder="Slug prefix (default: repo name)" className={input} />
               <input value={form.options.tags} onChange={e => setOpt('tags', e.target.value)} placeholder="Tags, comma separated" className={input} />
-              <input value={form.options.asset_pattern} onChange={e => setOpt('asset_pattern', e.target.value)} placeholder="Asset regex (e.g. linux.*x64)" className={`${input} font-mono`} />
+              <input value={form.options.asset_pattern} onChange={e => setOpt('asset_pattern', e.target.value)} placeholder="Asset filter (e.g. *linux*x64*)" className={`${input} font-mono`} />
               <input value={form.options.platform} onChange={e => setOpt('platform', e.target.value)} placeholder="Platform (windows / linux / …)" className={input} />
               <label className="text-sm text-textSecondary flex items-center gap-2"><input type="checkbox" checked={!!form.options.include_prereleases} onChange={e => setOpt('include_prereleases', e.target.checked)} className="accent-purple-500" /> Include pre-releases</label>
               <label className="text-sm text-textSecondary flex items-center gap-2">Newest <input type="number" min="1" max="200" value={form.options.max_releases} onChange={e => setOpt('max_releases', e.target.value)} className={`${input} !w-20`} /> releases</label>

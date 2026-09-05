@@ -883,7 +883,7 @@ export function seedArchive(db) {
       ['com.opencsv:opencsv', 'opencsv', 'opencsv.'],
       ['com.univocity:univocity-parsers', 'univocity-parsers', 'Fast csv/tsv parsing.'],
     ];
-    for (const [ga, artSlug, desc] of mavenArtifacts) {
+    for (const [ga, , desc] of mavenArtifacts) {
       const [group, artifact] = ga.split(':');
       walk('3.2.0', 30).forEach((v, i) => {
         add({
@@ -946,7 +946,7 @@ export function seedArchive(db) {
       ['Grpc.Tools', 'grpc-tools', 'gRPC protoc tooling.'],
       ['Microsoft.AspNetCore.SignalR.Client', 'signalr-client', 'SignalR client.'],
     ];
-    for (const [id, slugName, desc] of nugetPkgs) {
+    for (const [id, , desc] of nugetPkgs) {
       walk('6.0.0', 36).forEach((v, i) => {
         add({
           name: `nuget: ${id} ${v}`,

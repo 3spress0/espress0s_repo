@@ -11,10 +11,15 @@ import path from 'node:path';
  * Private on-disk database and backup directory, so nothing here can touch the
  * shared test DB or the developer's real backups.
  */
-const TEST_DB = path.join(os.tmpdir(), `restore-test-${process.pid}.db`);
-const TEST_BACKUPS = path.join(os.tmpdir(), `restore-test-backups-${process.pid}`);
-for (const suffix of ['', '-wal', '-shm']) fs.rmSync(TEST_DB + suffix, { force: true });
-fs.rmSync(TEST_BACKUPS, { recursive: true, force: true });
+// Private, unpredictable paths. `restore-test-${process.pid}` is guessable -
+// pids are small and observable - so on a shared machine another local user
+// could pre-create the file or the backup directory and have both this test
+// and the restore it exercises follow it. mkdtempSync gives us a directory
+// nobody else can pre-empt.
+const TMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'espress0-restore-'));
+const TEST_DB = path.join(TMP_ROOT, 'restore-test.db');
+const TEST_BACKUPS = path.join(TMP_ROOT, 'backups');
+fs.mkdirSync(TEST_BACKUPS, { recursive: true });
 process.env.DATABASE_PATH = TEST_DB;
 process.env.BACKUP_DIR = TEST_BACKUPS;
 
@@ -46,8 +51,7 @@ describe('Snapshots and rollback', () => {
   after(() => {
     db.prepare('DELETE FROM item_download_links WHERE item_id = ?').run(seedId);
     db.prepare('DELETE FROM items WHERE slug LIKE ?').run(`${SLUG}%`);
-    for (const suffix of ['', '-wal', '-shm']) fs.rmSync(TEST_DB + suffix, { force: true });
-    fs.rmSync(TEST_BACKUPS, { recursive: true, force: true });
+    fs.rmSync(TMP_ROOT, { recursive: true, force: true });
   });
 
   it('takes a snapshot that is a real SQLite file', async () => {

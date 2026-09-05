@@ -217,7 +217,6 @@ export async function itemsRoutes(fastify) {
       sort = 'date', order = 'desc', page = 1, limit = 20, featured, published = 1,
     } = request.query;
 
-    const db = getDb();
     const { searchService, MAX_QUERY_LENGTH } = await import('../services/searchService.js');
 
     // `?published=0` used to expose every draft - decrypted download URLs

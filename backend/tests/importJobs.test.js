@@ -11,7 +11,7 @@ import Fastify from 'fastify';
  */
 const { getDb } = await import('../src/db/index.js');
 const { importJobRoutes } = await import('../src/routes/importJobs.js');
-const { importJobService, releasesToCatalog, parseRepo, validateJobInput } = await import('../src/services/importJobService.js');
+const { importJobService, releasesToCatalog, parseRepo, validateJobInput, assetFilterToRegExp } = await import('../src/services/importJobService.js');
 const { zip } = await import('../src/lib/zip.js');
 const { generateToken } = await import('../src/middleware/auth.js');
 const cookie = (await import('@fastify/cookie')).default;
@@ -82,7 +82,20 @@ describe('import jobs: github releases mapping', () => {
     assert.throws(() => validateJobInput({ name: 'x', source_type: 'catalog', source_url: 'file:///etc/passwd', mode: 'upsert' }), /http/);
     assert.throws(() => validateJobInput({ name: 'x', source_type: 'github-releases', source_url: 'nope', mode: 'upsert' }), /owner\/repo/);
     assert.throws(() => validateJobInput({ name: 'x', source_type: 'github-releases', source_url: 'a/b', mode: 'wipe' }), /mode/);
-    assert.throws(() => validateJobInput({ name: 'x', source_type: 'github-releases', source_url: 'a/b', mode: 'upsert', options: { asset_pattern: '(' } }), /regular expression/);
+    // asset_pattern is a glob, not a regex: metacharacters are data, so a
+    // stored pattern can never be compiled as one, and only an over-long
+    // filter is refused.
+    const glob = validateJobInput({ name: 'x', source_type: 'github-releases', source_url: 'a/b', mode: 'upsert', options: { asset_pattern: ' (a|b) ' } });
+    assert.equal(glob.options.asset_pattern, '(a|b)', 'trimmed and stored verbatim');
+    // No regex semantics survive the escaping: the dot is not "any character"
+    // and the group is not an alternation.
+    assert.equal(assetFilterToRegExp('a.c').test('abc'), false, 'the dot is a literal dot');
+    assert.equal(assetFilterToRegExp('a.c').test('tool-a.c-x64'), true, 'and matches itself');
+    assert.equal(assetFilterToRegExp('(a|b)').test('a'), false, 'the group is not an alternation');
+    assert.equal(assetFilterToRegExp('(a|b)').test('x(a|b)y'), true, 'it matches literally');
+    assert.equal(assetFilterToRegExp('*linux*x64*').test('tool-2.1.0-LINUX-x64.tar.gz'), true, 'glob wildcards still filter');
+    assert.equal(assetFilterToRegExp('   '), null, 'a blank filter means no filter');
+    assert.throws(() => validateJobInput({ name: 'x', source_type: 'github-releases', source_url: 'a/b', mode: 'upsert', options: { asset_pattern: 'x'.repeat(201) } }), /200 characters or fewer/);
     const ok = validateJobInput({ name: ' Job ', source_type: 'github-releases', source_url: 'https://github.com/a/b', mode: 'add-only', interval_minutes: 1 });
     assert.equal(ok.source_url, 'a/b');
     assert.equal(ok.interval_minutes, 15, 'interval floor');

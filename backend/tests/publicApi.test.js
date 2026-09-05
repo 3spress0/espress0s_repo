@@ -16,6 +16,7 @@ const { encryptionService } = await import('../src/services/encryptionService.js
 const { emitEvent } = await import('../src/services/eventBus.js');
 const rateLimit = (await import('@fastify/rate-limit')).default;
 const cookie = (await import('@fastify/cookie')).default;
+const { urlsIn, hostsIn } = await import('./helpers/responseUrls.mjs');
 
 let app, db, admin;
 const seenKeys = [];
@@ -72,7 +73,7 @@ describe('public api: shape and safety', () => {
     assert.equal(it.mirrors[0].label, 'Mirror A');
     assert.equal(it.mirrors[0].download_url, undefined);
     assert.equal(it.mirrors[0].download_url_api, `/api/download/${it.id}/${it.mirrors[0].id}`);
-    assert.ok(!JSON.stringify(res.json()).includes('secret.example.com'), 'a secret URL leaked somewhere');
+    assert.ok(!hostsIn(JSON.stringify(res.json())).has('secret.example.com'), 'a secret URL leaked somewhere');
     assert.equal(typeof pagination.total_pages, 'number');
   });
 
@@ -168,9 +169,12 @@ describe('public api: rss / atom feeds', () => {
     assert.match(res.headers['content-type'], /application\/rss\+xml/);
     assert.match(res.body, /<rss version="2.0"/);
     assert.match(res.body, /Public &lt;Thing&gt; &amp; Co/);
-    assert.match(res.body, /https?:\/\/repo\.example\.com\/file\/pub-thing/);
+    assert.ok(
+      urlsIn(res.body).some(u => u.host === 'repo.example.com' && u.pathname === '/file/pub-thing'),
+      'feed links to the public page on the request host',
+    );
     assert.doesNotMatch(res.body, /pub-draft/);
-    assert.doesNotMatch(res.body, /secret\.example\.com/);
+    assert.ok(!hostsIn(res.body).has('secret.example.com'), 'a secret URL leaked into the feed');
     db.prepare("UPDATE items SET name = 'Public Thing' WHERE slug = 'pub-thing'").run();
   });
 

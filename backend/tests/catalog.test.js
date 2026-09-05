@@ -26,7 +26,7 @@ const { zip, unzip } = await import('../src/lib/zip.js');
 const {
   CATALOG_FORMAT, CATALOG_VERSION, CATALOG_FILENAME,
   readCatalogFromZip, runCatalogPlan, importCatalogArchive,
-  buildCatalogZip, buildTemplateZip, listImports, getImport, CatalogError,
+  buildCatalogZip, buildTemplateZip, listImports, getImport,
 } = await import('../src/services/catalogService.js');
 
 /** Wrap a catalogue document in the archive the endpoint expects. */

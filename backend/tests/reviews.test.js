@@ -105,6 +105,7 @@ describe('reviews: spam protection and moderation', () => {
     assert.equal(res.statusCode, 200);
     assert.equal(ratingSummary(item.id).count, 2);
     res = await app.inject({ method: 'PATCH', url: `/api/admin/reviews/${id}`, headers: auth(editor), payload: { status: 'hidden' } });
+    assert.equal(res.statusCode, 200, res.body);
     assert.equal(ratingSummary(item.id).count, 1);
     // A hidden review stays hidden if the author edits it.
     res = await app.inject({ method: 'PUT', url: '/api/items/rv-thing/reviews/mine', headers: auth(bob), payload: { rating: 3, comment: 'edited' } });

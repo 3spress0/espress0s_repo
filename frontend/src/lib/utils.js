@@ -89,3 +89,63 @@ export function formatRelativeTime(dateStr) {
   if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
   return `${Math.floor(diffDays / 365)}y ago`;
 }
+
+/**
+ * Work out the provider, a human label and (for Drive/OneDrive) the file id
+ * from a pasted URL, so adding a mirror is one paste instead of four fields.
+ */
+/**
+ * Moved out of DownloadLinksEditor so `node --test` can reach it: the file is
+ * a .jsx module, the test runner is plain Node.
+ */
+export function describeUrl(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  if (!url) return null;
+
+  // Torrent mirrors: a magnet URI (display name from &dn= when present) or a
+  // plain http(s) link to a .torrent file.
+  if (/^magnet:\?/i.test(url)) {
+    const dn = url.match(/[?&]dn=([^&]+)/)?.[1];
+    let name = '';
+    try { name = dn ? decodeURIComponent(dn.replace(/\+/g, ' ')) : ''; } catch { name = ''; }
+    return { provider: 'torrent', label: name ? `Magnet — ${name}`.slice(0, 100) : 'Magnet link', storage_path: '', file_name: name };
+  }
+
+  let host = '';
+  let pathname = '';
+  try {
+    const parsed = new URL(url);
+    if (!/^https?:$/.test(parsed.protocol)) return null;
+    host = parsed.hostname.toLowerCase();
+    pathname = parsed.pathname;
+  } catch {
+    return null;
+  }
+
+  // `host` is the parsed hostname, so match the domain itself or one of its
+  // subdomains - `includes('github.com')` also matches
+  // github.com.attacker.example, which must stay an "external" mirror.
+  const hostIs = (...domains) => domains.some((d) => host === d || host.endsWith(`.${d}`));
+
+  const fileNameGuess = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
+  if (/\.torrent$/i.test(fileNameGuess)) {
+    return { provider: 'torrent', label: `Torrent — ${host.replace(/^www\./, '')}`, storage_path: '', file_name: fileNameGuess };
+  }
+
+  if (hostIs('drive.google.com', 'docs.google.com')) {
+    const id = url.match(/\/d\/([A-Za-z0-9_-]{10,})/)?.[1]
+      || url.match(/[?&]id=([A-Za-z0-9_-]{10,})/)?.[1]
+      || '';
+    return { provider: 'gdrive', label: 'Google Drive', storage_path: id, file_name: '' };
+  }
+  if (hostIs('onedrive.live.com', '1drv.ms', 'sharepoint.com')) {
+    return { provider: 'onedrive', label: 'OneDrive', storage_path: '', file_name: '' };
+  }
+  if (hostIs('github.com', 'githubusercontent.com')) {
+    const repo = pathname.split('/').filter(Boolean).slice(0, 2).join('/');
+    return { provider: 'github', label: repo ? `GitHub — ${repo}` : 'GitHub release', storage_path: '', file_name: fileNameGuess };
+  }
+
+  const bareHost = host.replace(/^www\./, '');
+  return { provider: 'external', label: bareHost, storage_path: '', file_name: fileNameGuess };
+}

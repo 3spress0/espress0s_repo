@@ -3,7 +3,6 @@
  * backend. The unit tests cover the service; this covers multipart upload,
  * auth, CSRF and the response shapes.
  */
-import fs from 'node:fs';
 import { zip } from '/home/user/espress0s_repo/backend/src/lib/zip.js';
 
 const BASE = process.env.E2E_BASE || 'http://localhost:3200/api';
