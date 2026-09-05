@@ -28,6 +28,25 @@ curl -b cookies.txt -F "file=@catalog.zip" \
   "https://repo.example.com/api/admin/catalog/import?mode=upsert&apply=1"
 ```
 
+## Other upload formats: JSON and CSV
+
+The import endpoint (and the drop zone on **Admin → Catalogue**) also accepts
+a bare `.json` file - either a full catalogue object or an array of entries -
+and a `.csv` spreadsheet. Both are converted to `catalog.zip` on the server
+before anything else happens, so validation, modes, duplicate detection,
+snapshots and history are identical. The response carries `converted: "csv"`
+/ `"json"` when this happened. Download `GET /api/admin/catalog/template.csv`
+for a starter sheet.
+
+CSV rules: header names are catalogue field names (`slug`, `name`,
+`description`, `category`, `folder`, `version`, `platform`, `tags`, …).
+`tags` and `related` split on `|` (or `,`); `related` items are
+`slug:relation`. Download links come from `link_label` / `link_url` /
+`link_provider` / `link_path` (and `_2`, `_3`… for more mirrors).
+`requirements` is either JSON or `type:name version | type:name version`.
+`published` / `featured` accept true/false/yes/no/1/0. Empty cells are left
+unset rather than cleared.
+
 ## Import modes
 
 | Mode | Missing in the database | Already present |
@@ -79,6 +98,10 @@ slug on each import.
       "banner_url": "https://example.com/banner.png",
       "documentation_url": "https://ubuntu.com/tutorials",
       "external_url": "https://releases.ubuntu.com/24.04/",
+      "requirements": [
+        { "type": "hardware", "name": "RAM", "version": "4 GB", "note": "8 GB recommended" },
+        { "type": "hardware", "name": "Disk", "version": "25 GB" }
+      ],
       "links": [
         { "label": "Ubuntu releases", "storage_provider": "external",
           "download_url": "https://releases.ubuntu.com/24.04/ubuntu-24.04.1-desktop-amd64.iso",
@@ -99,6 +122,12 @@ written on one install imports cleanly on another.
 It is a lifecycle marker and is independent of `published`: an entry can be
 published and still be the deprecated release of a product line.
 
+`requirements` is an optional list of structured dependency / system
+requirement rows: `type` (`os`, `runtime`, `hardware`, `dependency`, `other`),
+`name`, optional `version` (free text such as `>= 4.8`), `optional` (boolean)
+and `note`. Shown on the public page, returned by `/api/v1/items/:slug`, and
+kept in version snapshots.
+
 `related` links entries by slug. Relations: `related`, `supersedes`,
 `superseded-by`, `variant`. Targets may appear later in the same archive.
 
@@ -109,6 +138,18 @@ published and still be the deprecated release of a product line.
 written — the rest of that entry still imports. Locally uploaded icons are also
 omitted from exports, because they would not resolve on another install; the
 export reports how many were left out.
+
+## Duplicate detection
+
+Identity is by slug, so an entry that arrives under a slightly different slug
+(`7zip-2301` vs `7-zip-23-01`) would be created a second time. Every entry an
+import is about to **create** is therefore compared - by normalised name,
+normalised version and punctuation-stripped slug - against the existing
+catalogue and against earlier entries in the same archive. Matches are listed
+in the preview as `duplicates` (`likely` / `possible`, with a reason) and the
+count is stored on the history row as `duplicate_count`. It is a warning only:
+fix the slug in the archive if it is the same software, or apply as-is if it is
+a legitimate sibling. Same name with a *different* version is not flagged.
 
 ## Errors
 
@@ -241,7 +282,7 @@ column map, so a `?sort=` value can never reach the `ORDER BY` clause.
 | `q` | free text (FTS5; falls back to `LIKE` if the MATCH expression is malformed) |
 | `status` | `current`, `legacy`, `deprecated`, `archived`, `unreleased` |
 | `platform`, `architecture`, `version`, `file_type` | exact (case-insensitive for platform/architecture/file_type) |
-| `storage_provider` | `local`, `gdrive`, `onedrive`, `github`, `external` |
+| `storage_provider` | `local`, `gdrive`, `onedrive`, `github`, `external`; mirrors may also use `torrent` (magnet: URI or `.torrent` URL in `download_url`) |
 | `category`, `folder` | slug or numeric id; `folder=none` means unfiled |
 | `tag` | matches the quoted JSON token, so `iso` does not match `isometric` |
 | `release_from`, `release_to` | `YYYY-MM-DD`, and must be a real calendar date |
@@ -387,3 +428,16 @@ some entries store the function's source text instead of calling it. Roughly 680
 rows end up with an `external_url` like `(v) => \`https://github.com/…\``. The
 catalogue reports these on export and rejects those entries on import rather
 than rewriting them. Fixing the seed data is a separate change.
+
+## Scheduled imports
+
+**Admin → Catalogue → Scheduled imports** runs the same pipeline on a timer. Two sources:
+
+| Source | `source_url` | What it does |
+| --- | --- | --- |
+| `catalog` | URL of a `catalog.zip` or a bare `catalog.json` | Fetches and imports it with the job's mode |
+| `github-releases` | `owner/repo` or a github.com URL | Each release becomes one entry (`<prefix>-<tag>`), each asset one `github` download link |
+
+GitHub options: `category`, `folder`, `prefix`, `tags`, `asset_pattern` (regex on asset names), `include_prereleases`, `max_releases` (≤200), `platform`, `license_status`. Set `GITHUB_TOKEN` in `.env` to raise the API rate limit. Minimum interval is 15 minutes; "Preview" runs the dry run; every applied run appears in the import history with its report. Sources must be public hosts (same SSRF policy as the rest of the app).
+
+API: `GET/POST /api/admin/import-jobs`, `GET/PUT/DELETE /api/admin/import-jobs/:id`, `POST /api/admin/import-jobs/:id/run[?apply=0]`.

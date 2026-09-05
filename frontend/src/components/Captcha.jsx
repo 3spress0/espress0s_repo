@@ -3,12 +3,12 @@ import { RefreshCw, Shield, Calculator, Eye } from 'lucide-react';
 import api from '../lib/api';
 import { LoadingDots } from './Loading';
 
-export default function Captcha({ onVerified, onChange, required = true }) {
+export default function Captcha({ onChange, required = true }) {
   const [captcha, setCaptcha] = useState(null);
   const [answer, setAnswer] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [verified, setVerified] = useState(false);
+  const [, setVerified] = useState(false);
 
   const fetchCaptcha = async () => {
     setLoading(true);
@@ -173,6 +173,9 @@ export function TurnstileCaptcha({ siteKey, onVerified }) {
     return () => {
       try { document.head.removeChild(script); } catch {}
     };
+    // One widget per site key; onVerified is read through the closure on
+    // purpose so a parent re-render does not re-inject the script.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteKey]);
 
   if (!siteKey) {

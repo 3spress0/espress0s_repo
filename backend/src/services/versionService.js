@@ -24,7 +24,7 @@ const RESTORABLE_FIELDS = [
   'architecture', 'sha256', 'md5', 'storage_provider', 'storage_path',
   'download_url', 'external_url', 'featured', 'published', 'license_status',
   'license_notes', 'tags', 'icon_url', 'image_url', 'screenshots',
-  'documentation_url', 'changelog',
+  'documentation_url', 'changelog', 'requirements',
 ];
 
 /** Field list used for "what changed" summaries. */
@@ -32,7 +32,7 @@ const DIFF_FIELDS = [
   'name', 'slug', 'description', 'long_description', 'category_id', 'folder_id',
   'version', 'release_date', 'file_name', 'file_size', 'file_type', 'platform',
   'architecture', 'featured', 'published', 'license_status', 'tags',
-  'icon_url', 'image_url', 'documentation_url', 'changelog',
+  'icon_url', 'image_url', 'documentation_url', 'changelog', 'requirements',
 ];
 
 const eq = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -154,7 +154,7 @@ export function restoreItemVersion(itemId, versionNum, userId) {
         sets.push(`${field} = @${field}`);
         if (['storage_path', 'download_url', 'external_url', 'license_notes'].includes(field)) {
           params[field] = enc[field];
-        } else if (field === 'tags' || field === 'screenshots') {
+        } else if (field === 'tags' || field === 'screenshots' || field === 'requirements') {
           params[field] = Array.isArray(snap[field]) ? JSON.stringify(snap[field]) : (snap[field] ?? null);
         } else if (field === 'featured' || field === 'published') {
           params[field] = snap[field] ? 1 : 0;

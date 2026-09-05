@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import globals from 'globals';
 import reactHooks from 'eslint-plugin-react-hooks';
+import react from 'eslint-plugin-react';
 
 /**
  * ESLint flat config for the frontend.
@@ -19,6 +20,7 @@ export default [
     files: ['**/*.js', '**/*.jsx'],
     plugins: {
       'react-hooks': reactHooks,
+      react,
     },
     languageOptions: {
       ecmaVersion: 2023,
@@ -32,6 +34,11 @@ export default [
       },
     },
     rules: {
+      // Without these two, every component or icon used only in JSX counts as
+      // "unused", which buried no-unused-vars under ~1k false warnings and
+      // made the real dead imports invisible.
+      'react/jsx-uses-react': 'error',
+      'react/jsx-uses-vars': 'error',
       'no-unused-vars': ['warn', {
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',

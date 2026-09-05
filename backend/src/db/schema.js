@@ -17,6 +17,12 @@ CREATE TABLE IF NOT EXISTS users (
   -- Profile default for new favourites. 0 = private (the safe default), 1 =
   -- public. Individual favourites can still be flipped either way.
   favorites_default_public INTEGER NOT NULL DEFAULT 0,
+  -- Optional TOTP second factor. Secret encrypted at rest; recovery codes are
+  -- stored hashed (JSON array), each single-use.
+  totp_secret TEXT,
+  totp_enabled INTEGER NOT NULL DEFAULT 0,
+  totp_recovery TEXT,
+  totp_last_counter INTEGER, -- last accepted TOTP step, refuses code replay
   encryption_version TEXT DEFAULT 'v1',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -82,6 +88,7 @@ CREATE TABLE IF NOT EXISTS items (
   screenshots TEXT, -- JSON array of URLs
   documentation_url TEXT,
   changelog TEXT,
+  requirements TEXT, -- JSON array of {type,name,version,optional,note}
   -- Catalogue lifecycle. Orthogonal to the published flag: an item can be
   -- published and still be the deprecated release of a product line.
   status TEXT DEFAULT 'current' CHECK(status IN ('current', 'legacy', 'deprecated', 'archived', 'unreleased')),
@@ -179,9 +186,10 @@ CREATE TABLE IF NOT EXISTS item_download_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   label TEXT NOT NULL, -- e.g., "Google Drive Mirror 1", "OneDrive EU", "Direct"
-  storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external')),
+  -- 'torrent': download_url holds a magnet: URI or an http(s) .torrent URL.
+  storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external', 'torrent')),
   storage_path TEXT, -- encrypted: file ID or path in external storage
-  download_url TEXT, -- encrypted: direct URL
+  download_url TEXT, -- encrypted: direct URL (or magnet: URI for torrent mirrors)
   file_size INTEGER, -- optional override per mirror
   is_primary INTEGER DEFAULT 0, -- primary mirror
   is_down INTEGER DEFAULT 0, -- marked as down by admin or checker
@@ -284,6 +292,25 @@ CREATE TABLE IF NOT EXISTS favorites (
 );
 
 CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id, created_at DESC);
+
+-- Ratings and reviews (services/reviewService.js). One row per user per
+-- item; rating 1-5 required, comment optional. status: 'visible' | 'pending'
+-- (auto-held for moderation, e.g. contains links) | 'hidden' (moderator).
+CREATE TABLE IF NOT EXISTS reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+  comment TEXT,
+  status TEXT NOT NULL DEFAULT 'visible' CHECK(status IN ('visible', 'pending', 'hidden')),
+  hold_reason TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(item_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_item ON reviews(item_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_user ON reviews(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(status, created_at DESC);
 -- Public profile listing: the favourites one user chose to share.
 CREATE INDEX IF NOT EXISTS idx_favorites_public ON favorites(user_id, is_public);
 -- "How many people starred this file" and the cascade when an item is deleted.
@@ -306,6 +333,7 @@ CREATE TABLE IF NOT EXISTS catalog_imports (
   items_skipped INTEGER DEFAULT 0,
   relations_created INTEGER DEFAULT 0,
   error_count INTEGER DEFAULT 0,
+  duplicate_count INTEGER NOT NULL DEFAULT 0,
   errors_json TEXT, -- JSON array; downloadable via the history endpoint
   backup_path TEXT, -- database backup taken before applying, when one was made
   catalog_format TEXT,
@@ -316,6 +344,95 @@ CREATE TABLE IF NOT EXISTS catalog_imports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_catalog_imports_started ON catalog_imports(started_at DESC);
+
+-- Scheduled import jobs (services/importJobService.js). Each run goes through
+-- the normal catalogue import pipeline and leaves a catalog_imports row.
+CREATE TABLE IF NOT EXISTS import_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK(source_type IN ('catalog', 'github-releases')),
+  source_url TEXT NOT NULL, -- URL for 'catalog', owner/repo for 'github-releases'
+  mode TEXT NOT NULL DEFAULT 'upsert' CHECK(mode IN ('upsert', 'add-only', 'update-only')),
+  interval_minutes INTEGER NOT NULL DEFAULT 360,
+  options TEXT NOT NULL DEFAULT '{}', -- JSON, adapter-specific
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  next_run_at DATETIME,
+  last_run_at DATETIME,
+  last_status TEXT, -- ok | ok-with-errors | failed
+  last_error TEXT,
+  last_report TEXT, -- JSON summary of the last applied run
+  run_count INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Application event log (services/eventBus.js). Feeds webhooks, the RSS feed
+-- and per-user subscriptions. Pruned after 90 days.
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  item_id INTEGER, -- not a FK: the event outlives the row for item.deleted
+  actor_id INTEGER, -- user who caused it, when any
+  payload TEXT NOT NULL, -- JSON, public-safe (no URLs, no encrypted fields)
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type, id DESC);
+CREATE INDEX IF NOT EXISTS idx_events_item ON events(item_id, id DESC);
+
+-- Outgoing webhooks (services/webhookService.js). user_id NULL = site-wide.
+CREATE TABLE IF NOT EXISTS webhooks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  events TEXT NOT NULL, -- JSON array of event types
+  filter_mode TEXT NOT NULL DEFAULT 'all' CHECK(filter_mode IN ('all', 'subscribed')),
+  secret TEXT NOT NULL, -- encrypted; HMAC key for X-Espress0-Signature
+  active INTEGER NOT NULL DEFAULT 1,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  last_delivery_at DATETIME,
+  last_status TEXT, -- 'ok' | 'error'
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_webhooks_user ON webhooks(user_id);
+
+-- Per-user subscriptions to one entry or one tag (services/subscriptionService.js).
+-- A personal webhook with filter_mode = 'subscribed' only receives events
+-- about entries the owner subscribed to (directly or through a tag).
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('item', 'tag')),
+  item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+  tag TEXT, -- normalised tag name
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, kind, item_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_item ON subscriptions(item_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_tag ON subscriptions(tag);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  webhook_id INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+  event_id INTEGER,
+  event_type TEXT NOT NULL,
+  payload TEXT NOT NULL, -- the exact body that was/will be signed and sent
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'delivered', 'failed', 'cancelled')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at DATETIME,
+  last_attempt_at DATETIME,
+  response_status INTEGER,
+  response_body TEXT, -- first 500 chars
+  error TEXT,
+  duration_ms INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook ON webhook_deliveries(webhook_id, id DESC);
 `;
 
 // Sensible starting values. INSERT OR IGNORE means re-running migrations never
@@ -344,6 +461,7 @@ export const DEFAULT_SETTINGS = [
   // behaviour toggles
   { key: 'allow_registration', value: 'true', type: 'boolean', group_name: 'auth', label: 'Allow public registration', description: 'Overrides the ALLOW_REGISTRATION env var when set.', public: 1 },
   { key: 'require_captcha', value: 'true', type: 'boolean', group_name: 'auth', label: 'Require CAPTCHA on login', public: 0 },
+  { key: 'require_mfa_admins', value: 'false', type: 'boolean', group_name: 'auth', label: 'Require two-factor auth for admins', description: 'Admins without TOTP enabled can only reach their Account page until they turn it on.', public: 0 },
   { key: 'show_dev_credentials_panel', value: 'false', type: 'boolean', group_name: 'auth', label: 'Show test-credentials panel on login', description: 'Development aid. Leave off in production.', public: 1 },
   { key: 'ai_enabled', value: 'true', type: 'boolean', group_name: 'ai', label: 'Enable Ask AI', description: 'Turns the AI entry points on or off.', public: 1 },
   // Provider selection. Everything here overrides .env, except the key: an API

@@ -45,6 +45,11 @@ export function getDb() {
     // because existing databases were created before the column existed.
     const hasFavDefault = userCols.some(c => c.name === 'favorites_default_public');
     if (!hasFavDefault) dbInstance.exec("ALTER TABLE users ADD COLUMN favorites_default_public INTEGER NOT NULL DEFAULT 0");
+    // Optional TOTP second factor (see services/totpService.js).
+    if (!userCols.some(c => c.name === 'totp_secret')) dbInstance.exec("ALTER TABLE users ADD COLUMN totp_secret TEXT");
+    if (!userCols.some(c => c.name === 'totp_enabled')) dbInstance.exec("ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0");
+    if (!userCols.some(c => c.name === 'totp_recovery')) dbInstance.exec("ALTER TABLE users ADD COLUMN totp_recovery TEXT");
+    if (!userCols.some(c => c.name === 'totp_last_counter')) dbInstance.exec("ALTER TABLE users ADD COLUMN totp_last_counter INTEGER");
 
     // Email became optional (you can register without one). Databases created
     // before this had `email TEXT UNIQUE NOT NULL`, which rejects the NULL a
@@ -69,17 +74,23 @@ export function getDb() {
             bio TEXT,
             theme TEXT DEFAULT 'dark' CHECK(theme IN ('dark', 'light', 'auto')),
             favorites_default_public INTEGER NOT NULL DEFAULT 0,
+            totp_secret TEXT,
+            totp_enabled INTEGER NOT NULL DEFAULT 0,
+            totp_recovery TEXT,
+            totp_last_counter INTEGER,
             encryption_version TEXT DEFAULT 'v1',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
           );
           INSERT INTO users_new
             (id, username, email, email_hash, password_hash, role, auth_version,
-             avatar_url, bio, theme, favorites_default_public, encryption_version,
+             avatar_url, bio, theme, favorites_default_public,
+             totp_secret, totp_enabled, totp_recovery, totp_last_counter, encryption_version,
              created_at, updated_at)
           SELECT
             id, username, email, email_hash, password_hash, role, auth_version,
-            avatar_url, bio, theme, favorites_default_public, encryption_version,
+            avatar_url, bio, theme, favorites_default_public,
+            totp_secret, totp_enabled, totp_recovery, totp_last_counter, encryption_version,
             created_at, updated_at
           FROM users;
           DROP TABLE users;
@@ -115,7 +126,18 @@ export function getDb() {
     // the schema block runs before this ALTER, so indexing it there would fail
     // with "no such column: status".
     dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_items_status ON items(status)");
+    if (!itemCols.some(c => c.name === 'requirements')) {
+      dbInstance.exec("ALTER TABLE items ADD COLUMN requirements TEXT");
+    }
     const hasFolderId = itemCols.some(c => c.name === 'folder_id');
+    const hookCols = dbInstance.prepare("PRAGMA table_info(webhooks)").all();
+    if (hookCols.length && !hookCols.some(c => c.name === 'filter_mode')) {
+      dbInstance.exec("ALTER TABLE webhooks ADD COLUMN filter_mode TEXT NOT NULL DEFAULT 'all' CHECK(filter_mode IN ('all', 'subscribed'))");
+    }
+    const importCols = dbInstance.prepare("PRAGMA table_info(catalog_imports)").all();
+    if (importCols.length && !importCols.some(c => c.name === 'duplicate_count')) {
+      dbInstance.exec("ALTER TABLE catalog_imports ADD COLUMN duplicate_count INTEGER NOT NULL DEFAULT 0");
+    }
     if (!hasFolderId) {
       dbInstance.exec("ALTER TABLE items ADD COLUMN folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL");
       dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_items_folder ON items(folder_id)");
@@ -128,7 +150,7 @@ export function getDb() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
           label TEXT NOT NULL,
-          storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external')),
+          storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external', 'torrent')),
           storage_path TEXT,
           download_url TEXT,
           file_size INTEGER,
@@ -166,6 +188,50 @@ export function getDb() {
       if (!hasCheckError) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN check_error TEXT");
       const hasCheckDuration = linkCols.some(c => c.name === 'check_duration_ms');
       if (!hasCheckDuration) dbInstance.exec("ALTER TABLE item_download_links ADD COLUMN check_duration_ms INTEGER");
+
+      // Torrent / magnet mirrors (#22). SQLite cannot widen a CHECK constraint
+      // in place, so a database created before 'torrent' was allowed gets the
+      // table rebuilt once. Nothing references item_download_links by foreign
+      // key, so copy -> drop -> rename is safe; indexes are recreated below.
+      const linkSql = dbInstance.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'item_download_links'").get()?.sql || '';
+      // Match the CHECK clause itself: sqlite_master keeps SQL comments, and
+      // the schema comment above the column mentions the word too.
+      if (linkSql && !/CHECK\s*\(\s*storage_provider\s+IN\s*\([^)]*'torrent'/i.test(linkSql)) {
+        const cols = dbInstance.prepare("PRAGMA table_info(item_download_links)").all().map(c => c.name).join(', ');
+        dbInstance.transaction(() => {
+          dbInstance.exec(`
+            CREATE TABLE item_download_links_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+              label TEXT NOT NULL,
+              storage_provider TEXT NOT NULL DEFAULT 'external' CHECK(storage_provider IN ('local', 'gdrive', 'onedrive', 'github', 'external', 'torrent')),
+              storage_path TEXT,
+              download_url TEXT,
+              file_size INTEGER,
+              is_primary INTEGER DEFAULT 0,
+              is_down INTEGER DEFAULT 0,
+              down_reason TEXT,
+              status TEXT DEFAULT 'up' CHECK(status IN ('up', 'down', 'unknown', 'checking')),
+              last_checked DATETIME,
+              http_status INTEGER,
+              check_error TEXT,
+              check_duration_ms INTEGER,
+              sort_order INTEGER DEFAULT 0,
+              download_count INTEGER DEFAULT 0,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO item_download_links_new (${cols}) SELECT ${cols} FROM item_download_links;
+            DROP TABLE item_download_links;
+            ALTER TABLE item_download_links_new RENAME TO item_download_links;
+            CREATE INDEX IF NOT EXISTS idx_download_links_item ON item_download_links(item_id);
+            CREATE INDEX IF NOT EXISTS idx_download_links_primary ON item_download_links(item_id, is_primary);
+            CREATE INDEX IF NOT EXISTS idx_download_links_down ON item_download_links(is_down);
+            CREATE INDEX IF NOT EXISTS idx_download_links_item_status ON item_download_links(item_id, status);
+          `);
+        })();
+        console.log('Migrated item_download_links: torrent/magnet mirrors are now allowed.');
+      }
     } catch (e) {
       console.warn('Download links table migration warning:', e.message);
     }

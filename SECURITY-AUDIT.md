@@ -188,6 +188,24 @@ characters and 12 tokens, Levenshtein short-circuits above 64 characters, and
 
 ---
 
+## Added since the audit
+
+* **Roles.** `editor` is a real role now (create/edit content, no delete, no
+  operations). Gates are per route (`requireRole`), visible in `/api/docs`.
+* **TOTP second factor.** Optional per account, enforceable for admins via
+  a site setting. RFC 6238 over Node's crypto (no dependency); the password
+  step returns a 5-minute single-purpose JWT, never a session; replay of a
+  code inside its window is refused; recovery codes are single-use and
+  stored as SHA-256; the secret is AES-GCM encrypted like the other user
+  fields. `/auth/mfa/verify` shares the login rate limit (10 / 15 min).
+* **Automated scanning.** `.github/dependabot.yml` opens weekly grouped
+  update PRs for backend/frontend npm, GitHub Actions and the Dockerfile base
+  image (advisories immediately). `.github/workflows/security.yml` runs
+  CodeQL (security-and-quality), `dependency-review-action` on pull requests
+  (fails on high), gitleaks for committed secrets, and a report-only
+  `npm audit` over dev dependencies; weekly on a schedule as well. `ci.yml`
+  keeps failing the build on high advisories in production dependencies.
+
 ## Known gaps (accepted, for now)
 
 * **Token in `localStorage`.** The API client reads

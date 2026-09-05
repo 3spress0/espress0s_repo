@@ -16,7 +16,7 @@ import { serializeItem, getItemLinksForMany } from './itemSerializer.js';
 
 const ITEM_STATUSES = ['current', 'legacy', 'deprecated', 'archived', 'unreleased'];
 const LINK_HEALTH_VALUES = ['up', 'down', 'unknown', 'checking', 'missing'];
-const STORAGE_PROVIDERS = ['local', 'gdrive', 'onedrive', 'github', 'external'];
+const STORAGE_PROVIDERS = ['local', 'gdrive', 'onedrive', 'github', 'external', 'torrent'];
 
 /** Allow-listed so a `?sort=` value can never reach the ORDER BY clause. */
 const SORT_COLUMNS = {

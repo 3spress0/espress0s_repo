@@ -5,8 +5,10 @@ import {
   Wand2, GitBranch, Plus, Trash2,
 } from 'lucide-react';
 import { itemsApi, categoriesApi, foldersApi, adminApi, catalogAdminApi } from '../../lib/api';
-import Loading, { LoadingDots } from '../Loading';
+import { LoadingDots } from '../Loading';
 import Progress from '../Progress';
+import RequirementsEditor from './RequirementsEditor';
+import PreviewLinkButton from './PreviewLinkButton';
 import ImagePicker from './ImagePicker';
 import DownloadLinksEditor from './DownloadLinksEditor';
 import MarkdownField from './MarkdownField';
@@ -73,7 +75,7 @@ function emptyForm() {
     architecture: '', sha256: '', md5: '', storage_provider: 'external', storage_path: '',
     download_url: '', external_url: '', featured: false, published: true,
     license_status: 'check-license', license_notes: '', tags: '', icon_url: '',
-    image_url: '', screenshots: '', documentation_url: '', changelog: '',
+    image_url: '', screenshots: '', documentation_url: '', changelog: '', requirements: [],
   };
 }
 
@@ -115,6 +117,7 @@ function itemToForm(item) {
     screenshots: shots.join('\n'),
     documentation_url: item.documentation_url || '',
     changelog: item.changelog || '',
+    requirements: Array.isArray(item.requirements) ? item.requirements : [],
   };
 }
 
@@ -220,6 +223,9 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
         .catch(() => { if (!cancelled) setSlugState(null); });
     }, 400);
     return () => { cancelled = true; clearTimeout(t); };
+    // Debounced slug check: re-run only when the slug itself changes, not on
+    // every keystroke in the name field or on the (unmemoised) helper.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveSlug, item?.id]);
 
   const chooseTemplate = (template) => {
@@ -243,6 +249,9 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
     published: form.published ? 1 : 0,
     tags: splitList(form.tags),
     screenshots: splitList(form.screenshots),
+    requirements: (form.requirements || []).filter(r => (r.name || '').trim()).map(r => ({
+      type: r.type || 'other', name: r.name.trim(), version: r.version?.trim() || null, optional: !!r.optional, note: r.note?.trim() || null,
+    })),
     // Strip empty-string URL fields: the API expects a valid URL or nothing.
     download_url: form.download_url || null,
     external_url: form.external_url || null,
@@ -968,6 +977,9 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
           {field('Architecture', 'architecture', { placeholder: 'x64, arm64, universal' })}
           {field('SHA-256', 'sha256', { mono: true })}
           {field('MD5', 'md5', { mono: true })}
+          <div className="sm:col-span-2 pt-2">
+            <RequirementsEditor value={form.requirements} onChange={(v) => setForm(f => ({ ...f, requirements: v }))} />
+          </div>
         </div>
       )}
 
@@ -1155,6 +1167,7 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
               <LinkIcon className="w-4 h-4" /> Save &amp; publish
             </button>
           )}
+          {isEdit && <PreviewLinkButton itemId={item.id} published={!!form.published} />}
         </div>
       </div>
     </form>

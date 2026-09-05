@@ -1,5 +1,5 @@
 import { getDb } from '../db/index.js';
-import { authenticate, requireAdmin } from '../middleware/auth.js';
+import { authenticate, requireAdmin, requireEditor } from '../middleware/auth.js';
 import { storageManager } from '../services/storage/index.js';
 import { encryptionService } from '../services/encryptionService.js';
 import { monitoringService } from '../services/monitoringService.js';
@@ -13,6 +13,7 @@ import {
 import { autofillFromUrl } from '../services/metadataAutofillService.js';
 import { snapshotDatabase } from '../services/catalogService.js';
 import { listSnapshots, restoreFromSnapshot } from '../services/restoreService.js';
+import { getAnalytics, MAX_DAYS } from '../services/analyticsService.js';
 import { UnsafeUrlError } from '../lib/safeFetch.js';
 import { readFileSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
@@ -36,9 +37,40 @@ const toInt = (value, fallback, min, max) => {
   return Math.min(Math.max(n, min), max);
 };
 
+/**
+ * Routes under /api/admin that an `editor` may call. Everything else in this
+ * plugin is admin-only. The list is explicit on purpose: a new route is
+ * admin-only until someone decides otherwise.
+ */
+export const EDITOR_ROUTES = new Set([
+  'GET /admin/items',
+  'GET /admin/slug-check',
+  'POST /admin/slugify',
+  'POST /admin/items/:id/duplicate',
+  'GET /admin/items/:id/versions',
+  'GET /admin/items/:id/versions/:num',
+  'GET /admin/items/:id/related',
+  'POST /admin/items/:id/related',
+  'DELETE /admin/items/:id/related/:relationId',
+  'GET /admin/catalog/search',
+  'GET /admin/catalog/facets',
+  'GET /admin/catalog/stats',
+  'POST /admin/metadata-autofill',
+  'POST /admin/ai/describe',
+  'POST /admin/ai/fill-gaps',
+]);
+
 export async function adminRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
-  fastify.addHook('preHandler', requireAdmin);
+  // Per-route gate instead of one blanket requireAdmin: the editor allow-list
+  // above gets requireEditor, the rest keeps requireAdmin. Attached in onRoute
+  // so the OpenAPI generator can see the requirement on each route as well.
+  fastify.addHook('onRoute', (route) => {
+    const key = `${route.method} ${route.url.replace(/^\/api/, '')}`;
+    const gate = EDITOR_ROUTES.has(key) ? requireEditor : requireAdmin;
+    const existing = route.preHandler ? (Array.isArray(route.preHandler) ? route.preHandler : [route.preHandler]) : [];
+    route.preHandler = [gate, ...existing];
+  });
 
   // Auto-update status: what scripts/auto-update.sh last wrote to its state
   // file, plus where the checkout currently sits. Read-only - enabling or
@@ -85,6 +117,12 @@ export async function adminRoutes(fastify) {
       }
     };
   });
+
+  // Analytics dashboard (#20): read-only aggregate over what is already
+  // recorded. ?days=7|30|90|365 sets the window for the time series.
+  fastify.get('/admin/analytics', {
+    schema: { tags: ['Admin'], summary: 'Usage analytics: downloads, activity, reviews, users, links, webhooks' },
+  }, async (request) => getAnalytics({ days: toInt(request.query?.days, 30, 1, MAX_DAYS) }));
 
   fastify.post('/admin/reindex', async (request, reply) => {
     const db = getDb();
@@ -756,7 +794,7 @@ export async function adminRoutes(fastify) {
     if (conditions.length) where = 'WHERE ' + conditions.join(' AND ');
 
     const total = db.prepare(`SELECT COUNT(*) as c FROM users ${where}`).get(params).c;
-    const usersRaw = db.prepare(`SELECT id, username, email, email_hash, role, encryption_version, created_at, updated_at FROM users ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`).all({
+    const usersRaw = db.prepare(`SELECT id, username, email, email_hash, role, totp_enabled AS mfa_enabled, encryption_version, created_at, updated_at FROM users ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`).all({
       ...params,
       limit: pageSize,
       offset,
@@ -791,7 +829,7 @@ export async function adminRoutes(fastify) {
   fastify.get('/admin/users/:id', async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
-    const userRaw = db.prepare('SELECT id, username, email, email_hash, role, encryption_version, created_at, updated_at FROM users WHERE id = ?').get(id);
+    const userRaw = db.prepare('SELECT id, username, email, email_hash, role, totp_enabled AS mfa_enabled, encryption_version, created_at, updated_at FROM users WHERE id = ?').get(id);
     if (!userRaw) return reply.code(404).send({ error: 'User not found' });
 
     let decryptedEmail = userRaw.email;

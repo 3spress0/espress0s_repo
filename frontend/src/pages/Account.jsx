@@ -1,14 +1,19 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { User, Mail, Lock, Save, Shield, Eye, EyeOff, FileText, LogOut, AlertTriangle, Check, Coffee, Palette, Star, Globe } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { User, Mail, Lock, Save, Shield, Eye, EyeOff, LogOut, AlertTriangle, Check, Coffee, Palette, Star, Globe, Bell } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import StarryBackground from '../components/StarryBackground';
 import ThemePicker from '../components/ThemePicker';
+import LanguagePicker from '../components/LanguagePicker';
 import { useTheme } from '../context/ThemeContext';
 import Logo from '../components/Logo';
 import { LoadingDots, LoadingPanel } from '../components/Loading';
 import FavoritesPanel from '../components/FavoritesPanel';
+import RecentlyViewed from '../components/RecentlyViewed';
+import SubscriptionsPanel from '../components/SubscriptionsPanel';
+import WebhookManager from '../components/WebhookManager';
+import TwoFactorPanel from '../components/TwoFactorPanel';
 
 export default function Account() {
   const themeCtx = useTheme();
@@ -23,7 +28,9 @@ export default function Account() {
   // Two views of the same account: the profile form, and the files starred
   // from the catalogue. Favourites live on their own tab rather than below the
   // form, which is already a full page of fields.
-  const [tab, setTab] = useState('profile');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => (['profile', 'favorites', 'notifications', 'security'].includes(searchParams.get('tab')) ? searchParams.get('tab') : 'profile'));
+  const mfaForced = searchParams.get('mfa') === 'required';
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -189,6 +196,8 @@ export default function Account() {
           {[
             { id: 'profile', label: 'Profile', icon: User },
             { id: 'favorites', label: 'Favourites', icon: Star },
+            { id: 'notifications', label: 'Notifications', icon: Bell },
+            { id: 'security', label: 'Security', icon: Shield },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -281,7 +290,28 @@ export default function Account() {
 
           <div className="lg:col-span-2 space-y-6">
             {tab === 'favorites' ? (
-              <FavoritesPanel onError={setError} />
+              <>
+                <FavoritesPanel onError={setError} />
+                <RecentlyViewed limit={12} className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl" />
+              </>
+            ) : tab === 'notifications' ? (
+              <>
+                <SubscriptionsPanel onError={setError} />
+                <div className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl">
+                  <h2 className="text-xl font-bold text-textPrimary mb-4">Personal webhooks</h2>
+                  <WebhookManager scope="me" />
+                </div>
+              </>
+            ) : tab === 'security' ? (
+              <>
+                {mfaForced && !user?.mfa_enabled && (
+                  <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-sm text-amber-200 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <span>This site requires two-factor authentication for admin accounts. Turn it on below to continue using the admin area.</span>
+                  </div>
+                )}
+                <TwoFactorPanel onError={setError} onSuccess={setSuccess} />
+              </>
             ) : (
             <>
             {/* Appearance: the scheme is a per-browser preference, so it is not
@@ -304,6 +334,9 @@ export default function Account() {
                   Your device asks for reduced motion, so the starfield and aurora animations are paused.
                 </p>
               )}
+              <div className="mt-6 pt-6 border-t border-white/5">
+                <LanguagePicker />
+              </div>
             </div>
 
             <div className="glass rounded-3xl border border-white/5 p-8 backdrop-blur-xl">

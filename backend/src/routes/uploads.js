@@ -3,7 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { getDb } from '../db/index.js';
-import { authenticate, requireAdmin } from '../middleware/auth.js';
+import { authenticate, requireAdmin, requireEditor } from '../middleware/auth.js';
 import { getSetting } from '../services/settingsService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -122,7 +122,7 @@ export async function uploadsRoutes(fastify) {
   });
 
   /** GET /api/admin/uploads - list uploads for the media picker. */
-  fastify.get('/admin/uploads', { preHandler: [authenticate, requireAdmin] }, async (request) => {
+  fastify.get('/admin/uploads', { preHandler: [authenticate, requireEditor] }, async (request) => {
     const db = getDb();
     const kind = request.query?.kind;
     const rows = kind
@@ -147,7 +147,7 @@ export async function uploadsRoutes(fastify) {
    * POST /api/admin/uploads - upload an image.
    * multipart/form-data field `file`, or JSON { dataUrl }.
    */
-  fastify.post('/admin/uploads', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.post('/admin/uploads', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const maxBytes = getSetting('uploads_max_bytes', DEFAULT_MAX_BYTES) || DEFAULT_MAX_BYTES;
 
     let buffer = null;

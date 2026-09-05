@@ -140,13 +140,21 @@ api.interceptors.response.use(
       // Session expired/invalidated - nothing to clear client-side any more;
       // components react to the rejection.
     }
+    // "Require two-factor auth for admins" is on and this admin has not
+    // enrolled: the API only allows the enrolment routes, so send them there.
+    if (status === 403 && error.response?.data?.mfaSetupRequired && !window.location.pathname.startsWith('/account')) {
+      window.location.assign('/account?tab=security&mfa=required');
+    }
     return Promise.reject(error);
   }
 );
 
 export const itemsApi = {
   list: (params) => api.get('/items', { params }).then(r => r.data),
-  get: (slug) => api.get(`/items/${slug}`).then(r => r.data),
+  get: (slug, params) => api.get(`/items/${slug}`, { params }).then(r => r.data),
+  /** Signed, expiring link that opens a draft to anyone holding it (no downloads). */
+  similar: (slug, params) => api.get(`/items/${encodeURIComponent(slug)}/similar`, { params }).then(r => r.data),
+  previewLink: (id, ttlHours) => api.post(`/items/${id}/preview-link`, { ttl_hours: ttlHours }).then(r => r.data),
   create: (data) => api.post('/items', data).then(r => r.data),
   update: (id, data) => api.put(`/items/${id}`, data).then(r => r.data),
   delete: (id) => api.delete(`/items/${id}`).then(r => r.data),
@@ -198,6 +206,15 @@ export const aiApi = {
 
 export const authApi = {
   login: (creds) => api.post('/auth/login', creds).then(r => r.data),
+  /** Step two of a login when the account has TOTP on. */
+  mfaVerify: (mfaToken, code) => api.post('/auth/mfa/verify', { mfaToken, code }).then(r => r.data),
+  mfa: {
+    status: () => api.get('/auth/mfa').then(r => r.data),
+    setup: () => api.post('/auth/mfa/setup').then(r => r.data),
+    enable: (code) => api.post('/auth/mfa/enable', { code }).then(r => r.data),
+    disable: (password, code) => api.post('/auth/mfa/disable', { password, code }).then(r => r.data),
+    recoveryCodes: (code) => api.post('/auth/mfa/recovery-codes', { code }).then(r => r.data),
+  },
   register: (data) => api.post('/auth/register', data).then(r => r.data),
   me: () => api.get('/auth/me').then(r => r.data),
   logout: () => api.post('/auth/logout').then(r => r.data),
@@ -215,6 +232,15 @@ export const authApi = {
  * means "use the profile default". Everything here needs a session - the
  * public, session-free view of someone's list is usersApi below.
  */
+export const reviewsApi = {
+  list: (slug, params) => api.get(`/items/${encodeURIComponent(slug)}/reviews`, { params }).then(r => r.data),
+  save: (slug, { rating, comment }) => api.put(`/items/${encodeURIComponent(slug)}/reviews/mine`, { rating, comment }).then(r => r.data),
+  remove: (slug) => api.delete(`/items/${encodeURIComponent(slug)}/reviews/mine`).then(r => r.data),
+  adminList: (params) => api.get('/admin/reviews', { params }).then(r => r.data),
+  setStatus: (id, status) => api.patch(`/admin/reviews/${id}`, { status }).then(r => r.data),
+  adminRemove: (id) => api.delete(`/admin/reviews/${id}`).then(r => r.data),
+};
+
 export const favoritesApi = {
   list: (params) => api.get('/favorites', { params }).then(r => r.data),
   add: ({ itemId, slug, isPublic }) => api.post('/favorites', {
@@ -244,6 +270,7 @@ export const captchaApi = {
 
 export const adminApi = {
   overview: () => api.get('/admin/overview').then(r => r.data),
+  analytics: (days) => api.get('/admin/analytics', { params: { days } }).then(r => r.data),
   reindex: () => api.post('/admin/reindex').then(r => r.data),
   storage: () => api.get('/admin/storage').then(r => r.data),
   validateStorage: (provider, path) => api.post('/admin/validate-storage', { provider, path }).then(r => r.data),
@@ -297,6 +324,43 @@ export const backupApi = {
  * Admin catalogue management: filtered FTS search, bulk edits, dashboard
  * statistics, slug generation and metadata autofill.
  */
+function webhookScope(base) {
+  return {
+    list: () => api.get(base).then(r => r.data),
+    get: (id) => api.get(`${base}/${id}`).then(r => r.data),
+    create: (data) => api.post(base, data).then(r => r.data),
+    update: (id, data) => api.put(`${base}/${id}`, data).then(r => r.data),
+    remove: (id) => api.delete(`${base}/${id}`).then(r => r.data),
+    test: (id) => api.post(`${base}/${id}/test`).then(r => r.data),
+    redeliver: (id, deliveryId) => api.post(`${base}/${id}/deliveries/${deliveryId}/redeliver`).then(r => r.data),
+  };
+}
+
+/** Outgoing webhooks: site-wide (admin) and the signed-in user's own. */
+export const webhooksApi = {
+  admin: webhookScope('/admin/webhooks'),
+  me: webhookScope('/webhooks'),
+  events: (params) => api.get('/admin/events', { params }).then(r => r.data),
+};
+
+/** Followed entries and tags (feeds 'subscriptions only' personal webhooks). */
+export const subscriptionsApi = {
+  list: () => api.get('/subscriptions').then(r => r.data),
+  followItem: (slug) => api.post('/subscriptions', { kind: 'item', item_slug: slug }).then(r => r.data),
+  followTag: (tag) => api.post('/subscriptions', { kind: 'tag', tag }).then(r => r.data),
+  remove: (id) => api.delete(`/subscriptions/${id}`).then(r => r.data),
+  status: (slug) => api.get(`/subscriptions/status/${encodeURIComponent(slug)}`).then(r => r.data),
+};
+
+/** Scheduled imports (admin). */
+export const importJobsApi = {
+  list: () => api.get('/admin/import-jobs').then(r => r.data),
+  create: (data) => api.post('/admin/import-jobs', data).then(r => r.data),
+  update: (id, data) => api.put(`/admin/import-jobs/${id}`, data).then(r => r.data),
+  remove: (id) => api.delete(`/admin/import-jobs/${id}`).then(r => r.data),
+  run: (id, apply = true) => api.post(`/admin/import-jobs/${id}/run`, null, { params: { apply: apply ? 1 : 0 }, timeout: 120000 }).then(r => r.data),
+};
+
 export const catalogAdminApi = {
   /** FTS5 search with the admin filter set; sort is allow-listed server-side. */
   search: (params) => api.get('/admin/catalog/search', { params, timeout: AI_TIMEOUT }).then(r => r.data),
@@ -327,6 +391,8 @@ export const catalogApi = {
   export: () => api.get('/admin/catalog/export', { responseType: 'blob', timeout: AI_TIMEOUT }).then(r => r.data),
   /** Starter archive with two fully-populated example entries. */
   template: () => api.get('/admin/catalog/template', { responseType: 'blob' }).then(r => r.data),
+  /** Starter spreadsheet for CSV bulk import. */
+  templateCsv: () => api.get('/admin/catalog/template.csv', { responseType: 'blob' }).then(r => r.data),
   history: (limit = 50) => api.get('/admin/catalog/imports', { params: { limit } }).then(r => r.data),
   get: (id) => api.get(`/admin/catalog/imports/${id}`).then(r => r.data),
   errors: (id, format = 'json') => api.get(`/admin/catalog/imports/${id}/errors`, {

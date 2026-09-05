@@ -1,7 +1,7 @@
 import { getDb } from '../db/index.js';
 import { makeSlug } from '../utils/slug.js';
 import { folderSchema } from '../utils/validation.js';
-import { authenticate, optionalAuthenticate, requireAdmin } from '../middleware/auth.js';
+import { authenticate, optionalAuthenticate, requireAdmin, requireEditor, roleAtLeast } from '../middleware/auth.js';
 import { serializeItem, getItemLinksForMany } from '../services/itemSerializer.js';
 
 /**
@@ -33,7 +33,7 @@ export async function foldersRoutes(fastify) {
     const folder = db.prepare('SELECT * FROM folders WHERE slug = ? OR id = ?').get(slug, slug);
     if (!folder) return reply.code(404).send({ error: 'Folder not found' });
 
-    const isAdmin = request.user?.role === 'admin';
+    const isAdmin = roleAtLeast(request.user?.role, 'editor');
     const itemsRaw = db.prepare(`
       SELECT * FROM items
       WHERE folder_id = ? ${isAdmin ? '' : 'AND published = 1'}
@@ -53,7 +53,7 @@ export async function foldersRoutes(fastify) {
   });
 
   // GET /api/admin/folders - same list but with counts including drafts
-  fastify.get('/admin/folders', { preHandler: [authenticate, requireAdmin] }, async () => {
+  fastify.get('/admin/folders', { preHandler: [authenticate, requireEditor] }, async () => {
     const db = getDb();
     const folders = db.prepare(`
       SELECT f.*,
@@ -68,7 +68,7 @@ export async function foldersRoutes(fastify) {
   });
 
   // POST /api/folders - create (admin)
-  fastify.post('/folders', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.post('/folders', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const parsed = folderSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
 
@@ -89,7 +89,7 @@ export async function foldersRoutes(fastify) {
   });
 
   // PUT /api/folders/:id - update (admin)
-  fastify.put('/folders/:id', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
+  fastify.put('/folders/:id', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
     const existing = db.prepare('SELECT * FROM folders WHERE id = ?').get(id);

@@ -7,6 +7,10 @@ import { captchaService } from '../services/captchaService.js';
 import { getSetting } from '../services/settingsService.js';
 import crypto from 'crypto';
 import { z } from 'zod';
+import jwt from 'jsonwebtoken';
+import {
+  generateSecret, verifyTotp, otpauthUri, generateRecoveryCodes, consumeRecoveryCode,
+} from '../services/totpService.js';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 let warnedAboutInsecureCookie = false;
@@ -118,6 +122,52 @@ function captchaRequired() {
   return getSetting('require_captcha', true) !== false;
 }
 
+/** How long the password-only step stays valid for the code step. */
+const MFA_TOKEN_TTL = '5m';
+
+/**
+ * Validate a second-factor input against a user row: a TOTP code first (with
+ * replay protection - the same step is never accepted twice), then the
+ * recovery codes. Consumes the recovery code on success.
+ */
+function checkSecondFactor(db, user, code) {
+  const input = String(code || '').trim();
+  if (user.totp_secret && /^\d{6}$/.test(input.replace(/\s+/g, ''))) {
+    let secret;
+    try { secret = encryptionService.decrypt(user.totp_secret); } catch { secret = null; }
+    if (secret) {
+      const result = verifyTotp(secret, input);
+      if (result.ok) {
+        if (user.totp_last_counter !== null && user.totp_last_counter !== undefined && result.counter <= user.totp_last_counter) {
+          return { ok: false, reason: 'replay' };
+        }
+        db.prepare('UPDATE users SET totp_last_counter = ? WHERE id = ?').run(result.counter, user.id);
+        return { ok: true, via: 'totp' };
+      }
+    }
+    return { ok: false };
+  }
+  const remaining = consumeRecoveryCode(user.totp_recovery, input);
+  if (remaining === null) return { ok: false };
+  db.prepare('UPDATE users SET totp_recovery = ? WHERE id = ?').run(JSON.stringify(remaining), user.id);
+  return { ok: true, via: 'recovery', recoveryCodesLeft: remaining.length };
+}
+
+/** Mint the session for a fully authenticated user and set the cookies. */
+function finishLogin(request, reply, user, extra = {}) {
+  let decryptedEmail = user.email;
+  try { decryptedEmail = encryptionService.decrypt(user.email); } catch {}
+  let decAvatar = null; try { decAvatar = user.avatar_url ? encryptionService.decrypt(user.avatar_url) : null; } catch {}
+  let decBio = null; try { decBio = user.bio ? encryptionService.decrypt(user.bio) : null; } catch {}
+  const token = generateToken({ ...user, email: decryptedEmail });
+  const csrfToken = issueSessionCookies(request, reply, token);
+  request.log.info({ userId: user.id, username: user.username }, 'User logged in with cookies');
+  return {
+    token, csrfToken, ...extra,
+    user: { id: user.id, username: user.username, email: decryptedEmail, role: user.role, avatar_url: decAvatar, bio: decBio, theme: user.theme || 'dark', mfa_enabled: !!user.totp_enabled },
+  };
+}
+
 export async function authRoutes(fastify) {
   fastify.post('/auth/login', {
     config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }
@@ -160,16 +210,125 @@ export async function authRoutes(fastify) {
       db.prepare('UPDATE users SET password_hash = ?, encryption_version = ? WHERE id = ?').run(newHash, 'v1', user.id);
       user = { ...user, password_hash: newHash };
     }
-    let decryptedEmail = user.email;
-    try { decryptedEmail = encryptionService.decrypt(user.email); } catch {}
-    let decAvatar = null; try { decAvatar = user.avatar_url ? encryptionService.decrypt(user.avatar_url) : null; } catch {}
-    let decBio = null; try { decBio = user.bio ? encryptionService.decrypt(user.bio) : null; } catch {}
-    const token = generateToken({ ...user, email: decryptedEmail });
+    // Second factor: the password step alone yields a short-lived MFA token,
+    // never a session. The session is minted by /auth/mfa/verify.
+    if (user.totp_enabled) {
+      const mfaToken = jwt.sign(
+        { id: user.id, purpose: 'mfa', av: user.auth_version || 0 },
+        config.security.jwtSecret,
+        { expiresIn: MFA_TOKEN_TTL, algorithm: 'HS256' },
+      );
+      return { mfaRequired: true, mfaToken, expiresIn: MFA_TOKEN_TTL };
+    }
 
-    const csrfToken = issueSessionCookies(request, reply, token);
+    return finishLogin(request, reply, user);
+  });
 
-    request.log.info({ userId: user.id, username: user.username }, 'User logged in with cookies');
-    return { token, csrfToken, user: { id: user.id, username: user.username, email: decryptedEmail, role: user.role, avatar_url: decAvatar, bio: decBio, theme: user.theme || 'dark' } };
+  /**
+   * Step two of a login for accounts with TOTP on. Accepts either a 6-digit
+   * code or one of the recovery codes. Rate-limited like login itself: the
+   * MFA token is what the attacker would be brute-forcing against.
+   */
+  fastify.post('/auth/mfa/verify', {
+    config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }
+  }, async (request, reply) => {
+    const { mfaToken, code } = request.body || {};
+    if (typeof mfaToken !== 'string' || typeof code !== 'string') {
+      return reply.code(400).send({ error: 'mfaToken and code are required' });
+    }
+    let decoded;
+    try {
+      decoded = jwt.verify(mfaToken, config.security.jwtSecret, { algorithms: ['HS256'] });
+    } catch {
+      return reply.code(401).send({ error: 'Sign-in expired - start again', restart: true });
+    }
+    if (decoded.purpose !== 'mfa') return reply.code(401).send({ error: 'Invalid token', restart: true });
+
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(decoded.id);
+    if (!user || !user.totp_enabled) return reply.code(401).send({ error: 'Invalid token', restart: true });
+    if (Number(decoded.av) !== (user.auth_version || 0)) return reply.code(401).send({ error: 'Sign-in expired - start again', restart: true });
+
+    const outcome = checkSecondFactor(db, user, code);
+    if (!outcome.ok) return reply.code(401).send({ error: 'Invalid code' });
+
+    request.log.info({ userId: user.id, via: outcome.via }, 'MFA verified');
+    return finishLogin(request, reply, user, { recoveryCodesLeft: outcome.recoveryCodesLeft });
+  });
+
+  // ---- TOTP management for the signed-in user --------------------------
+
+  /** Current state: on/off, and how many recovery codes remain. */
+  fastify.get('/auth/mfa', { preHandler: [authenticate] }, async (request) => {
+    const db = getDb();
+    const row = db.prepare('SELECT totp_enabled, totp_recovery FROM users WHERE id = ?').get(request.user.id);
+    let left = 0;
+    try { left = JSON.parse(row?.totp_recovery || '[]').length; } catch {}
+    return { enabled: !!row?.totp_enabled, recoveryCodesLeft: left };
+  });
+
+  /**
+   * Start enrolment: mint a secret and hand back the otpauth URI. Nothing is
+   * enforced until /auth/mfa/enable confirms the user can produce a code.
+   * Re-running replaces an unconfirmed secret; refused while MFA is on
+   * (disable first, with a code).
+   */
+  fastify.post('/auth/mfa/setup', { preHandler: [authenticate] }, async (request, reply) => {
+    const db = getDb();
+    const row = db.prepare('SELECT totp_enabled FROM users WHERE id = ?').get(request.user.id);
+    if (row?.totp_enabled) return reply.code(409).send({ error: 'Two-factor authentication is already enabled' });
+    const secret = generateSecret();
+    db.prepare('UPDATE users SET totp_secret = ?, totp_enabled = 0, totp_recovery = NULL, totp_last_counter = NULL WHERE id = ?')
+      .run(encryptionService.encrypt(secret), request.user.id);
+    const issuer = String(getSetting('site_name', "espress0's repo") || "espress0's repo").replace(/[:\s]+/g, ' ').trim();
+    return { secret, otpauth: otpauthUri({ secret, account: request.user.username, issuer }), issuer };
+  });
+
+  /** Confirm enrolment with a live code; returns the recovery codes once. */
+  fastify.post('/auth/mfa/enable', { preHandler: [authenticate], config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+    const { code } = request.body || {};
+    const db = getDb();
+    const row = db.prepare('SELECT totp_secret, totp_enabled FROM users WHERE id = ?').get(request.user.id);
+    if (row?.totp_enabled) return reply.code(409).send({ error: 'Two-factor authentication is already enabled' });
+    if (!row?.totp_secret) return reply.code(400).send({ error: 'Run setup first' });
+    const secret = encryptionService.decrypt(row.totp_secret);
+    const result = verifyTotp(secret, code);
+    if (!result.ok) return reply.code(400).send({ error: 'Invalid code - check the time on your device and try again' });
+    const { codes, hashes } = generateRecoveryCodes();
+    db.prepare('UPDATE users SET totp_enabled = 1, totp_recovery = ?, totp_last_counter = ? WHERE id = ?')
+      .run(JSON.stringify(hashes), result.counter, request.user.id);
+    request.log.info({ userId: request.user.id }, 'MFA enabled');
+    return { enabled: true, recoveryCodes: codes };
+  });
+
+  /** Turn it off. Needs the password AND a current code (or a recovery code). */
+  fastify.post('/auth/mfa/disable', { preHandler: [authenticate], config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+    const { password, code } = request.body || {};
+    if (typeof password !== 'string' || typeof code !== 'string') {
+      return reply.code(400).send({ error: 'password and code are required' });
+    }
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(request.user.id);
+    if (!user?.totp_enabled) return reply.code(400).send({ error: 'Two-factor authentication is not enabled' });
+    if (!(await encryptionService.verifyPasswordWithPepper(password, user.password_hash))) {
+      return reply.code(401).send({ error: 'Invalid password' });
+    }
+    if (!checkSecondFactor(db, user, code).ok) return reply.code(401).send({ error: 'Invalid code' });
+    db.prepare('UPDATE users SET totp_secret = NULL, totp_enabled = 0, totp_recovery = NULL, totp_last_counter = NULL WHERE id = ?').run(user.id);
+    request.log.info({ userId: user.id }, 'MFA disabled');
+    return { enabled: false };
+  });
+
+  /** Fresh recovery codes (invalidates the old set). Needs a current code. */
+  fastify.post('/auth/mfa/recovery-codes', { preHandler: [authenticate], config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+    const { code } = request.body || {};
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(request.user.id);
+    if (!user?.totp_enabled) return reply.code(400).send({ error: 'Two-factor authentication is not enabled' });
+    if (!checkSecondFactor(db, user, code).ok) return reply.code(401).send({ error: 'Invalid code' });
+    const { codes, hashes } = generateRecoveryCodes();
+    db.prepare('UPDATE users SET totp_recovery = ? WHERE id = ?').run(JSON.stringify(hashes), user.id);
+    return { recoveryCodes: codes };
   });
 
   fastify.post('/auth/register', {
@@ -237,8 +396,9 @@ export async function authRoutes(fastify) {
     let user = request.user;
     if (user) {
       const db = getDb();
-      const fullUser = db.prepare('SELECT email, avatar_url, bio, theme FROM users WHERE id = ?').get(user.id);
+      const fullUser = db.prepare('SELECT email, avatar_url, bio, theme, totp_enabled FROM users WHERE id = ?').get(user.id);
       if (fullUser) {
+        user = { ...user, mfa_enabled: !!fullUser.totp_enabled };
         try { user = { ...user, email: encryptionService.decrypt(fullUser.email) }; } catch {}
         try { user = { ...user, avatar_url: fullUser.avatar_url ? encryptionService.decrypt(fullUser.avatar_url) : null }; } catch {}
         try { user = { ...user, bio: fullUser.bio ? encryptionService.decrypt(fullUser.bio) : null }; } catch {}
