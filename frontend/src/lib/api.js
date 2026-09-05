@@ -153,6 +153,7 @@ export const itemsApi = {
   list: (params) => api.get('/items', { params }).then(r => r.data),
   get: (slug, params) => api.get(`/items/${slug}`, { params }).then(r => r.data),
   /** Signed, expiring link that opens a draft to anyone holding it (no downloads). */
+  similar: (slug, params) => api.get(`/items/${encodeURIComponent(slug)}/similar`, { params }).then(r => r.data),
   previewLink: (id, ttlHours) => api.post(`/items/${id}/preview-link`, { ttl_hours: ttlHours }).then(r => r.data),
   create: (data) => api.post('/items', data).then(r => r.data),
   update: (id, data) => api.put(`/items/${id}`, data).then(r => r.data),

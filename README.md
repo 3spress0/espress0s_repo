@@ -180,6 +180,25 @@ only) charts what the app already records - no extra tracking is added:
 - mirror health, webhook deliveries, import runs and the in-process request
   metrics (the deeper process view stays under Monitoring).
 
+## Similar software
+
+Every published entry shows a "Similar software" block
+(`GET /api/items/:slug/similar`, add `?ai=0` to skip the model). The list is
+built in two layers:
+
+1. **Deterministic scoring** over the catalogue: curator-made relations
+   (Admin → related items) weigh most, then shared tags, same category,
+   same platform, and an FTS5 match on name + description. This alone is the
+   answer when no AI provider is configured, when it errors, or when it times
+   out - the response carries `usedAI: false` and the page shows
+   "catalogue match".
+2. **Optional AI rerank**: the configured provider receives only the
+   candidate pool (id, name, one line) and may reorder it and add a short
+   reason. It cannot add entries - unknown ids are dropped - so it never
+   points at software the archive does not have.
+
+Results are cached for ten minutes per entry and flushed on any item write.
+
 ## Ratings and reviews
 
 Signed-in users can rate any published entry from 1 to 5 stars and leave an

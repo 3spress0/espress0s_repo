@@ -10,6 +10,8 @@ import { emitEvent, itemSummary } from '../services/eventBus.js';
 import { getFavorite, countItemFavorites, getPublicFavoritedBy } from '../services/favoritesService.js';
 import { createPreviewToken, verifyPreviewToken, DEFAULT_TTL_HOURS } from '../services/previewLinkService.js';
 import { ratingSummary } from '../services/reviewService.js';
+import { similarItems } from '../services/similarService.js';
+import { aiService } from '../services/aiService.js';
 
 function decryptItem(item) {
   if (!item) return item;
@@ -523,6 +525,22 @@ export async function itemsRoutes(fastify) {
   });
 
   // POST /api/items/:id/preview-link - signed, expiring link to a draft.
+  // "Similar software" (#21): deterministic catalogue scoring, optionally
+  // reranked by the configured AI provider. Never returns anything outside the
+  // published catalogue; the AI can only reorder what the scorer proposed.
+  fastify.get('/items/:slug/similar', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    schema: { tags: ['Items'], summary: 'Similar entries (deterministic scoring, optional AI rerank)' },
+  }, async (request, reply) => {
+    const db = getDb();
+    const key = String(request.params.slug).slice(0, 200);
+    const item = db.prepare('SELECT id FROM items WHERE (slug = ? OR id = ?) AND published = 1').get(key, /^\d+$/.test(key) ? Number(key) : -1);
+    if (!item) return reply.code(404).send({ error: 'Item not found' });
+    const noAi = String(request.query?.ai ?? '') === '0';
+    const res = await similarItems(item.id, { limit: request.query?.limit, aiService: noAi ? null : aiService });
+    return { ...res, items: res.items.map(i => ({ ...decryptItem(i), score: i.score, why: i.why })) };
+  });
+
   fastify.post('/items/:id/preview-link', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const db = getDb();
     const item = db.prepare('SELECT id, slug, published FROM items WHERE id = ?').get(request.params.id);
