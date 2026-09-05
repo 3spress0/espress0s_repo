@@ -102,7 +102,13 @@ export function updateSettings(patch, { allowUnknownKeys = false } = {}) {
     ON CONFLICT(key) DO UPDATE SET value = @value, updated_at = CURRENT_TIMESTAMP
   `);
 
-  const written = Object.create(null);
+  // Accumulate in a Map. `written[key] = …` driven by request-body keys is
+  // exactly what js/remote-property-injection hunts for, and no guard it can
+  // see clears that sink; a Map has no prototype for a key to reach (this is
+  // the query's own recommended fix), and Object.fromEntries creates data
+  // properties rather than assigning them. The RESERVED_KEYS refusal above
+  // still rejects __proto__/constructor/prototype before anything is written.
+  const written = new Map();
   const run = db.transaction(() => {
     for (const [key, value] of Object.entries(patch)) {
       const existing = Object.hasOwn(rows, key) ? rows[key] : undefined;
@@ -117,12 +123,12 @@ export function updateSettings(patch, { allowUnknownKeys = false } = {}) {
         description: existing?.description || null,
         public: existing?.public ?? 1,
       });
-      written[key] = coerce(serial, type);
+      written.set(key, coerce(serial, type));
     }
   });
   run();
   cache = null;
-  return written;
+  return Object.fromEntries(written);
 }
 
 /** Metadata about each setting, for rendering the admin form dynamically. */

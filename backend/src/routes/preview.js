@@ -142,9 +142,10 @@ export async function previewRoutes(fastify) {
         // redirect hop, the size is capped, the name is our own hash plus a
         // random suffix, the file is private, and the bytes are only served
         // back behind login with nosniff, a default-src 'none' CSP and
-        // X-Frame-Options: DENY. The comment below tags the result in the
-        // SARIF; GitHub's pull-request check still counts it, so the alert
-        // itself is meant to be dismissed in Security -> Code scanning.
+        // X-Frame-Options: DENY. The marker below tags this result as
+        // suppressed; AlertSuppression.ql plus the dismiss-alerts step in
+        // security.yml turn that into a won't-fix dismissal on main
+        // (SECURITY-AUDIT.md, "Suppression comments").
         // codeql[js/http-to-file-access]
         fs.writeFileSync(tmpPath, buffer, { mode: 0o600 });
         fs.renameSync(tmpPath, cachedPath);
