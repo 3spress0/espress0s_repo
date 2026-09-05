@@ -119,12 +119,31 @@ export async function previewRoutes(fastify) {
         headers: { 'User-Agent': 'espress0-repo-preview/1.0' },
       });
 
-      // Save to cache
-      fs.writeFileSync(cachedPath, buffer);
+      // Save to cache. Network bytes, so the destination is ours to control:
+      // the name is a hash of the item id and its updated_at, the extension
+      // came from the allowlist above, and the write goes to a private
+      // temporary file that is then renamed into place. Two requests racing on
+      // the same item each get their own temp file, and a reader either sees
+      // the previous cached preview or the complete new one - never a partial
+      // write, and never a file someone else planted at the final path.
+      //
+      // Best effort: a cache we cannot write must not cost the user their
+      // preview, we already have the bytes.
+      try {
+        const tmpPath = path.join(
+          PREVIEW_DIR,
+          `.${cacheKey}.${crypto.randomBytes(8).toString('hex')}.tmp`
+        );
+        fs.writeFileSync(tmpPath, buffer, { mode: 0o600 });
+        fs.renameSync(tmpPath, cachedPath);
+      } catch (cacheErr) {
+        request.log.warn({ itemId: item.id, err: cacheErr.message }, 'Preview cache write failed');
+      }
 
       // Cleanup old previews (keep last 20)
       try {
         const files = fs.readdirSync(PREVIEW_DIR)
+          .filter(f => !f.startsWith('.')) // leave in-flight .tmp writes alone
           .map(f => ({ name: f, path: path.join(PREVIEW_DIR, f), mtime: fs.statSync(path.join(PREVIEW_DIR, f)).mtime }))
           .sort((a, b) => b.mtime - a.mtime);
         

@@ -124,8 +124,6 @@ export function seedCatalog(db) {
     const isoDesc = (os, v) =>
       `${os} ${v} installation image. Verify the checksum after download, then write to USB with Rufus, Ventoy or balenaEtcher.`;
 
-    const FEATURED = new Set();
-
     // ======================================================================
     // Windows ISOs
     // ======================================================================
@@ -592,7 +590,6 @@ export function seedCatalog(db) {
     ];
     const platOf = (slug) => (slug.endsWith('-win') || slug === 'git-windows' || slug === 'python-win' || slug.includes('windows')) ? 'windows' : (slug.endsWith('-linux') ? 'linux' : 'windows');
     for (const [name, slug, versions, ext, folder, category, urlFn, sMin, sMax] of devTools) {
-      const descMap = name;
       for (const v of versions) {
         add({
           name: `${name} ${v}`, slugBase: `${slug}-${v}`,
@@ -1280,9 +1277,6 @@ export function seedCatalog(db) {
     // ======================================================================
     // Version-history sweeps (the archive depth: past point releases)
     // ======================================================================
-    const sweep = (slug, name, versions, vfmt, mk) => {
-      for (const v of versions) mk({ slug, name, v: vfmt ? vfmt(v) : v });
-    };
     // Ubuntu older point releases incl. arm64 server
     for (const v of ['16.04.7', '18.04.6', '20.04.6', '22.04.4', '22.04.5', '23.04', '23.10', '24.04', '24.04.1', '24.04.3']) {
       for (const [ed, edLabel] of [['desktop', 'Desktop'], ['live-server', 'Live Server']]) {

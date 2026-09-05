@@ -463,19 +463,21 @@ export async function adminRoutes(fastify) {
       if (value === undefined || value === null || value === '') {
         return reply.code(400).send({ error: `${action} is required` });
       }
+      // Never null/undefined/'' from here on - the checks below assume that
+      // instead of each repeating the test.
       const raw = value;
 
       if (spec.kind === 'enum') {
-        if (raw === null || !spec.values.includes(raw)) {
+        if (!spec.values.includes(raw)) {
           return reply.code(400).send({ error: `${action} must be one of: ${spec.values.join(', ')}` });
         }
       } else if (spec.kind === 'text') {
-        if (raw !== null && (typeof raw !== 'string' || raw.length > spec.max)) {
+        if (typeof raw !== 'string' || raw.length > spec.max) {
           return reply.code(400).send({ error: `${action} must be a string of at most ${spec.max} characters` });
         }
       } else if (spec.kind === 'externalUrl') {
         // Catalogue rule: images are external URLs, never local uploads.
-        if (raw !== null && !isExternalUrl(raw)) {
+        if (!isExternalUrl(raw)) {
           return reply.code(400).send({ error: `${action} must be an external http(s) URL - images are never stored locally` });
         }
       }

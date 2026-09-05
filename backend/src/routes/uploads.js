@@ -151,7 +151,8 @@ export async function uploadsRoutes(fastify) {
     const maxBytes = getSetting('uploads_max_bytes', DEFAULT_MAX_BYTES) || DEFAULT_MAX_BYTES;
 
     let buffer = null;
-    let originalName = 'upload';
+    // Assigned by both branches below; no default to overwrite.
+    let originalName;
 
     if (request.isMultipart?.()) {
       const file = await request.file({ limits: { fileSize: maxBytes } });
@@ -194,7 +195,16 @@ export async function uploadsRoutes(fastify) {
     const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
     const storedName = `${Date.now().toString(36)}-${hash}.${detected.ext}`;
 
-    fs.writeFileSync(path.join(UPLOAD_DIR, storedName), buffer);
+    // The bytes came off the network, so the only thing we get to choose is
+    // where they land - and that name is generated here (timestamp + content
+    // hash + an extension from the fixed signature table), never taken from
+    // the upload. Resolve it and refuse anything outside UPLOAD_DIR, the same
+    // way the DELETE below guards before it unlinks.
+    const target = path.resolve(UPLOAD_DIR, storedName);
+    if (!target.startsWith(UPLOAD_DIR + path.sep)) {
+      return reply.code(500).send({ error: 'Refusing to store this upload' });
+    }
+    fs.writeFileSync(target, buffer);
 
     const db = getDb();
     const info = db.prepare(`

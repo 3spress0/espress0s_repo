@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Plus, Trash2, Star, GripVertical, AlertTriangle, ClipboardPaste, Activity } from 'lucide-react';
 import { linkHealthApi } from '../../lib/api';
+import { describeUrl } from '../../lib/utils';
 import { LoadingDots } from '../Loading';
 
 /** Small badge for the health checker's verdict on a saved mirror. */
@@ -53,57 +54,6 @@ function blankLink(sortOrder = 0) {
     status: 'up',
     sort_order: sortOrder,
   };
-}
-
-/**
- * Work out the provider, a human label and (for Drive/OneDrive) the file id
- * from a pasted URL, so adding a mirror is one paste instead of four fields.
- */
-export function describeUrl(rawUrl) {
-  const url = String(rawUrl || '').trim();
-  if (!url) return null;
-
-  // Torrent mirrors: a magnet URI (display name from &dn= when present) or a
-  // plain http(s) link to a .torrent file.
-  if (/^magnet:\?/i.test(url)) {
-    const dn = url.match(/[?&]dn=([^&]+)/)?.[1];
-    let name = '';
-    try { name = dn ? decodeURIComponent(dn.replace(/\+/g, ' ')) : ''; } catch { name = ''; }
-    return { provider: 'torrent', label: name ? `Magnet — ${name}`.slice(0, 100) : 'Magnet link', storage_path: '', file_name: name };
-  }
-
-  let host = '';
-  let pathname = '';
-  try {
-    const parsed = new URL(url);
-    if (!/^https?:$/.test(parsed.protocol)) return null;
-    host = parsed.hostname.toLowerCase();
-    pathname = parsed.pathname;
-  } catch {
-    return null;
-  }
-
-  const fileNameGuess = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
-  if (/\.torrent$/i.test(fileNameGuess)) {
-    return { provider: 'torrent', label: `Torrent — ${host.replace(/^www\./, '')}`, storage_path: '', file_name: fileNameGuess };
-  }
-
-  if (host.includes('drive.google.com') || host.includes('docs.google.com')) {
-    const id = url.match(/\/d\/([A-Za-z0-9_-]{10,})/)?.[1]
-      || url.match(/[?&]id=([A-Za-z0-9_-]{10,})/)?.[1]
-      || '';
-    return { provider: 'gdrive', label: 'Google Drive', storage_path: id, file_name: '' };
-  }
-  if (host.includes('onedrive.live.com') || host.includes('1drv.ms') || host.includes('sharepoint.com')) {
-    return { provider: 'onedrive', label: 'OneDrive', storage_path: '', file_name: '' };
-  }
-  if (host.includes('github.com') || host.includes('githubusercontent.com')) {
-    const repo = pathname.split('/').filter(Boolean).slice(0, 2).join('/');
-    return { provider: 'github', label: repo ? `GitHub — ${repo}` : 'GitHub release', storage_path: '', file_name: fileNameGuess };
-  }
-
-  const bareHost = host.replace(/^www\./, '');
-  return { provider: 'external', label: bareHost, storage_path: '', file_name: fileNameGuess };
 }
 
 /**

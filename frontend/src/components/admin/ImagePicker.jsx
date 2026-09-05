@@ -4,6 +4,15 @@ import { uploadsApi } from '../../lib/api';
 import { LoadingDots } from '../Loading';
 
 /**
+ * The only shapes an image src may take here: an absolute http(s) URL, one of
+ * our own uploads, or an inline image. `value` comes from the database, so by
+ * the time it reaches the DOM it is author-supplied text - a `javascript:` URL
+ * or a `data:text/html` document has no business in an <img>, and this is the
+ * same allowlist the paste box below enforces.
+ */
+const IMAGE_SRC = /^(https?:\/\/|\/api\/uploads\/|data:image\/)/i;
+
+/**
  * Image field for the item editor.
  *
  * Supports three ways to set an image, because admins shouldn't have to host
@@ -64,7 +73,7 @@ export default function ImagePicker({ label, value, onChange, hint }) {
 
   const applyUrl = () => {
     const v = urlDraft.trim();
-    if (v && !/^(https?:\/\/|\/api\/uploads\/|data:image\/)/i.test(v)) {
+    if (v && !IMAGE_SRC.test(v)) {
       setError('Enter a full URL (https://...) or upload a file');
       return;
     }
@@ -79,7 +88,7 @@ export default function ImagePicker({ label, value, onChange, hint }) {
       {/* Current value preview */}
       <div className="flex items-start gap-3 mb-3">
         <div className="w-20 h-20 rounded-xl bg-surface border border-border flex items-center justify-center overflow-hidden flex-shrink-0">
-          {value ? (
+          {IMAGE_SRC.test(String(value || '')) ? (
             <img src={value} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
           ) : (
             <ImageIcon className="w-6 h-6 text-textMuted" />

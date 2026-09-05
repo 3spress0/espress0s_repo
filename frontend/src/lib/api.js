@@ -16,7 +16,11 @@ import axios from 'axios';
 const SAFE_METHODS = new Set(['get', 'head', 'options']);
 
 export function readCookie(name) {
-  const match = document.cookie.match(new RegExp(`(?:^|; )${name.replace(/[-.]/g, '\\$&')}=([^;]*)`));
+  // Escape every regex metacharacter, not just `-` and `.`: anything else in a
+  // cookie name would have built a pattern that matches something other than
+  // the cookie we asked for.
+  const escaped = String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
 }
 

@@ -309,6 +309,13 @@ export async function safeFetchBuffer(rawUrl, { maxBytes = 50 * 1024 * 1024, tim
   try {
     let response;
     for (let hop = 0; ; hop++) {
+      // False positive, deliberately suppressed: `target` is the URL object
+      // assertPublicUrl handed back - scheme allowlisted to http(s), no
+      // credentials, blocked ports refused, literal IPs and every DNS answer
+      // checked against the non-public ranges, internal names rejected - and
+      // every redirect hop is re-validated below before the next fetch. That
+      // is the whole point of this function; see tests/ssrf.test.js.
+      // codeql[js/server-side-request-forgery]
       response = await fetch(target, {
         signal: controller.signal,
         redirect: 'manual',

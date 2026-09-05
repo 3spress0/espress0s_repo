@@ -209,7 +209,24 @@ describe('Security - espress0 repo', () => {
     it('should sanitize hallucinated URLs', async () => {
       const { aiService } = await import('../src/services/aiService.js');
       const sanitized = aiService.sanitizeAnswer('Download from http://evil.com/malware.exe and also /item/ubuntu-24-04-lts');
-      assert.ok(sanitized.includes('') || sanitized.includes('evil.com'));
+      // The model's text is kept - it is rendered as text, not as HTML - but an
+      // off-site link we cannot vouch for has to earn the disclaimer.
+      assert.ok(sanitized.includes('http://evil.com/malware.exe'), 'the answer text itself is kept');
+      assert.match(sanitized, /may not be verified/, 'an off-site link earns the disclaimer');
+    });
+
+    it('collapses a hallucinated absolute link to our own file page', async () => {
+      const { aiService } = await import('../src/services/aiService.js');
+      const sanitized = aiService.sanitizeAnswer('See https://espress0.duckdns.org/file/ubuntu-24-04-lts for the ISO.');
+      assert.ok(sanitized.includes('/file/ubuntu-24-04-lts'), 'the repo link survives');
+      assert.ok(!sanitized.includes('espress0.duckdns.org'), 'the guessed domain is gone');
+      assert.ok(!/may not be verified/.test(sanitized), 'a repo link needs no disclaimer');
+    });
+
+    it('does not mistake a lookalike host for an allowed one', async () => {
+      const { aiService } = await import('../src/services/aiService.js');
+      const sanitized = aiService.sanitizeAnswer('Mirror: http://github.com.attacker.example/x.iso');
+      assert.match(sanitized, /may not be verified/, 'github.com.attacker.example is not github.com');
     });
 
     it('should not hallucinate files', async () => {

@@ -255,12 +255,21 @@ class CaptchaService {
     }
   }
 
+  /**
+   * Dispatch on the *configured* provider only.
+   *
+   * The old shape was `if (type === 'turnstile' && payload.token)`, so a client
+   * that simply left `token` out fell through to the local math/SVG check - the
+   * operator's chosen provider was skipped because the request said so. A
+   * missing token is now a failure for the provider that expects one.
+   */
   async verifyWithType(payload, ip) {
-    // payload can be { id, answer } for math/svg or { token } for turnstile/hcaptcha
-    if (this.type === 'turnstile' && payload.token) {
+    if (this.type === 'turnstile') {
+      if (!payload.token) return { success: false, message: 'Missing captcha token' };
       return await this.verifyTurnstile(payload.token, ip);
     }
-    if (this.type === 'hcaptcha' && payload.token) {
+    if (this.type === 'hcaptcha') {
+      if (!payload.token) return { success: false, message: 'Missing captcha token' };
       return await this.verifyHcaptcha(payload.token, ip);
     }
     // math/svg

@@ -64,13 +64,20 @@
       // applied from src/themes at mount.
       try {
         var boot = JSON.parse(localStorage.getItem('espress0_theme_boot') || 'null');
-        if (boot && boot.background) {
+        // hexToTriplet() writes "R, G, B" and nothing else, so anything that
+        // is not exactly that shape never reaches a stylesheet.
+        var triplet = /^\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}$/;
+        if (boot && triplet.test(boot.background) && triplet.test(boot.textPrimary)) {
           var r = document.documentElement;
           r.style.setProperty('--c-background', boot.background);
           r.style.setProperty('--c-text-primary', boot.textPrimary);
           r.style.colorScheme = boot.mode || 'dark';
-          r.dataset.theme = boot.id || '';
-          document.write('<style>body{background-color:rgb(' + boot.background + ');color:rgb(' + boot.textPrimary + ')}</style>');
+          r.dataset.theme = String(boot.id || '');
+          // createElement + textContent, not document.write: these values came
+          // out of localStorage and textContent is never parsed as markup.
+          var style = document.createElement('style');
+          style.textContent = 'body{background-color:rgb(' + boot.background + ');color:rgb(' + boot.textPrimary + ')}';
+          document.head.appendChild(style);
         }
       } catch (e) { /* no stored theme, the CSS defaults apply */ }
     </script>

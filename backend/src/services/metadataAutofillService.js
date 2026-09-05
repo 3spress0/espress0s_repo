@@ -62,13 +62,58 @@ function decodeEntities(text) {
     });
 }
 
-function stripTags(html) {
-  return decodeEntities(
-    String(html)
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-  ).replace(/\s+/g, ' ').trim();
+/**
+ * Text out of HTML, for version and date hunting.
+ *
+ * The result is only ever scanned by the regexes below and offered back to the
+ * admin as a form value (React escapes it), so it is a text extractor rather
+ * than a sanitiser - but a sloppy extractor produces wrong suggestions, which
+ * is why this is a scan and not one clever regexp:
+ *
+ *   - `/<[^>]+>/` stops at the first `>`, so `<a title="a>b">` leaves `">` in
+ *     the text. Here a quoted `>` stays inside the tag.
+ *   - `/<script[\s\S]*?<\/script>/` needs the closing tag; an unterminated
+ *     `<script>` used to leave its source behind as if it were prose.
+ *   - Comments go first, otherwise `<!-- a > b -->` confuses the tag scan.
+ *
+ * Single pass, no backtracking: the naive alternation version of the same idea
+ * goes quadratic on a page that is all `<` and no `>`.
+ *
+ * Exported for tests.
+ */
+export function stripTags(html) {
+  const src = String(html)
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ');
+
+  const parts = [];
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch !== '<') {
+      parts.push(ch);
+      i += 1;
+      continue;
+    }
+    // Skip to the '>' that closes this tag, honouring quotes.
+    i += 1;
+    let quote = null;
+    while (i < src.length) {
+      const c = src[i];
+      if (quote) {
+        if (c === quote) quote = null;
+      } else if (c === '"' || c === "'") {
+        quote = c;
+      } else if (c === '>') {
+        i += 1;
+        break;
+      }
+      i += 1;
+    }
+    parts.push(' ');
+  }
+
+  return decodeEntities(parts.join('')).replace(/\s+/g, ' ').trim();
 }
 
 /** First matching <meta> content, by property or name. */

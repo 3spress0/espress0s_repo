@@ -29,7 +29,6 @@ const rnd = () => {
 const int = (min, max) => min + Math.floor(rnd() * (max - min + 1));
 const KB = 1024;
 const MB = 1024 * 1024;
-const GB = 1024 * MB;
 const enc = (v) => (v ? encryptionService.encrypt(v) : null);
 
 export function seedModern(db) {
@@ -127,11 +126,9 @@ export function seedModern(db) {
     };
 
     const WIN_X64 = ['Windows x64', 'windows', 'exe', 'x64', 40, 120];
-    const WIN_ARM = ['Windows ARM64', 'windows', 'exe', 'arm64', 40, 120];
     const LIN_X64 = ['Linux x64', 'linux', 'tar.gz', 'x64', 40, 120];
     const LIN_ARM = ['Linux ARM64', 'linux', 'tar.gz', 'arm64', 40, 120];
     const MAC_ARM = ['macOS Apple Silicon', 'macos', 'dmg', 'arm64', 40, 120];
-    const APK = ['Android', 'other', 'apk', 'universal', 20, 90];
 
     // ==================================================================
     // AI & local-LLM tooling (2023-2026 era)
@@ -387,7 +384,7 @@ export function seedModern(db) {
       ['Windows 11 Enterprise LTSC 2024 (x64)', 'en-us_windows_11_enterprise_ltsc_2024_x64_dvd.iso', 5500, 'microsoft windows 11 ltsc 2024', 'Ten-year servicing channel: no Copilot, no store bloat; the build admins love.'],
       ['Windows Server 2025 (x64)', 'en-us_windows_server_2025_x64_dvd.iso', 5900, 'microsoft windows server 2025', 'Hotpatching by default, SMB over QUIC, dMSA service-account evolution.'],
     ];
-    for (const [name, file, sizeMB, source, desc] of winNow) {
+    for (const [name, file, sizeMB, , desc] of winNow) {
       add({
         name, slugBase: name,
         description: `${desc} Multi-edition ISO from Microsoft's download portal; install does not accept activation without a valid license.`,

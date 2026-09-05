@@ -161,6 +161,14 @@ class EncryptionService {
     if (!password) throw new Error('Password required');
     
     // Step 1: HMAC with pepper (adds secret key, protects if bcrypt hashes leaked)
+    // False positive, deliberately suppressed. This HMAC is not the password
+    // hash - it is the pepper step that runs *before* one. The stored hash is
+    // the bcrypt(cost 12) digest below, and the pepper means a database leak
+    // on its own is not enough to brute-force offline. HMAC-SHA256 is the
+    // standard pre-hash for peppering (it is what passlib and Django do);
+    // making it deliberately slow would buy nothing, because bcrypt is the
+    // slow function in this pair.
+    // codeql[js/insufficient-password-hash]
     const peppered = crypto.createHmac('sha256', this.pepper).update(password).digest('hex');
     
     // Step 2: bcrypt with cost 12 - use bcryptjs (pure JS, no native tar dep vuln)
@@ -201,7 +209,8 @@ class EncryptionService {
         }
       }
 
-      // HMAC with pepper
+      // HMAC with pepper - see the note in hashPasswordWithPepper above.
+      // codeql[js/insufficient-password-hash]
       const peppered = crypto.createHmac('sha256', pepper).update(password).digest('hex');
       
       try {

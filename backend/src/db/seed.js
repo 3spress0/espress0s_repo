@@ -31,10 +31,11 @@ if (!existingAdmin) {
     INSERT INTO users (username, email, email_hash, password_hash, role, encryption_version)
     VALUES (?, ?, ?, ?, 'admin', 'v1')
   `).run(config.security.adminUsername, encryptedEmail, emailHash, hash);
-  console.log(`Created admin user: ${config.security.adminUsername} with encrypted email and peppered password`);
-  console.log(`  - Email encrypted: ${encryptedEmail.slice(0,30)}...`);
-  console.log(`  - Email hash: ${emailHash.slice(0,20)}...`);
-  console.log(`  - Password hash: ${hash.slice(0,30)}... (pepper_v1 + bcrypt)`);
+  // Deliberately no fragments of the ciphertext, the email hash or the
+  // password hash: seed output lands in stdout, container logs and journalctl,
+  // where a prefix of a bcrypt hash or a deterministic ciphertext is a head
+  // start for an attacker and tells an operator nothing.
+  console.log(`Created admin user: ${config.security.adminUsername} (email encrypted, password hashed with pepper_v1 + bcrypt)`);
 } else {
   console.log('Admin user already exists, checking encryption...');
   // Upgrade existing admin to encrypted if needed

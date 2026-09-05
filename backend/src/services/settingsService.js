@@ -10,6 +10,14 @@ import { getDb } from '../db/index.js';
 
 let cache = null;
 
+/**
+ * Keys that must never reach the settings table. `rows['__proto__']` is
+ * Object.prototype - truthy - so the unknown-key guard below would wave it
+ * through, and `written['__proto__'] = …` would then replace the result
+ * object's prototype instead of adding a property.
+ */
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function coerce(raw, type) {
   if (raw === null || raw === undefined) return null;
   switch (type) {
@@ -49,8 +57,9 @@ export function getSettingsRows() {
  */
 export function getSettings({ publicOnly = false } = {}) {
   const rows = getSettingsRows();
-  const out = {};
+  const out = Object.create(null);
   for (const [key, row] of Object.entries(rows)) {
+    if (RESERVED_KEYS.has(key)) continue;
     if (publicOnly && !row.public) continue;
     out[key] = coerce(row.value, row.type);
   }
@@ -58,7 +67,8 @@ export function getSettings({ publicOnly = false } = {}) {
 }
 
 export function getSetting(key, fallback = null) {
-  const row = getSettingsRows()[key];
+  const rows = getSettingsRows();
+  const row = Object.hasOwn(rows, key) ? rows[key] : undefined;
   if (!row) return fallback;
   const v = coerce(row.value, row.type);
   return v === null || v === undefined || v === '' ? fallback : v;
@@ -71,7 +81,14 @@ export function getSetting(key, fallback = null) {
 export function updateSettings(patch, { allowUnknownKeys = false } = {}) {
   const db = getDb();
   const rows = getSettingsRows();
-  const unknown = Object.keys(patch).filter(k => !rows[k]);
+  const reserved = Object.keys(patch).filter(k => RESERVED_KEYS.has(k));
+  if (reserved.length) {
+    const err = new Error(`Reserved setting key(s): ${reserved.join(', ')}`);
+    err.statusCode = 400;
+    err.unknownKeys = reserved;
+    throw err;
+  }
+  const unknown = Object.keys(patch).filter(k => !Object.hasOwn(rows, k));
   if (unknown.length && !allowUnknownKeys) {
     const err = new Error(`Unknown setting key(s): ${unknown.join(', ')}`);
     err.statusCode = 400;
@@ -85,10 +102,10 @@ export function updateSettings(patch, { allowUnknownKeys = false } = {}) {
     ON CONFLICT(key) DO UPDATE SET value = @value, updated_at = CURRENT_TIMESTAMP
   `);
 
-  const written = {};
+  const written = Object.create(null);
   const run = db.transaction(() => {
     for (const [key, value] of Object.entries(patch)) {
-      const existing = rows[key];
+      const existing = Object.hasOwn(rows, key) ? rows[key] : undefined;
       const type = existing?.type || 'text';
       const serial = serialize(value);
       stmt.run({

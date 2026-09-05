@@ -1,6 +1,5 @@
 import os from 'os';
 import fs from 'fs';
-import path from 'path';
 import { getDb } from '../db/index.js';
 
 class MonitoringService {

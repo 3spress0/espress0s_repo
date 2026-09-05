@@ -79,9 +79,11 @@ before(async () => {
   const alpha = db.prepare(
     "INSERT OR IGNORE INTO categories (name, slug) VALUES ('Bulk Alpha', ?)"
   ).run(`${SLUG}alpha`).lastInsertRowid;
-  const beta = db.prepare(
+  // The second category exists so the "filter by category" cases have
+  // somewhere to be wrong; nothing needs its id.
+  db.prepare(
     "INSERT OR IGNORE INTO categories (name, slug) VALUES ('Bulk Beta', ?)"
-  ).run(`${SLUG}beta`).lastInsertRowid;
+  ).run(`${SLUG}beta`);
 
   makeItem(`${SLUG}one`, { categoryId: alpha });
   makeItem(`${SLUG}two`, { categoryId: alpha });

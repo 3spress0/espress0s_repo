@@ -9,6 +9,30 @@ import { getSetting } from '../services/settingsService.js';
 // happen.
 const JWT_ALGORITHMS = ['HS256'];
 
+/**
+ * The path to test against MFA_ENROL_PATHS.
+ *
+ * That set decides whether the "you must enrol in 2FA first" gate applies, so
+ * it is compared against the path the router will dispatch - percent-decoded,
+ * query stripped, one trailing slash removed - and anything that cannot be
+ * normalised yields null, which the caller refuses. Fail closed: an encoded
+ * `%2e%2e` or a malformed escape never widens the allowlist, and a traversal
+ * string like /api/auth/mfa/../../admin/items simply is not in the set.
+ *
+ * Exported for tests.
+ */
+export function requestPathname(request) {
+  const raw = (request.raw?.url || request.url || '').split('?')[0];
+  let pathname;
+  try {
+    pathname = decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+  if (pathname.length > 1 && pathname.endsWith('/')) return pathname.slice(0, -1);
+  return pathname;
+}
+
 /** What an admin may still call while forced to enrol in 2FA. */
 const MFA_ENROL_PATHS = new Set([
   '/api/auth/me', '/api/auth/profile', '/api/auth/mfa', '/api/auth/mfa/setup', '/api/auth/mfa/enable',
@@ -29,7 +53,8 @@ const QUERY_TOKEN_PATHS = [/^\/api\/download(\/|$)/, /^\/api\/preview(\/|$)/];
 function queryTokenAllowed(request) {
   if (request.method !== 'GET' && request.method !== 'HEAD') return false;
   if (request.routeOptions?.config?.allowQueryToken) return true;
-  const pathname = (request.raw?.url || request.url || '').split('?')[0];
+  const pathname = requestPathname(request);
+  if (!pathname) return false;
   return QUERY_TOKEN_PATHS.some(re => re.test(pathname));
 }
 
@@ -110,8 +135,8 @@ export async function authenticate(request, reply) {
     // only reach the routes needed to enrol (and to leave). Everything else
     // answers 403 with mfaSetupRequired so the SPA can send them to Account.
     if (user.role === 'admin' && !totp_enabled && getSetting('require_mfa_admins', false) === true) {
-      const pathname = (request.raw?.url || request.url || '').split('?')[0];
-      if (!MFA_ENROL_PATHS.has(pathname)) {
+      const pathname = requestPathname(request);
+      if (!pathname || !MFA_ENROL_PATHS.has(pathname)) {
         return reply.code(403).send({
           error: 'Two-factor authentication is required for admin accounts - turn it on in your Account page',
           mfaSetupRequired: true,

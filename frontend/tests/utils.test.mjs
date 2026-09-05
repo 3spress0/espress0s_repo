@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { safeHref, formatBytes, formatDate, formatRelativeTime, cn } from '../src/lib/utils.js';
+import { safeHref, formatBytes, formatDate, formatRelativeTime, cn, describeUrl } from '../src/lib/utils.js';
 
 /**
  * The pure helpers the UI leans on. `safeHref` in particular is a security
@@ -66,4 +66,35 @@ test('formatRelativeTime buckets by day, week, month and year', () => {
 test('cn joins truthy class names only', () => {
   assert.equal(cn('a', false, 'b', null, undefined, 'c'), 'a b c');
   assert.equal(cn({ a: true, b: false }, 'c'), 'a c');
+});
+
+test('describeUrl recognises a provider from the host itself, not from a substring', () => {
+  assert.equal(
+    describeUrl('https://github.com/espress0/repo/releases/download/v1.0/x.iso')?.provider,
+    'github'
+  );
+  assert.equal(
+    describeUrl('https://raw.githubusercontent.com/espress0/repo/main/x.iso')?.provider,
+    'github'
+  );
+  assert.equal(describeUrl('https://drive.google.com/file/d/0Babcdefghijklmn/view')?.provider, 'gdrive');
+  assert.equal(describeUrl('https://1drv.ms/u/s!AbCdEfGhIjK')?.provider, 'onedrive');
+  assert.equal(describeUrl('https://mirror.example.org/ubuntu-24.04.iso.torrent')?.provider, 'torrent');
+});
+
+test('describeUrl does not mistake a lookalike host for a known provider', () => {
+  for (const url of [
+    'https://github.com.attacker.example/x.iso',
+    'https://drive.google.com.evil.test/x.iso',
+    'https://1drv.ms.evil.test/x.iso',
+  ]) {
+    assert.equal(describeUrl(url)?.provider, 'external', url);
+  }
+});
+
+test('describeUrl only accepts parseable http(s) input', () => {
+  assert.equal(describeUrl(''), null);
+  assert.equal(describeUrl('javascript:alert(1)'), null);
+  assert.equal(describeUrl('file:///etc/passwd'), null);
+  assert.equal(describeUrl('not a url at all'), null);
 });
