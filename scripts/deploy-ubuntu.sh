@@ -286,6 +286,39 @@ verify_running_commit() {
       sleep 2 && curl -s $url"
 }
 
+# An update must also repair the installed unit. Older deployments may have
+# been installed from /opt (or with ProtectHome=true) and then moved to a home
+# checkout; restarting that stale unit fails with systemd status=200/CHDIR.
+# Keep this small and idempotent so --update can recover such installations
+# without requiring a full first-deploy run.
+repair_service_unit() {
+  [ -f "$SERVICE_FILE" ] || return 0
+  local node_bin
+  node_bin="$(command -v node)"
+  $SUDO sed -i \
+    -e "s|^WorkingDirectory=.*|WorkingDirectory=$ROOT_DIR/backend|" \
+    -e "s|^User=.*|User=$APP_USER|" \
+    -e "s|^Group=.*|Group=$APP_USER|" \
+    -e "s|/usr/bin/node|$node_bin|g" \
+    "$SERVICE_FILE"
+  if lives_under_home "$ROOT_DIR" || lives_under_home "$node_bin"; then
+    $SUDO sed -i 's|^ProtectHome=true|ProtectHome=false|' "$SERVICE_FILE"
+  fi
+  # PORT/HOST in the unit take precedence over a stale .env and are needed
+  # when an older unit predates domain-mode listener separation.
+  if ! $SUDO grep -q '^Environment=PORT=' "$SERVICE_FILE"; then
+    $SUDO sed -i "/^Environment=NODE_ENV=/a Environment=PORT=$INTERNAL_PORT" "$SERVICE_FILE"
+  else
+    $SUDO sed -i "s|^Environment=PORT=.*|Environment=PORT=$INTERNAL_PORT|" "$SERVICE_FILE"
+  fi
+  if ! $SUDO grep -q '^Environment=HOST=' "$SERVICE_FILE"; then
+    $SUDO sed -i "/^Environment=PORT=/a Environment=HOST=$APP_HOST" "$SERVICE_FILE"
+  else
+    $SUDO sed -i "s|^Environment=HOST=.*|Environment=HOST=$APP_HOST|" "$SERVICE_FILE"
+  fi
+  $SUDO systemctl daemon-reload 2>/dev/null || true
+}
+
 # Dependency refresh + migrate + rebuild + restart. Shared by the update path
 # and the --resume re-exec.
 run_post_update() {
@@ -302,6 +335,11 @@ run_post_update() {
   build_frontend_safely \
     || die "Frontend build failed - the previous build is STILL in place and serving."
   ok "Built frontend/dist"
+
+  # Synchronize the unit before asking systemd to hand over the listener.
+  # This is especially important for --update on an existing home-directory
+  # deployment, where the checkout path and ProtectHome setting may be stale.
+  repair_service_unit
 
   step "Restarting service"
   if ! command -v systemctl >/dev/null 2>&1; then

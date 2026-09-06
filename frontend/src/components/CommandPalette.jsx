@@ -49,12 +49,25 @@ export default function CommandPalette({ onAskOpen }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [results, setResults] = useState([]);
+  const [recentSearches, setRecentSearches] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('espress0:recent-searches') || '[]'); } catch { return []; }
+  });
   const inputRef = useRef(null);
   const listRef = useRef(null);
   const chord = useRef({ key: null, at: 0 });
   const debounced = useDebounced(query, 150);
 
   const go = useCallback((to) => { setOpen(false); setHelp(false); navigate(to); }, [navigate]);
+  const searchCatalogue = useCallback((term) => {
+    const value = term.trim();
+    if (!value) return;
+    setRecentSearches((current) => {
+      const next = [value, ...current.filter((item) => item.toLowerCase() !== value.toLowerCase())].slice(0, 8);
+      try { localStorage.setItem('espress0:recent-searches', JSON.stringify(next)); } catch { /* storage is optional */ }
+      return next;
+    });
+    go(`/browse?q=${encodeURIComponent(value)}`);
+  }, [go]);
 
   // ---- static commands -----------------------------------------------------
   const commands = useMemo(() => {
@@ -107,11 +120,15 @@ export default function CommandPalette({ onAskOpen }) {
   const filtered = q ? commands.filter((c) => c.label.toLowerCase().includes(q)) : commands;
   const rows = useMemo(() => {
     const out = [];
-    if (q.length >= 2) out.push({ id: 'search-all', label: `Search catalogue for “${query.trim()}”`, icon: Search, run: () => go(`/browse?q=${encodeURIComponent(query.trim())}`), group: 'Search' });
+    if (q.length >= 2) out.push({ id: 'search-all', label: `Search catalogue for “${query.trim()}”`, icon: Search, run: () => searchCatalogue(query), group: 'Search' });
+    if (!q && recentSearches.length) {
+      out.push({ id: 'recent-heading', label: 'Recent searches', icon: Search, disabled: true, group: 'Recent' });
+      for (const term of recentSearches) out.push({ id: `recent-${term}`, label: term, icon: Search, run: () => searchCatalogue(term), group: 'Recent' });
+    }
     for (const r of results) out.push({ id: `item-${r.slug}`, label: r.name, sub: r.file_type, icon: FILE_ICON, run: () => go(`/file/${r.slug}`), group: 'Catalogue' });
     for (const c of filtered) out.push({ ...c, group: 'Commands' });
     return out;
-  }, [q, query, results, filtered, go]);
+  }, [q, query, results, filtered, recentSearches, searchCatalogue]);
 
   useEffect(() => { setActive(0); }, [query, results.length]);
   useEffect(() => {
