@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Coffee, Send, Database, ExternalLink, Lightbulb, Search, Sparkles } from 'lucide-react';
+import { Coffee, Send, Database, ExternalLink, Lightbulb, Search, Sparkles, Copy, Trash2, RotateCcw } from 'lucide-react';
 import { aiApi, describeAi, describeApiError } from '../lib/api';
 import { LoadingDots } from '../components/Loading';
 import AnswerMarkdown from '../components/AnswerMarkdown';
@@ -12,7 +12,32 @@ export default function Ask() {
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [status, setStatus] = useState(null);
+  const [copied, setCopied] = useState(null);
   const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('espress0:barista-conversation') || '[]');
+      if (Array.isArray(saved)) setMessages(saved.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })));
+    } catch { /* conversation persistence is optional */ }
+  }, []);
+
+  useEffect(() => {
+    try { sessionStorage.setItem('espress0:barista-conversation', JSON.stringify(messages)); } catch { /* ignore unavailable storage */ }
+  }, [messages]);
+
+  const clearConversation = () => {
+    setMessages([]);
+    try { sessionStorage.removeItem('espress0:barista-conversation'); } catch { /* ignore */ }
+  };
+
+  const copyAnswer = async (content, index) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(index);
+      setTimeout(() => setCopied((current) => current === index ? null : current), 1500);
+    } catch { /* clipboard permissions are optional */ }
+  };
 
   useEffect(() => {
     aiApi.suggestions().then(d => setSuggestions(d.suggestions || [])).catch(() => {});
@@ -126,6 +151,12 @@ export default function Ask() {
         </div>
 
         <div className="glass rounded-3xl border border-white/5 overflow-hidden flex flex-col backdrop-blur-xl" style={{ minHeight: '500px', maxHeight: '700px' }}>
+          <div className="flex items-center justify-between px-5 py-3 border-b border-white/5 bg-surface/30">
+            <span className="text-xs text-textMuted">{messages.length ? `${messages.length} messages in this session` : 'New conversation'}</span>
+            <button type="button" onClick={clearConversation} disabled={!messages.length || loading} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-textMuted hover:text-red-300 hover:bg-red-500/10 disabled:opacity-40" title="Clear conversation">
+              <Trash2 className="w-3.5 h-3.5" /> Clear
+            </button>
+          </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {messages.length === 0 ? (
               <div className="text-center py-12">
@@ -195,6 +226,16 @@ export default function Ask() {
                             ? `Barista answered with ${msg.provider || 'the model'} + catalogue data`
                             : 'Barista answered from catalogue metadata'}
                           {msg.metadata && ` • ${msg.metadata.totalFound} files found`}
+                        </div>
+                        <div className="mt-2 flex gap-2">
+                          <button type="button" onClick={() => copyAnswer(msg.content, i)} className="inline-flex items-center gap-1 text-[11px] text-textMuted hover:text-textPrimary">
+                            <Copy className="w-3 h-3" /> {copied === i ? 'Copied' : 'Copy answer'}
+                          </button>
+                          {i === messages.length - 1 && !loading && (
+                            <button type="button" onClick={() => { const previous = messages[i - 1]; if (previous?.role === 'user') handleAsk(previous.content); }} className="inline-flex items-center gap-1 text-[11px] text-textMuted hover:text-textPrimary">
+                              <RotateCcw className="w-3 h-3" /> Regenerate
+                            </button>
+                          )}
                         </div>
                       </>
                     )}
