@@ -27,9 +27,32 @@ jobs:
         with:
           languages: javascript-typescript
           queries: security-and-quality
+          # The chosen suite does not run alert-suppression queries, so
+          # without this pack the `// codeql[query-id]` comments in the tree
+          # are inert prose. This query reads them and tags the matching SARIF
+          # results with suppressions[].
+          packs: codeql/javascript-queries:AlertSuppression.ql
       - uses: github/codeql-action/analyze@v3
+        id: analyze
         with:
           category: "/language:javascript-typescript"
+          # Keep a local copy of the SARIF; dismiss-alerts needs to read it.
+          output: sarif-results
+      # GitHub code scanning does not honour SARIF suppressions[] on its own -
+      # it neither hides the alert nor dismisses it. This action (from
+      # advanced-security, the same team) matches the suppressed results in
+      # the SARIF against open alerts and dismisses them as won't-fix, and -
+      # importantly - re-opens anything that was dismissed this way but no
+      # longer carries the comment. Default branch only: alert state is
+      # repository-global, so a PR run must not dismiss alerts on main.
+      - name: Dismiss alerts suppressed in code
+        if: github.ref == 'refs/heads/main'
+        uses: advanced-security/dismiss-alerts@v2.0.3
+        with:
+          sarif-id: ${{ steps.analyze.outputs.sarif-id }}
+          sarif-file: sarif-results
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dependency-review:
     name: Dependency review (PRs)

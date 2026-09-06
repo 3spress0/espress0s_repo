@@ -96,6 +96,15 @@ export async function authenticate(request, reply) {
   try {
     const token = extractToken(request);
 
+    // `js/user-controlled-bypass` flags any security check whose execution is
+    // decided by attacker-influenced data - here, whether a token was
+    // supplied at all. That is the shape of token auth, not a bypass: the
+    // branch this check guards *is* the rejection (hard 401 on a missing
+    // token), and a supplied token buys nothing unless verifyToken accepts
+    // it - signature over the server secret, HS256 pinned. Everything that
+    // fails verification lands in the catch below, which 401s identically.
+    // No user-controlled input selects whether verification runs.
+    // codeql[js/user-controlled-bypass]
     if (!token) {
       return reply.code(401).send({
         error: 'Authentication required - login to download',

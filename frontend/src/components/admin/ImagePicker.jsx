@@ -89,6 +89,16 @@ export default function ImagePicker({ label, value, onChange, hint }) {
       <div className="flex items-start gap-3 mb-3">
         <div className="w-20 h-20 rounded-xl bg-surface border border-border flex items-center justify-center overflow-hidden flex-shrink-0">
           {IMAGE_SRC.test(String(value || '')) ? (
+            // `js/xss-through-dom` treats any author-supplied text reaching an
+            // <img> src as reinterpreted-as-HTML, and it does not model the
+            // ternary above as a sanitizer. There is no HTML injection here:
+            // React assigns JSX attributes via the DOM property - never
+            // innerHTML - and this branch only renders when IMAGE_SRC matched,
+            // the same http(s) / /api/uploads/ / data:image allowlist the paste
+            // box enforces. javascript: and data:text/html take the
+            // placeholder branch, and an img can never execute a javascript:
+            // URL even if one slipped through.
+            // codeql[js/xss-through-dom]
             <img src={value} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
           ) : (
             <ImageIcon className="w-6 h-6 text-textMuted" />

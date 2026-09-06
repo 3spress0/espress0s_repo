@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Coffee, Send, Database, ExternalLink, Lightbulb, Search, Sparkles } from 'lucide-react';
 import { aiApi, describeAi, describeApiError } from '../lib/api';
 import { LoadingDots } from '../components/Loading';
+import AnswerMarkdown from '../components/AnswerMarkdown';
 import StarryBackground from '../components/StarryBackground';
 
 export default function Ask() {
@@ -165,7 +166,12 @@ export default function Ask() {
                       ? 'bg-red-500/10 border border-red-500/20 text-red-200 rounded-bl-md'
                       : 'bg-surface border border-border text-textSecondary rounded-bl-md'
                   }`}>
-                    <div className="whitespace-pre-wrap">{renderWithLinks(msg.content)}</div>
+                    {msg.role === 'assistant' && !msg.error ? (
+                      // Barista answers are markdown - render them, don't print them.
+                      <AnswerMarkdown>{msg.content}</AnswerMarkdown>
+                    ) : (
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                    )}
                     
                     {msg.role === 'assistant' && !msg.error && (
                       <>
@@ -258,24 +264,4 @@ export default function Ask() {
       </div>
     </div>
   );
-}
-
-function renderWithLinks(text) {
-  // Barista links items as /file/{slug}; this used to split on /item/, so every
-  // link in an answer was rendered as plain text.
-  const parts = String(text ?? '').split(/(\/file\/[a-z0-9-]+)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith('/file/')) {
-      const slug = part.replace('/file/', '');
-      return (
-        <Link key={i} to={part} className="text-primary hover:text-primaryHover underline underline-offset-2 font-medium">
-          {slug}
-        </Link>
-      );
-    }
-    if (part.match(/https?:\/\//)) {
-      return <span key={i} className="break-all">{part}</span>;
-    }
-    return <span key={i}>{part}</span>;
-  });
 }

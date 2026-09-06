@@ -169,9 +169,9 @@ STATUSPY
   version|--version|-v)
     git log --oneline -1 2>/dev/null && git rev-parse --abbrev-ref HEAD ;;
   help|--help|-h|"")
-    sed -n '2,40p' "$0" ;;
+    sed -n '2,42p' "$0" ;;
   *)
     echo "Unknown command: $CMD" >&2
-    sed -n '8,36p' "$0" | grep -E "^#   " >&2
+    sed -n '2,42p' "$0" | grep -E "^#   " >&2
     exit 1 ;;
 esac

@@ -225,10 +225,12 @@ characters and 12 tokens, Levenshtein short-circuits above 64 characters, and
 * **Automated scanning.** `.github/dependabot.yml` opens weekly grouped
   update PRs for backend/frontend npm, GitHub Actions and the Dockerfile base
   image (advisories immediately). `.github/workflows/security.yml` runs
-  CodeQL (security-and-quality), `dependency-review-action` on pull requests
-  (fails on high), gitleaks for committed secrets, and a report-only
-  `npm audit` over dev dependencies; weekly on a schedule as well. `ci.yml`
-  keeps failing the build on high advisories in production dependencies.
+  CodeQL (security-and-quality, plus the alert-suppression query so in-source
+  `// codeql[query-id]` comments work — see "Suppression comments" below),
+  `dependency-review-action` on pull requests (fails on high), gitleaks for
+  committed secrets, and a report-only `npm audit` over dev dependencies;
+  weekly on a schedule as well. `ci.yml` keeps failing the build on high
+  advisories in production dependencies.
 
 ## Known gaps (accepted, for now)
 
@@ -252,3 +254,50 @@ characters and 12 tokens, Levenshtein short-circuits above 64 characters, and
   renderer builds React elements (never `dangerouslySetInnerHTML`) and URLs are
   scheme-checked, so this is a redirect/link-quality question, not code
   execution.
+
+## Suppression comments
+
+A finding that is deliberately not fixed carries a comment in the source, in
+CodeQL's own syntax — a line reading
+
+```js
+// codeql[query-id]
+```
+
+placed on the line **directly above** the flagged one (the `lgtm[query-id]`
+form for same-line markers also works; the line-before form is preferred
+because adding text to a flagged line changes the alert's fingerprint and
+closes/reopens it for no reason). Two things must be true for this to mean
+anything, and `.github/workflows/security.yml` provides both:
+
+1. `github/codeql-action/init` runs
+   `packs: codeql/javascript-queries:AlertSuppression.ql` alongside the
+   `security-and-quality` suite. The suite does *not* include it, and without
+   it these comments are inert prose.
+2. `advanced-security/dismiss-alerts` then reads the local SARIF (kept via
+   `output:` on the analyze step) and dismisses exactly the alerts whose
+   results carry `suppressions[]` — as *won't fix*, with the comment
+   "Suppressed via SARIF". GitHub itself ignores `suppressions[]`, which is
+   why the comments alone never cleared the alerts before this step existed.
+
+The action also **re-opens** alerts that were dismissed this way but whose
+suppression comment has since disappeared, so the source comment stays the
+single source of truth. It runs only on pushes/schedules of `main` — alert
+dismissal is a repository-global property, while analysis results are
+per-branch.
+
+Rules for adding one: the finding must be a false positive or a risk with the
+mitigation *around* it (the pattern `js/http-to-file-access` enforces: it has
+no sanitizer to satisfy by design), and the comment above the marker must say
+why it is safe, the way `routes/uploads.js`, `routes/preview.js`,
+`lib/safeFetch.js`, `services/encryptionService.js` and
+`middleware/auth.js` do. Anything fixable in code is fixed instead — e.g.
+`services/settingsService.js` accumulates in a `Map` rather than suppressing
+`js/remote-property-injection`, because that query's own recommendation is
+literally to do that.
+
+The dismiss step authenticates with the workflow's `GITHUB_TOKEN`
+(`security-events: write`, which the job already needs to upload SARIF), so
+no fine-grained-PAT workaround is needed: earlier cleanups could not dismiss
+because that scope was denied to the *sandbox* token, not to the workflow.
+

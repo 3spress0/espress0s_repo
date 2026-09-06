@@ -160,8 +160,10 @@ export async function uploadsRoutes(fastify) {
     // fixed signature table rather than the client's claim, SVG is scanned for
     // script, event handlers and entities, the size is capped by the multipart
     // limit and by the check above, the caller is an authenticated editor, the
-    // name is ours, and the path is resolved inside UPLOAD_DIR. Dismiss the
-    // alert in Security -> Code scanning; the check counts it regardless.
+    // name is ours, and the path is resolved inside UPLOAD_DIR. The marker
+    // below tags this result as suppressed; AlertSuppression.ql plus the
+    // dismiss-alerts step in security.yml turn that into a won't-fix
+    // dismissal on main (SECURITY-AUDIT.md, "Suppression comments").
     // codeql[js/http-to-file-access]
     fs.writeFileSync(target, buffer);
 

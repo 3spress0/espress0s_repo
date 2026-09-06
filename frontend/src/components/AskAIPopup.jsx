@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Coffee, Send, Lightbulb, X } from 'lucide-react';
 import { aiApi, describeAi, describeApiError } from '../lib/api';
 import { LoadingDots } from './Loading';
+import AnswerMarkdown from './AnswerMarkdown';
 
 export default function AskAIPopup({ isOpen, onClose }) {
   const [query, setQuery] = useState('');
@@ -106,7 +107,12 @@ export default function AskAIPopup({ isOpen, onClose }) {
               <div key={i} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 {msg.role === 'assistant' && <div className="w-7 h-7 rounded-xl bg-gradient-primary flex items-center justify-center flex-shrink-0"><Coffee className="w-3.5 h-3.5 text-white" /></div>}
                 <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-gradient-primary text-white' : msg.error ? 'bg-red-500/10 border border-red-500/20 text-red-200' : 'bg-surface border border-border text-textSecondary'}`}>
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                  {msg.role === 'assistant' && !msg.error ? (
+                    // Barista answers are markdown - render them, don't print them.
+                    <AnswerMarkdown onNavigate={onClose}>{msg.content}</AnswerMarkdown>
+                  ) : (
+                    <div className="whitespace-pre-wrap">{msg.content}</div>
+                  )}
                   {msg.sources?.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {msg.sources.map(src => (
