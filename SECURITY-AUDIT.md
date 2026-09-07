@@ -206,6 +206,16 @@ characters and 12 tokens, Levenshtein short-circuits above 64 characters, and
   reaches `fetch` (only the database string matching it does), which keeps
   the route off the open-proxy/SSRF scanner heuristics entirely, while the
   old `safeFetch` URL guard remains in place as an independent second wall.
+* **Visitor privacy: item views counted per device without a device record.**
+  `view_count` moved off `GET /api/items/:slug` (where every read - reload,
+  back-navigation, prefetch, scraper - was a "view") onto an explicit
+  `POST /api/items/:slug/view`, deduplicated by the browser for anonymous
+  visitors and by `item_views` (one row per entry per account) for signed-in
+  ones. No cookie, no fingerprint and no per-visitor row is introduced: the
+  anonymous figure stays advisory by design, and the route is rate limited per
+  bucket instead. The trade is documented in README ("Counting views") rather
+  than hidden, because the alternative - a device cookie - is what this line
+  would have to stop saying.
 * **Update/boot-strap hardening.** Two serving behaviours that turned any
   half-completed deploy into a page stuck on the loading screen: static
   assets are now resolved against disk per request (the previous mode froze

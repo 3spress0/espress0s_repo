@@ -185,6 +185,34 @@ only) charts what the app already records - no extra tracking is added:
 - mirror health, webhook deliveries, import runs and the in-process request
   metrics (the deeper process view stays under Monitoring).
 
+### Counting views
+
+`view_count` counts devices, not requests.
+
+Counting is announced by the app with `POST /api/items/:slug/view` once the page
+has actually been rendered, so a refresh, a back-navigation, a link previewer's
+fetch and a scripted `GET /api/items/:slug` no longer move it - reading an entry
+is idempotent again, which is what it looked like before.
+
+Who is deduplicated, and by whom, follows from what the server is allowed to
+know about you:
+
+* **signed in** - by the server. `item_views` holds one row per (entry,
+  account), for the life of the entry, so an account adds at most one view per
+  page and returning next month is not a second view. Clearing browser data
+  cannot inflate it. It is a row about an account, of the same kind as a
+  favourite or a review; it is not a record of an anonymous visitor.
+* **anonymous** - by that browser's own `localStorage` marker
+  (`frontend/src/lib/viewCounting.js`). No cookie, no fingerprint, no visitor
+  row: the price is that a visitor who wipes site data is counted again, and
+  what bounds a scripted caller instead of an identifier is the route's own
+  rate limit (60 per hour per bucket). Adding a device cookie would make the
+  anonymous number exact and make the claim below it false; the counter is
+  deliberately not worth that trade.
+
+Drafts are never counted on either side: a preview link or a staff review of an
+unpublished page does not move a public number.
+
 ## Torrent and magnet mirrors
 
 A mirror can be a torrent: choose **Torrent / magnet** as the provider (or
@@ -262,9 +290,12 @@ secret invalidates every link. API: `POST /api/items/:id/preview-link`
 ## Recently viewed
 
 The home page and Account → Favourites show the last twelve entries you
-opened. This list lives in `localStorage` only - the server keeps a bare
-`view_count` per entry and never records who viewed what - and has a Clear
-button. Favourites, by contrast, are stored on the account and can be public.
+opened. This list lives in `localStorage` only - the server keeps a
+`view_count` per entry, records nothing at all about visitors, and has a Clear
+button. Favourites, by contrast, are stored on the account and can be public;
+so does the one-view-per-account rule behind `view_count`, which is the only
+thing the server remembers about who read what (see *Counting views* under
+Analytics).
 
 ## Public API
 

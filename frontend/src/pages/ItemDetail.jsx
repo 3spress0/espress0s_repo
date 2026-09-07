@@ -13,6 +13,7 @@ import Reviews from '../components/Reviews';
 import SimilarSoftware from '../components/SimilarSoftware';
 import Loading, { LoadingDots } from '../components/Loading';
 import { recordView } from '../lib/recentlyViewed';
+import { countView } from '../lib/viewCounting.js';
 
 const REQ_LABEL = { os: 'OS', runtime: 'Runtime', hardware: 'Hardware', dependency: 'Depends on', other: 'Other' };
 
@@ -39,7 +40,13 @@ export default function ItemDetail() {
   useEffect(() => {
     setLoading(true);
     itemsApi.get(slug, previewToken ? { preview: previewToken } : undefined)
-      .then((data) => { setItem(data); if (!data.preview) recordView(data); })
+      .then((data) => {
+        setItem(data);
+        if (!data.preview) {
+          recordView(data); // this browser's "recently viewed" list
+          countView(data);  // and one view for the counter, once per device
+        }
+      })
       .catch(err => setError(err.response?.data?.error || 'Failed to load'))
       .finally(() => setLoading(false));
   }, [slug, previewToken]);
@@ -311,7 +318,12 @@ export default function ItemDetail() {
               
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="glass rounded-xl p-3 text-center border border-white/5">
-                  <div className="text-textMuted flex items-center justify-center gap-1 mb-1"><Eye className="w-3 h-3" /> Views</div>
+                  <div
+                    className="text-textMuted flex items-center justify-center gap-1 mb-1"
+                    title="Devices that have opened this page, counted once each - not a count of reloads. Signed-in accounts are deduplicated by the server, visitors by their own browser."
+                  >
+                    <Eye className="w-3 h-3" /> Views
+                  </div>
                   <div className="font-bold text-textPrimary">{item.view_count || 0}</div>
                 </div>
                 <div className="glass rounded-xl p-3 text-center border border-white/5">
