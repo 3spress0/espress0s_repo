@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Coffee, Send, Database, ExternalLink, Lightbulb, Search, Sparkles, Copy, Trash2, RotateCcw } from 'lucide-react';
+import { Coffee, Send, Database, ExternalLink, Lightbulb, Search, Sparkles, Copy, Trash2, RotateCcw, Square, Pencil, Plus, MessageSquare } from 'lucide-react';
 import { aiApi, describeAi, describeApiError } from '../lib/api';
 import { LoadingDots } from '../components/Loading';
 import AnswerMarkdown from '../components/AnswerMarkdown';
 import StarryBackground from '../components/StarryBackground';
+import { loadBaristaConversations, saveBaristaConversations, newBaristaConversation } from '../lib/baristaConversations';
 
 export default function Ask() {
   const [query, setQuery] = useState('');
@@ -13,22 +14,53 @@ export default function Ask() {
   const [suggestions, setSuggestions] = useState([]);
   const [status, setStatus] = useState(null);
   const [copied, setCopied] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [activeConversation, setActiveConversation] = useState(null);
+  const [editingIndex, setEditingIndex] = useState(null);
   const messagesEndRef = useRef(null);
+  const abortRef = useRef(null);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(sessionStorage.getItem('espress0:barista-conversation') || '[]');
-      if (Array.isArray(saved)) setMessages(saved.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })));
-    } catch { /* conversation persistence is optional */ }
+    const saved = loadBaristaConversations();
+    const current = saved[0] || newBaristaConversation();
+    setConversations(saved.length ? saved : [current]);
+    setActiveConversation(current.id);
+    setMessages(current.messages.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })));
   }, []);
 
   useEffect(() => {
-    try { sessionStorage.setItem('espress0:barista-conversation', JSON.stringify(messages)); } catch { /* ignore unavailable storage */ }
-  }, [messages]);
+    if (!activeConversation) return;
+    setConversations(prev => {
+      const next = prev.map(c => c.id === activeConversation
+        ? { ...c, messages, title: c.title === 'New conversation' ? messages.find(m => m.role === 'user')?.content?.slice(0, 48) || c.title : c.title, updatedAt: Date.now() }
+        : c);
+      saveBaristaConversations(next);
+      return next;
+    });
+  }, [messages, activeConversation]);
 
   const clearConversation = () => {
     setMessages([]);
-    try { sessionStorage.removeItem('espress0:barista-conversation'); } catch { /* ignore */ }
+    setEditingIndex(null);
+  };
+
+  const startConversation = () => {
+    if (loading) return;
+    const next = newBaristaConversation();
+    setConversations(prev => { const updated = [next, ...prev]; saveBaristaConversations(updated); return updated; });
+    setActiveConversation(next.id);
+    setMessages([]);
+  };
+
+  const switchConversation = (id) => {
+    if (loading || id === activeConversation) return;
+    const selected = conversations.find(c => c.id === id);
+    if (!selected) return;
+    setActiveConversation(id);
+    setMessages(selected.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) })));
+    setEditingIndex(null);
   };
 
   const copyAnswer = async (content, index) => {
@@ -48,48 +80,64 @@ export default function Ask() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleAsk = async (q) => {
+  const handleAsk = async (q, { regenerate = false, editIndex = null } = {}) => {
     const question = q || query;
     if (!question.trim() || loading) return;
 
     const userMessage = { role: 'user', content: question, timestamp: new Date() };
-    setMessages(prev => [...prev, userMessage]);
+    const baseMessages = regenerate ? messages.slice(0, -1) : editIndex !== null ? messages.slice(0, editIndex) : messages;
+    setMessages([...baseMessages, userMessage]);
     setQuery('');
+    setEditingIndex(null);
     setLoading(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       // Send the conversation, not just the latest line: a follow-up like
       // "does that work on my pc?" is meaningless without the turns above it.
-      const result = await aiApi.askPost(question, [...messages, userMessage]);
-      
-      const aiMessage = {
-        role: 'assistant',
-        content: result.answer,
-        sources: result.sources || [],
-        relatedItems: result.relatedItems || [],
-        usedAI: result.usedAI,
-        provider: result.provider || null,
-        metadata: result.metadata,
-        timestamp: new Date(),
-      };
-      
-      setMessages(prev => [...prev, aiMessage]);
+      let streamed = '';
+      let finalResult = null;
+      let streamError = null;
+      await aiApi.askStream(question, [...baseMessages, userMessage], {
+        signal: controller.signal,
+        onToken: (token) => {
+          streamed += token;
+          setMessages(prev => [...prev.filter(m => !m.streaming), { role: 'assistant', content: streamed, streaming: true, timestamp: new Date() }]);
+        },
+        onDone: (result) => { finalResult = result; },
+        onError: (error) => { streamError = error; },
+      });
+      if (streamError) throw Object.assign(new Error(streamError.error || 'AI stream failed'), { code: 'STREAM_FAILED' });
+      const result = finalResult || { answer: streamed };
+      setMessages(prev => [...prev.filter(m => !m.streaming), { role: 'assistant', content: result.answer || streamed, sources: result.sources || [], relatedItems: result.relatedItems || [], usedAI: result.usedAI, provider: result.provider || null, metadata: result.metadata, timestamp: new Date() }]);
     } catch (e) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: describeApiError(e),
-        error: true,
-        timestamp: new Date(),
+      if (controller.signal.aborted || e.code === 'ERR_CANCELED') {
+        setMessages(prev => prev
+          .map(m => m.streaming ? { ...m, streaming: false, partial: true } : m)
+          .filter((m, index, all) => !(index === all.length - 1 && m.role === 'user')));
+        return;
+      }
+      setMessages(prev => [...prev.map(m => m.streaming ? { ...m, streaming: false, partial: true } : m), {
+        role: 'assistant', content: describeApiError(e), error: true, timestamp: new Date(),
       }]);
     } finally {
+      if (abortRef.current === controller) abortRef.current = null;
       setLoading(false);
     }
+  };
+
+  const stopGenerating = () => abortRef.current?.abort();
+  const editMessage = (index) => {
+    if (loading) return;
+    setEditingIndex(index);
+    setQuery(messages[index].content);
   };
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleAsk();
+      handleAsk(undefined, editingIndex === null ? {} : { editIndex: editingIndex });
     }
   };
 
@@ -152,10 +200,20 @@ export default function Ask() {
 
         <div className="glass rounded-3xl border border-white/5 overflow-hidden flex flex-col backdrop-blur-xl" style={{ minHeight: '500px', maxHeight: '700px' }}>
           <div className="flex items-center justify-between px-5 py-3 border-b border-white/5 bg-surface/30">
-            <span className="text-xs text-textMuted">{messages.length ? `${messages.length} messages in this session` : 'New conversation'}</span>
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-3.5 h-3.5 text-primary" />
+              <select value={activeConversation || ''} onChange={(e) => switchConversation(e.target.value)} disabled={loading} className="bg-transparent text-xs text-textMuted focus:outline-none max-w-[180px]">
+                {conversations.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+            <button type="button" onClick={startConversation} disabled={loading} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-textMuted hover:text-textPrimary disabled:opacity-40" title="New conversation">
+              <Plus className="w-3.5 h-3.5" /> New
+            </button>
             <button type="button" onClick={clearConversation} disabled={!messages.length || loading} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-textMuted hover:text-red-300 hover:bg-red-500/10 disabled:opacity-40" title="Clear conversation">
               <Trash2 className="w-3.5 h-3.5" /> Clear
             </button>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {messages.length === 0 ? (
@@ -203,8 +261,16 @@ export default function Ask() {
                     ) : (
                       <div className="whitespace-pre-wrap">{msg.content}</div>
                     )}
+                    {msg.role === 'user' && !loading && (
+                      <button type="button" onClick={() => editMessage(i)} className="mt-2 inline-flex items-center gap-1 text-[11px] opacity-70 hover:opacity-100"><Pencil className="w-3 h-3" /> Edit and resend</button>
+                    )}
                     
-                    {msg.role === 'assistant' && !msg.error && (
+                    {msg.role === 'assistant' && msg.error && !loading && messages[i - 1]?.role === 'user' && (
+                      <button type="button" onClick={() => handleAsk(messages[i - 1].content, { editIndex: i - 1 })} className="mt-2 inline-flex items-center gap-1 text-[11px] text-red-200 hover:text-white">
+                        <RotateCcw className="w-3 h-3" /> Retry
+                      </button>
+                    )}
+                    {msg.role === 'assistant' && !msg.error && !msg.streaming && (
                       <>
                         {msg.sources && msg.sources.length > 0 && (
                           <div className="mt-3 pt-3 border-t border-white/10">
@@ -232,7 +298,7 @@ export default function Ask() {
                             <Copy className="w-3 h-3" /> {copied === i ? 'Copied' : 'Copy answer'}
                           </button>
                           {i === messages.length - 1 && !loading && (
-                            <button type="button" onClick={() => { const previous = messages[i - 1]; if (previous?.role === 'user') handleAsk(previous.content); }} className="inline-flex items-center gap-1 text-[11px] text-textMuted hover:text-textPrimary">
+                            <button type="button" onClick={() => { const previous = messages[i - 1]; if (previous?.role === 'user') handleAsk(previous.content, { regenerate: true }); }} className="inline-flex items-center gap-1 text-[11px] text-textMuted hover:text-textPrimary">
                               <RotateCcw className="w-3 h-3" /> Regenerate
                             </button>
                           )}
@@ -284,17 +350,16 @@ export default function Ask() {
                 <Search className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-textMuted" />
               </div>
               <button
-                onClick={() => handleAsk()}
-                disabled={!query.trim() || loading}
+                onClick={loading ? stopGenerating : () => handleAsk(undefined, editingIndex === null ? {} : { editIndex: editingIndex })}
+                disabled={!loading && !query.trim()}
                 className="px-6 py-3 bg-gradient-primary hover:bg-gradient-primary-hover disabled:opacity-50 text-white rounded-2xl font-medium text-sm shadow-lg flex items-center gap-2"
               >
-                <Send className="w-4 h-4" />
-                Ask Barista
+                {loading ? <><Square className="w-4 h-4 fill-current" /> Stop</> : <><Send className="w-4 h-4" /> Ask Barista</>}
               </button>
             </div>
             
             <div className="mt-3 flex items-center justify-between text-[11px] text-textMuted">
-              <span>Barista's purpose: easily find files • Press Enter to send</span>
+              <span>{editingIndex !== null ? 'Editing a question — press Enter to resend' : "Barista's purpose: easily find files • Press Enter to send"}</span>
               <span className="flex items-center gap-1.5">
                 <span className={`w-2 h-2 rounded-full ${ai.ready ? 'bg-green-400' : 'bg-amber-400'}`} />
                 {ai.badge}

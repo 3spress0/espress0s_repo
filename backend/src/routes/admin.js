@@ -15,6 +15,7 @@ import { snapshotDatabase } from '../services/catalogService.js';
 import { listSnapshots, restoreFromSnapshot } from '../services/restoreService.js';
 import { getAnalytics, MAX_DAYS } from '../services/analyticsService.js';
 import { UnsafeUrlError } from '../lib/safeFetch.js';
+import { loadExistingIndex } from '../services/duplicateDetector.js';
 import { readFileSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
 import path from 'path';
@@ -56,6 +57,7 @@ export const EDITOR_ROUTES = new Set([
   'GET /admin/catalog/facets',
   'GET /admin/catalog/stats',
   'POST /admin/metadata-autofill',
+  'POST /admin/items/duplicates',
   'POST /admin/ai/describe',
   'POST /admin/ai/fill-gaps',
 ]);
@@ -70,6 +72,19 @@ export async function adminRoutes(fastify) {
     const gate = EDITOR_ROUTES.has(key) ? requireEditor : requireAdmin;
     const existing = route.preHandler ? (Array.isArray(route.preHandler) ? route.preHandler : [route.preHandler]) : [];
     route.preHandler = [gate, ...existing];
+  });
+
+  fastify.post('/admin/items/duplicates', async (request, reply) => {
+    const { name, slug, version, excludeId } = request.body || {};
+    if (typeof name !== 'string' || name.trim().length < 2 || name.length > 200) {
+      return reply.code(400).send({ error: 'name must contain 2 to 200 characters' });
+    }
+    const index = loadExistingIndex(getDb());
+    const matches = index.find(
+      { name: name.trim(), slug: typeof slug === 'string' ? slug : makeSlug(name), version: version || null },
+      { exclude: (row) => excludeId !== undefined && Number(row.id) === Number(excludeId), limit: 5 },
+    );
+    return { matches };
   });
 
   // Auto-update status: what scripts/auto-update.sh last wrote to its state

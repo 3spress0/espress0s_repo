@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Sparkles, Clock, Layers } from 'lucide-react';
+import { ArrowRight, Sparkles, Clock, Layers, TrendingUp, RefreshCw } from 'lucide-react';
 import Hero from '../components/Hero';
 import ItemCard from '../components/ItemCard';
 import RecentlyViewed from '../components/RecentlyViewed';
@@ -10,6 +10,9 @@ export default function Home() {
   const [stats, setStats] = useState(null);
   const [featured, setFeatured] = useState([]);
   const [newest, setNewest] = useState([]);
+  const [updated, setUpdated] = useState([]);
+  const [popular, setPopular] = useState([]);
+  const [random, setRandom] = useState([]);
   const [categories, setCategories] = useState([]);
 
   useEffect(() => {
@@ -18,6 +21,12 @@ export default function Home() {
       .then(d => setFeatured(d.items || [])).catch(() => {});
     itemsApi.list({ sort: 'date', order: 'desc', limit: 6 })
       .then(d => setNewest(d.items || [])).catch(() => {});
+    itemsApi.list({ sort: 'updated', order: 'desc', limit: 6 })
+      .then(d => setUpdated(d.items || [])).catch(() => {});
+    itemsApi.list({ sort: 'popular', order: 'desc', limit: 6 })
+      .then(d => setPopular(d.items || [])).catch(() => {});
+    itemsApi.list({ sort: 'random', limit: 6 })
+      .then(d => setRandom(d.items || [])).catch(() => {});
     categoriesApi.list().then(d => setCategories(d.categories || [])).catch(() => {});
   }, []);
 
@@ -84,7 +93,35 @@ export default function Home() {
             </div>
           </section>
         )}
+
+        {updated.length > 0 && (
+          <DiscoverySection title="Recently updated" icon={RefreshCw} items={updated} href="/browse?sort=updated" />
+        )}
+        {popular.length > 0 && (
+          <DiscoverySection title="Popular downloads" icon={TrendingUp} items={popular} href="/browse?sort=popular" />
+        )}
+        {random.length > 0 && (
+          <DiscoverySection title="Random discovery" icon={Sparkles} items={random} href="/browse?sort=random" />
+        )}
       </div>
     </div>
+  );
+}
+
+function DiscoverySection({ title, icon: Icon, items, href }) {
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-textPrimary flex items-center gap-2">
+          <Icon className="w-4 h-4 text-primary" /> {title}
+        </h2>
+        <Link to={href} className="text-sm text-textMuted hover:text-primary flex items-center gap-1">
+          See all <ArrowRight className="w-3.5 h-3.5" />
+        </Link>
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {items.map(item => <ItemCard key={item.id} item={item} />)}
+      </div>
+    </section>
   );
 }

@@ -54,4 +54,10 @@ describe('Search filters', () => {
       assert.equal(item.category_slug, cat.slug, 'every row must belong to the requested category');
     }
   });
+
+  it('explains which catalogue fields matched the query', () => {
+    const result = searchService.search({ q: 'ubuntu', published: 1, limit: 5 });
+    assert.ok(result.results.length > 0, 'expected a searchable item');
+    assert.ok(result.results.some(item => item.matchReasons?.includes('name') || item.matchReasons?.includes('description')));
+  });
 });

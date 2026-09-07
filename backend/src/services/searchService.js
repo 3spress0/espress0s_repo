@@ -184,14 +184,36 @@ export class SearchService {
   search(opts = {}) {
     const first = this._searchExact(opts);
     const q = String(opts.q || '');
-    if (first.total > 0 || first.results.length > 0 || !q.trim()) return first;
+    if (first.total > 0 || first.results.length > 0 || !q.trim()) {
+      return { ...first, results: this._addMatchReasons(first.results, q) };
+    }
 
     const { query, corrections } = this.correctQuery(q);
-    if (corrections.length === 0) return first;
+    if (corrections.length === 0) return { ...first, results: this._addMatchReasons(first.results, q) };
 
     const retry = this._searchExact({ ...opts, q: query });
-    if (retry.total === 0 && retry.results.length === 0) return first;
-    return { ...retry, correctedQuery: query, corrections };
+    if (retry.total === 0 && retry.results.length === 0) {
+      return { ...first, results: this._addMatchReasons(first.results, q) };
+    }
+    return { ...retry, results: this._addMatchReasons(retry.results, query), correctedQuery: query, corrections };
+  }
+
+  _addMatchReasons(results, query) {
+    const tokens = tokenize(query).map(sanitizeFtsToken).filter(t => t.length > 1);
+    if (!tokens.length) return results;
+    return results.map((item) => {
+      const fields = [
+        ['name', item.name],
+        ['file name', item.file_name],
+        ['version', item.version],
+        ['description', item.description],
+        ['tag', item.tags],
+      ];
+      const matchReasons = fields
+        .filter(([, value]) => value && tokens.some(token => String(value).toLowerCase().includes(token)))
+        .map(([label]) => label);
+      return { ...item, matchReasons };
+    });
   }
 
   _searchExact({
@@ -412,6 +434,7 @@ export class SearchService {
       case 'popular': return `ORDER BY items.download_count ${dir}`;
       case 'views': return `ORDER BY items.view_count ${dir}`;
       case 'version': return `ORDER BY items.version ${dir}`;
+      case 'random': return 'ORDER BY RANDOM()';
       default: return hasRank ? 'ORDER BY rank' : 'ORDER BY items.created_at DESC';
     }
   }

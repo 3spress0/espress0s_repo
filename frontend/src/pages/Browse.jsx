@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight, Grid2X2, List } from 'lucide-react';
 import ItemCard from '../components/ItemCard';
 import Loading from '../components/Loading';
 import { searchApi, categoriesApi, foldersApi } from '../lib/api';
@@ -24,7 +24,18 @@ const sortOptions = [
   { value: 'size', label: 'Size' },
   { value: 'popular', label: 'Most downloaded' },
   { value: 'views', label: 'Most viewed' },
+  { value: 'random', label: 'Random discovery' },
 ];
+const preferenceKeys = ['category', 'folder', 'tag', 'license_status', 'featured', 'file_type', 'platform', 'architecture', 'sort', 'order'];
+
+function readBrowsePreferences() {
+  try {
+    const value = JSON.parse(localStorage.getItem('espress0:browse-preferences') || '{}');
+    return value && typeof value === 'object' ? value : {};
+  } catch {
+    return {};
+  }
+}
 
 export default function Browse() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -33,7 +44,19 @@ export default function Browse() {
   const [categories, setCategories] = useState([]);
   const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [showMore, setShowMore] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [correctedQuery, setCorrectedQuery] = useState('');
+  const [recentSearches, setRecentSearches] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('espress0:recent-searches') || '[]'); } catch { return []; }
+  });
+  const [preferences] = useState(readBrowsePreferences);
+  const [viewMode, setViewMode] = useState(() => readBrowsePreferences().viewMode === 'list' ? 'list' : 'grid');
+  const searchInputRef = useRef(null);
+  const restoredPreferences = useRef(false);
+  const preferencePersistenceReady = useRef(false);
 
   const query = searchParams.get('q') || '';
   const category = searchParams.get('category') || '';
@@ -45,8 +68,8 @@ export default function Browse() {
   const platform = searchParams.get('platform') || '';
   const arch = searchParams.get('architecture') || '';
   // With no search term, "relevance" is meaningless -- fall back to newest.
-  const sort = searchParams.get('sort') || (query ? 'relevance' : 'date');
-  const order = searchParams.get('order') || 'desc';
+  const sort = searchParams.get('sort') || (query ? 'relevance' : (preferences.sort || 'date'));
+  const order = searchParams.get('order') || (preferences.order || 'desc');
   const page = parseInt(searchParams.get('page') || '1');
 
   const [localQuery, setLocalQuery] = useState(query);
@@ -56,12 +79,71 @@ export default function Browse() {
   useEffect(() => { setLocalTag(tag); }, [tag]);
 
   useEffect(() => {
+    if (restoredPreferences.current) return;
+    restoredPreferences.current = true;
+    const next = new URLSearchParams(searchParams);
+    let changed = false;
+    for (const key of preferenceKeys) {
+      if (!next.has(key) && preferences[key] !== undefined) {
+        next.set(key, preferences[key]);
+        changed = true;
+      }
+    }
+    if (changed) setSearchParams(next, { replace: true });
+  }, [preferences, searchParams, setSearchParams]); // Restore UI-only preferences once; explicit URL filters always win.
+
+  useEffect(() => {
+    if (!preferencePersistenceReady.current) {
+      preferencePersistenceReady.current = true;
+      return;
+    }
+    try {
+      const next = { ...readBrowsePreferences(), viewMode, sort, order };
+      for (const key of preferenceKeys) {
+        if (searchParams.has(key)) next[key] = searchParams.get(key);
+        else delete next[key];
+      }
+      localStorage.setItem('espress0:browse-preferences', JSON.stringify(next));
+    } catch { /* local storage is optional */ }
+  }, [viewMode, sort, order, category, folder, tag, license, featured, fileType, platform, arch, searchParams]);
+
+  useEffect(() => {
+    const value = localQuery.trim();
+    if (value.length < 2 || value === query) {
+      setSuggestions([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      searchApi.suggestions(value).then((data) => {
+        if (!cancelled) setSuggestions(data.suggestions || []);
+      }).catch(() => {
+        if (!cancelled) setSuggestions([]);
+      });
+    }, 180);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [localQuery, query]);
+
+  useEffect(() => {
+    const value = localQuery.trim();
+    if (value.length < 2 || value === query) return undefined;
+    const timer = setTimeout(() => {
+      const next = new URLSearchParams(searchParams);
+      next.set('q', value);
+      next.set('page', '1');
+      setSearchParams(next, { replace: true });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [localQuery, query, searchParams, setSearchParams]);
+
+  useEffect(() => {
     categoriesApi.list().then(d => setCategories(d.categories || [])).catch(() => {});
     foldersApi.list().then(d => setFolders(d.folders || [])).catch(() => {});
   }, []);
 
   const fetchResults = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       const data = await searchApi.search({
         q: query || undefined,
@@ -77,8 +159,10 @@ export default function Browse() {
       });
       setResults(data.results || []);
       setPagination(data.pagination || { page: 1, total: 0, totalPages: 0 });
+      setCorrectedQuery(data.correctedQuery || '');
     } catch (e) {
       setResults([]);
+      setError(e.response?.data?.error || 'Could not load the catalogue. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -91,6 +175,19 @@ export default function Browse() {
     if (value) next.set(key, value); else next.delete(key);
     if (key !== 'page') next.set('page', '1');
     setSearchParams(next);
+  };
+
+  const submitSearch = (value = localQuery) => {
+    const nextValue = value.trim();
+    if (nextValue) {
+      setRecentSearches((current) => {
+        const next = [nextValue, ...current.filter((item) => item.toLowerCase() !== nextValue.toLowerCase())].slice(0, 8);
+        try { localStorage.setItem('espress0:recent-searches', JSON.stringify(next)); } catch { /* optional */ }
+        return next;
+      });
+    }
+    setShowSuggestions(false);
+    updateParam('q', nextValue);
   };
 
   const clearFilters = () => setSearchParams(query ? { q: query } : {});
@@ -117,16 +214,42 @@ export default function Browse() {
       </div>
 
       {/* One compact toolbar: search + the four selects people actually use */}
-      <form onSubmit={(e) => { e.preventDefault(); updateParam('q', localQuery); }} className="relative mb-3">
+      <form onSubmit={(e) => { e.preventDefault(); submitSearch(); }} className="relative mb-3">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-textMuted pointer-events-none" />
         <input
+          ref={searchInputRef}
           type="text"
           value={localQuery}
           onChange={(e) => setLocalQuery(e.target.value)}
+          onFocus={() => setShowSuggestions(true)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setShowSuggestions(false); }}
           placeholder="Search files, versions, tags..."
           className="w-full pl-12 pr-4 py-3 bg-surface border border-border rounded-xl focus:outline-none focus:border-primary/50 text-sm"
         />
+        {showSuggestions && (suggestions.length > 0 || (!localQuery && recentSearches.length > 0)) && (
+          <div className="absolute z-20 top-full left-0 right-0 mt-2 rounded-xl border border-border bg-surface shadow-xl overflow-hidden">
+            {(localQuery ? suggestions : recentSearches).map((item) => {
+              const value = typeof item === 'string' ? item : item.name;
+              return (
+                <button key={typeof item === 'string' ? item : item.slug} type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { setLocalQuery(value); submitSearch(value); }}
+                  className="w-full text-left px-4 py-2.5 text-sm text-textSecondary hover:bg-surfaceHover hover:text-textPrimary">
+                  <span>{value}</span>
+                  {typeof item !== 'string' && item.file_type && <span className="ml-2 text-xs text-textMuted uppercase">{item.file_type}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </form>
+
+      {correctedQuery && (
+        <p className="text-sm text-textSecondary mb-4">
+          Showing results for <button type="button" onClick={() => submitSearch(correctedQuery)} className="text-primary hover:underline font-medium">{correctedQuery}</button>
+          {' '}because the original query had no exact matches.
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <select value={category} onChange={(e) => updateParam('category', e.target.value)}
@@ -149,6 +272,16 @@ export default function Browse() {
           className="px-3 py-2 min-h-11 sm:min-h-0 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50">
           {sortOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
+        <div className="flex items-center rounded-xl border border-border bg-surface p-0.5 ml-auto" aria-label="Result view">
+          <button type="button" onClick={() => setViewMode('grid')} aria-label="Grid view" aria-pressed={viewMode === 'grid'}
+            className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-primary/15 text-primary' : 'text-textMuted hover:text-textPrimary'}`}>
+            <Grid2X2 className="w-4 h-4" />
+          </button>
+          <button type="button" onClick={() => setViewMode('list')} aria-label="List view" aria-pressed={viewMode === 'list'}
+            className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-primary/15 text-primary' : 'text-textMuted hover:text-textPrimary'}`}>
+            <List className="w-4 h-4" />
+          </button>
+        </div>
         <button
           type="button"
           onClick={() => setShowMore(!showMore)}
@@ -254,9 +387,18 @@ export default function Browse() {
             ))}
           </div>
         </div>
+      ) : error ? (
+        <div className="text-center py-16 border border-dashed border-red-500/30 rounded-2xl bg-red-500/5">
+          <Search className="w-8 h-8 text-red-400 mx-auto mb-3" />
+          <h3 className="font-semibold text-textPrimary mb-1">Catalogue unavailable</h3>
+          <p className="text-sm text-textMuted mb-4">{error}</p>
+          <button onClick={fetchResults} className="px-5 py-2 bg-gradient-primary text-white rounded-xl text-sm font-medium">
+            Try again
+          </button>
+        </div>
       ) : results.length > 0 ? (
         <>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+          <div className={viewMode === 'grid' ? 'grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6' : 'space-y-2 mb-6'}>
             {results.map(item => <ItemCard key={item.id} item={item} />)}
           </div>
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Coffee, Send, Lightbulb, X } from 'lucide-react';
+import { Coffee, Send, Lightbulb, X, Copy, RotateCcw, Square, Trash2 } from 'lucide-react';
 import { aiApi, describeAi, describeApiError } from '../lib/api';
 import { LoadingDots } from './Loading';
 import AnswerMarkdown from './AnswerMarkdown';
@@ -11,7 +11,22 @@ export default function AskAIPopup({ isOpen, onClose }) {
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [status, setStatus] = useState(null);
+  const [copied, setCopied] = useState(null);
   const messagesEndRef = useRef(null);
+  const abortRef = useRef(null);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('espress0:barista-conversation') || '[]');
+      if (Array.isArray(saved)) setMessages(saved.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })));
+    } catch { /* conversation persistence is optional */ }
+  }, []);
+
+  useEffect(() => {
+    try { sessionStorage.setItem('espress0:barista-conversation', JSON.stringify(messages)); } catch { /* ignore unavailable storage */ }
+  }, [messages]);
 
   useEffect(() => {
     if (isOpen) {
@@ -24,17 +39,20 @@ export default function AskAIPopup({ isOpen, onClose }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleAsk = async (q) => {
+  const handleAsk = async (q, { regenerate = false } = {}) => {
     const question = q || query;
     if (!question.trim() || loading) return;
 
     const userMessage = { role: 'user', content: question, timestamp: new Date() };
-    setMessages(prev => [...prev, userMessage]);
+    const baseMessages = regenerate ? messages.slice(0, -1) : messages;
+    setMessages([...baseMessages, userMessage]);
     setQuery('');
     setLoading(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
-      const result = await aiApi.askPost(question, [...messages, userMessage]);
+      const result = await aiApi.askPost(question, [...baseMessages, userMessage], { signal: controller.signal });
       const aiMessage = {
         role: 'assistant',
         content: result.answer,
@@ -47,6 +65,10 @@ export default function AskAIPopup({ isOpen, onClose }) {
       };
       setMessages(prev => [...prev, aiMessage]);
     } catch (e) {
+      if (controller.signal.aborted || e.code === 'ERR_CANCELED') {
+        setMessages(prev => prev[prev.length - 1]?.role === 'user' ? prev.slice(0, -1) : prev);
+        return;
+      }
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: describeApiError(e),
@@ -54,8 +76,22 @@ export default function AskAIPopup({ isOpen, onClose }) {
         timestamp: new Date(),
       }]);
     } finally {
+      if (abortRef.current === controller) abortRef.current = null;
       setLoading(false);
     }
+  };
+
+  const stopGenerating = () => abortRef.current?.abort();
+  const clearConversation = () => {
+    setMessages([]);
+    try { sessionStorage.removeItem('espress0:barista-conversation'); } catch { /* ignore */ }
+  };
+  const copyAnswer = async (content, index) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(index);
+      setTimeout(() => setCopied((current) => current === index ? null : current), 1500);
+    } catch { /* clipboard permissions are optional */ }
   };
 
   const handleKeyPress = (e) => {
@@ -80,9 +116,14 @@ export default function AskAIPopup({ isOpen, onClose }) {
               <p className="text-xs text-textMuted">Easily find files • {describeAi(status).badge}</p>
             </div>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-2.5 sm:p-2 rounded-xl bg-surface border border-border hover:border-primary/30 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={clearConversation} disabled={!messages.length || loading} className="p-2.5 sm:p-2 rounded-xl text-textMuted hover:text-red-300 disabled:opacity-40" title="Clear conversation" aria-label="Clear conversation">
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <button onClick={onClose} aria-label="Close" className="p-2.5 sm:p-2 rounded-xl bg-surface border border-border hover:border-primary/30 transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4" style={{ minHeight: '300px' }}>
@@ -122,6 +163,18 @@ export default function AskAIPopup({ isOpen, onClose }) {
                       ))}
                     </div>
                   )}
+                  {msg.role === 'assistant' && !msg.error && (
+                    <div className="mt-2 flex gap-2">
+                      <button type="button" onClick={() => copyAnswer(msg.content, i)} className="inline-flex items-center gap-1 text-[11px] text-textMuted hover:text-textPrimary">
+                        <Copy className="w-3 h-3" /> {copied === i ? 'Copied' : 'Copy'}
+                      </button>
+                      {i === messages.length - 1 && !loading && messages[i - 1]?.role === 'user' && (
+                        <button type="button" onClick={() => handleAsk(messages[i - 1].content, { regenerate: true })} className="inline-flex items-center gap-1 text-[11px] text-textMuted hover:text-textPrimary">
+                          <RotateCcw className="w-3 h-3" /> Regenerate
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))
@@ -149,8 +202,8 @@ export default function AskAIPopup({ isOpen, onClose }) {
               className="flex-1 px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-primary/50"
               disabled={loading}
             />
-            <button onClick={() => handleAsk()} disabled={!query.trim() || loading} className="px-5 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium disabled:opacity-50">
-              <Send className="w-4 h-4" />
+            <button type="button" onClick={loading ? stopGenerating : () => handleAsk()} disabled={!loading && !query.trim()} aria-label={loading ? 'Stop generating' : 'Ask Barista'} className="px-5 py-2.5 bg-gradient-primary text-white rounded-xl text-sm font-medium disabled:opacity-50">
+              {loading ? <Square className="w-4 h-4 fill-current" /> : <Send className="w-4 h-4" />}
             </button>
           </div>
         </div>

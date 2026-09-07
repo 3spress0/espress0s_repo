@@ -50,6 +50,25 @@ export async function aiRoutes(fastify) {
     }
   });
 
+  fastify.post('/ai/ask/stream', askRateLimit, async (request, reply) => {
+    const parsed = aiQuerySchema.safeParse(request.body || {});
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid input', details: parsed.error.errors });
+    const query = String(parsed.data.q || parsed.data.question || '').slice(0, MAX_QUESTION_LENGTH);
+    if (!query) return reply.code(400).send({ error: 'Missing question' });
+    reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' });
+    const send = (event, data) => reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const controller = new AbortController();
+    request.raw.on('close', () => controller.abort());
+    try {
+      const result = await aiService.streamAsk(query, { messages: parsed.data.messages || [], signal: controller.signal, onToken: (token) => send('token', { token }) });
+      send('done', result);
+    } catch (e) {
+      if (!controller.signal.aborted) send('error', { error: 'AI stream failed', partial: true });
+    } finally {
+      reply.raw.end();
+    }
+  });
+
   fastify.get('/ai/suggestions', async (request, reply) => {
     const suggestions = await aiService.getSuggestions();
     return { suggestions };
@@ -105,4 +124,3 @@ export async function aiRoutes(fastify) {
     return reply.code(201).send(newFaq);
   });
 }
-

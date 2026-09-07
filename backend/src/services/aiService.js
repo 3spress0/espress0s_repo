@@ -2,7 +2,7 @@ import { config } from '../config.js';
 import { getDb } from '../db/index.js';
 import { searchService } from './searchService.js';
 import { describeAi, describeAiForAdmin, resolveAi } from './aiConfig.js';
-import { findTgpt, generate, redact, tgptRuns } from './aiProviders.js';
+import { findTgpt, generate, redact, tgptRuns, streamOpenai } from './aiProviders.js';
 
 /**
  * The rules that make an answer safe. They live in the system prompt so they
@@ -465,6 +465,7 @@ export class AIService {
           : 'failed'}: ${e.message}`, cfg.apiKey).slice(0, 200);
         console.warn('[ai] provider failed, falling back to rule-based:', redact(e.message, cfg.apiKey));
       }
+
     }
 
     // 3. Fallback: rule-based answering using only metadata.
@@ -477,6 +478,29 @@ export class AIService {
     if (this.lastError) fallback.aiError = this.lastError;
     if (cfg.notes.length) fallback.aiNotes = cfg.notes;
     return fallback;
+  }
+
+  async streamAsk(question, { limit = 5, messages = [], signal, onToken } = {}) {
+    const searchQuery = buildSearchQuery(question, messages);
+    const searchResults = searchService.search({ q: searchQuery, published: 1, limit, page: 1, sort: 'relevance' });
+    const db = getDb();
+    const faqResults = db.prepare('SELECT * FROM faq_entries WHERE LOWER(question) LIKE @q OR LOWER(answer) LIKE @q LIMIT 3')
+      .all({ q: `%${question.toLowerCase()}%` });
+    const cfg = await this.aiConfig();
+    if (cfg.enabled && cfg.provider !== 'none' && cfg.format === 'openai') {
+      const chunks = [];
+      await streamOpenai({
+        system: SYSTEM_PROMPT,
+        prompt: this.buildContext(searchResults.results, faqResults, question, messages),
+        cfg,
+        signal,
+        onToken: (token) => { chunks.push(token); onToken?.(token); },
+      });
+      return this.askResponse(this.sanitizeAnswer(chunks.join('')), searchResults, cfg.provider);
+    }
+    const result = await this.ask(question, { limit, messages });
+    onToken?.(result.answer);
+    return result;
   }
 
   /**
