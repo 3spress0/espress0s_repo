@@ -1,9 +1,9 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import Fastify from 'fastify';
 
 /**
  * The health endpoint has to prove which commit the RUNNING PROCESS is on.
@@ -19,6 +19,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
 
 const { COMMIT, COMMIT_SHORT, STARTED_AT, resolveCommit } = await import('../src/lib/buildInfo.js');
+const { healthRoutes } = await import('../src/routes/health.js');
 
 function gitHead() {
   try {
@@ -81,21 +82,56 @@ describe('build info: which commit is this process running', () => {
 });
 
 describe('health endpoint contract', () => {
-  const indexSrc = fs.readFileSync(path.resolve(here, '../src/index.js'), 'utf8');
+  let app;
 
-  it('serves the process commit on /api/health', () => {
-    const route = indexSrc.slice(indexSrc.indexOf("fastify.get('/api/health'"));
-    const body = route.slice(0, route.indexOf('});'));
-    assert.match(body, /status: 'ok'/);
-    assert.match(body, /commit: COMMIT/, 'the updater verifies deployments against this field');
+  before(async () => {
+    // Exercise the same routes as the server without starting a listener or
+    // opening SQLite. Source-text checks broke when the inline handler became
+    // shared; the HTTP contract must not depend on where that handler lives.
+    app = Fastify({ logger: false });
+    await app.register(healthRoutes);
+    await app.ready();
   });
 
-  it('uses the frozen constant, not a per-request git call', () => {
-    const route = indexSrc.slice(indexSrc.indexOf("fastify.get('/api/health'"));
-    const body = route.slice(0, route.indexOf('});'));
-    assert.ok(
-      !/resolveCommit\(\)|execSync|rev-parse/.test(body),
-      're-resolving the commit per request would let a stale process report fresh code'
-    );
-  });
+  after(async () => { await app?.close(); });
+
+  for (const url of ['/api/health', '/health']) {
+    it(`serves the process build info on ${url}`, async () => {
+      const beforeRequest = Date.now();
+      const response = await app.inject({ method: 'GET', url });
+      assert.equal(response.statusCode, 200);
+      assert.match(response.headers['content-type'], /application\/json/);
+      const { timestamp, ...buildInfo } = response.json();
+      assert.deepStrictEqual(buildInfo, {
+        status: 'ok',
+        service: "espress0's repo",
+        version: '1.0.0',
+        commit: COMMIT,
+        commitShort: COMMIT_SHORT,
+        startedAt: STARTED_AT,
+      });
+      assert.ok(Date.parse(timestamp) >= beforeRequest, 'timestamp is generated for this request');
+      assert.ok(Date.parse(timestamp) <= Date.now());
+    });
+
+    it(`keeps the process commit frozen across requests to ${url}`, async () => {
+      const first = (await app.inject({ method: 'GET', url })).json();
+      const nextCommit = (COMMIT === 'a'.repeat(40) ? 'b' : 'a').repeat(40);
+      const previous = process.env.GIT_COMMIT;
+      process.env.GIT_COMMIT = nextCommit;
+      try {
+        // Prove that resolving again would now see a different deployment.
+        assert.equal(resolveCommit(), nextCommit);
+        const response = await app.inject({ method: 'GET', url });
+        assert.equal(response.statusCode, 200);
+        const body = response.json();
+        assert.equal(body.commit, first.commit, 'a stale process must not report a new release');
+        assert.equal(body.commitShort, first.commitShort);
+        assert.equal(body.startedAt, first.startedAt);
+      } finally {
+        if (previous === undefined) delete process.env.GIT_COMMIT;
+        else process.env.GIT_COMMIT = previous;
+      }
+    });
+  }
 });
