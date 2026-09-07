@@ -128,7 +128,7 @@ export default function CommandPalette({ onAskOpen }) {
     for (const r of results) out.push({ id: `item-${r.slug}`, label: r.name, sub: r.file_type, icon: FILE_ICON, run: () => go(`/file/${r.slug}`), group: 'Catalogue' });
     for (const c of filtered) out.push({ ...c, group: 'Commands' });
     return out;
-  }, [q, query, results, filtered, recentSearches, searchCatalogue]);
+  }, [q, query, results, filtered, recentSearches, searchCatalogue, go]);
 
   useEffect(() => { setActive(0); }, [query, results.length]);
   useEffect(() => {
