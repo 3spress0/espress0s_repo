@@ -1,5 +1,8 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 
 /**
@@ -8,6 +11,8 @@ import Fastify from 'fastify';
  * every registered /api route appears, auth gates are visible, tags come from
  * the URL prefix, and the viewer is served without inline script (CSP).
  */
+const here = path.dirname(fileURLToPath(import.meta.url));
+
 const { openapiPlugin } = await import('../src/docs/openapi.js');
 const { itemsRoutes } = await import('../src/routes/items.js');
 const { adminRoutes } = await import('../src/routes/admin.js');
@@ -35,6 +40,13 @@ before(async () => {
 after(async () => { await app?.close(); });
 
 describe('openapi document', () => {
+  it('advertises the app version from backend/package.json, not a copy', () => {
+    // The footer prints this same number to visitors; a second hand-written
+    // '1.0.0' in the swagger info would silently disagree after a bump.
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(here, '../package.json'), 'utf8'));
+    assert.equal(doc.info.version, pkg.version);
+  });
+
   it('is an OpenAPI 3 document with security schemes', () => {
     assert.match(doc.openapi, /^3\./);
     assert.ok(doc.components.securitySchemes.bearerAuth);

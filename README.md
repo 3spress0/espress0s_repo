@@ -366,6 +366,22 @@ The admin interface provides management for:
 
 Version history is available for catalogue pages, including snapshots, diffs, and restore operations.
 
+### Footer version stamp
+
+The bottom of every page prints the release the server is actually running
+(`v1.0.0` on a stock checkout), so a visitor reporting a problem can say which
+build they saw. The number is deliberately **not** a setting: an editable
+version is decoration at best and a lie at worst. It is resolved once when the
+backend boots, from `backend/package.json` (or `APP_VERSION` / `ESPRESS0_VERSION`
+in the environment, for containers that ship no manifest), and reaches the
+browser in the same `/api/settings` response that carries the public site
+settings - no extra request per page view. `GET /api/health` (and its `/health`
+alias, shared handler in `routes/health.js`) reports the same value next to the
+`commit` the auto-updater verifies deployments against.
+
+Turn it off for visitors with **Admin → Site settings → Footer → Show version in
+the footer**. It is on by default, and switching it needs no redeploy.
+
 ### Roles
 
 Every account has one of three roles, set from **Admin → Users**:

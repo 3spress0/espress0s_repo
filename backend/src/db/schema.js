@@ -448,6 +448,7 @@ export const DEFAULT_SETTINGS = [
   { key: 'footer_intro', value: 'A curated personal repository for software, ISOs, tools and documentation. Built for a low-resource VM with external storage: metadata is encrypted here, the files themselves live off-VM.', type: 'textarea', group_name: 'footer', label: 'Footer intro', description: 'Paragraph in the left-hand footer column.', public: 1 },
   { key: 'footer_copyright', value: '', type: 'text', group_name: 'footer', label: 'Copyright line', description: 'Leave blank to auto-generate "© <year> <site name>".', public: 1 },
   { key: 'footer_note', value: 'Storage: GDrive, OneDrive, External', type: 'text', group_name: 'footer', label: 'Footer note', description: 'Line at the bottom of the footer.', public: 1 },
+  { key: 'footer_show_version', value: 'true', type: 'boolean', group_name: 'footer', label: 'Show version in the footer', description: 'Prints the release the server is running (backend/package.json) next to the copyright line, so visitors and bug reports can tell which build this is. Off hides it.', public: 1 },
   { key: 'footer_links', value: JSON.stringify([
     { label: 'Operating Systems', href: '/browse?category=operating-systems', group: 'Browse' },
     { label: 'ISOs', href: '/browse?category=isos', group: 'Browse' },

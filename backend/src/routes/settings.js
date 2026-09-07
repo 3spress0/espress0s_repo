@@ -1,14 +1,23 @@
 import { authenticate, requireAdmin } from '../middleware/auth.js';
 import { getSettings, getSettingsMeta, updateSettings } from '../services/settingsService.js';
+import { APP_VERSION } from '../lib/buildInfo.js';
 
 export async function settingsRoutes(fastify) {
   /**
    * GET /api/settings - public site configuration.
    * Admin-only keys (public = 0) are stripped.
+   *
+   * `app` sits beside `settings` rather than inside them on purpose: it is a
+   * fact about the running build, not a row an admin can edit, so it never
+   * appears in the settings form and a PUT could not accidentally write it.
+   * The footer reads it there (see frontend/src/components/Footer.jsx).
    */
   fastify.get('/settings', async () => {
-    const settings = getSettings({ publicOnly: true });
-    return { settings, meta: getSettingsMeta({ publicOnly: true }) };
+    return {
+      settings: getSettings({ publicOnly: true }),
+      meta: getSettingsMeta({ publicOnly: true }),
+      app: { version: APP_VERSION },
+    };
   });
 
   /** GET /api/admin/settings - every setting plus metadata for the form. */

@@ -8,6 +8,10 @@ import { settingsApi } from '../lib/api';
  * into a component. Components read from here; admins edit the same keys in
  * the admin Settings page. FALLBACKS only exist so the UI still renders if the
  * API is unreachable - they are not a second source of truth to edit.
+ *
+ * `app` carries what the server says about itself (its version) rather than
+ * what an admin configured. It is deliberately separate from `settings`:
+ * nothing here can type a value into it, so it cannot go stale.
  */
 
 const FALLBACKS = {
@@ -18,6 +22,7 @@ const FALLBACKS = {
   hero_search_placeholder: 'Search files...',
   hero_stat_encryption_label: 'AES-256',
   footer_note: '',
+  footer_show_version: true,
   footer_links: [],
   allow_registration: true,
   show_dev_credentials_panel: false,
@@ -38,6 +43,8 @@ const SettingsContext = createContext(null);
 export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState(FALLBACKS);
   const [meta, setMeta] = useState([]);
+  // Facts about the running build rather than editable settings, i.e. { version }.
+  const [app, setApp] = useState({});
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -45,6 +52,7 @@ export function SettingsProvider({ children }) {
       const data = await settingsApi.get();
       setSettings({ ...FALLBACKS, ...(data.settings || {}) });
       setMeta(data.meta || []);
+      setApp(data.app || {});
     } catch (e) {
       // Keep fallbacks; the site must still render without the settings API.
       console.warn('Failed to load site settings, using defaults', e);
@@ -58,13 +66,14 @@ export function SettingsProvider({ children }) {
   const value = useMemo(() => ({
     settings,
     meta,
+    app,
     loading,
     refresh,
     get: (key, fallback) => {
       const v = settings[key];
       return v === undefined || v === null || v === '' ? (fallback ?? FALLBACKS[key] ?? null) : v;
     },
-  }), [settings, meta, loading, refresh]);
+  }), [settings, meta, app, loading, refresh]);
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }

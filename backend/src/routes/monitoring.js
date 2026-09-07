@@ -1,6 +1,7 @@
 import { monitoringService } from '../services/monitoringService.js';
 import { authenticate, requireAdmin } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
+import { APP_VERSION } from '../lib/buildInfo.js';
 import fs from 'fs';
 
 export async function monitoringRoutes(fastify) {
@@ -24,7 +25,7 @@ export async function monitoringRoutes(fastify) {
       status: dbStatus === 'ok' ? 'ok' : 'degraded',
       timestamp: new Date().toISOString(),
       service: "espress0's repo",
-      version: '1.0.0',
+      version: APP_VERSION,
       checks: {
         database: { status: dbStatus, error: dbError },
         encryption: { 

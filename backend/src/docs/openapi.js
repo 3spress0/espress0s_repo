@@ -19,6 +19,9 @@
  * enriches the document without any change here.
  */
 import swagger from '@fastify/swagger';
+// The document's `info.version` is the app's own version, resolved the same
+// way the health endpoint resolves it - see lib/buildInfo.js.
+import { APP_VERSION } from '../lib/buildInfo.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -124,7 +127,7 @@ export async function openapiPlugin(fastify) {
           'HTTP API of the self-hosted software catalogue. Public catalogue reads need no credentials; ' +
           'everything under /api/admin needs an admin session (Bearer token or the httpOnly cookie). ' +
           'Mutating requests from a cookie session must also carry an `x-requested-with` header (CSRF).',
-        version: '1.0.0',
+        version: APP_VERSION || 'unknown',
       },
       servers: [{ url: '/', description: 'This instance' }],
       tags: TAGS.map(([, name]) => ({ name })).filter((t, i, a) => a.findIndex(x => x.name === t.name) === i),
