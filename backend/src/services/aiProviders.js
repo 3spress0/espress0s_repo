@@ -250,6 +250,7 @@ export async function callOpenai({ system, prompt, cfg }) {
       'this endpoint needs a model name - set AI_MODEL (e.g. gpt-4o-mini, llama3.1:8b, qwen2.5-coder)'
     ), { code: 'config' });
   }
+
   if (!MODEL_PATTERN.test(model)) {
     throw Object.assign(new Error(`ignoring invalid model name: ${redact(model, cfg.apiKey)}`), { code: 'config' });
   }
@@ -299,6 +300,42 @@ export async function callOpenai({ system, prompt, cfg }) {
     finishReason,
     truncated: finishReason === 'length',
   };
+}
+
+export async function streamOpenai({ system, prompt, cfg, signal, onToken }) {
+  const model = cfg.model;
+  if (!model || !MODEL_PATTERN.test(model)) throw Object.assign(new Error('invalid AI model'), { code: 'config' });
+  const base = cfg.baseUrl || OPENAI_DEFAULT_BASE;
+  const url = /\/chat\/completions$/.test(base) ? base : `${base}/chat/completions`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}) },
+    body: JSON.stringify({ model, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }], temperature: cfg.temperature, max_tokens: cfg.maxTokens, stream: true }),
+    signal,
+    redirect: 'manual',
+  });
+  if (!res.ok || !res.body) throw Object.assign(new Error(`AI stream failed (HTTP ${res.status})`), { code: 'http' });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        const token = JSON.parse(payload)?.choices?.[0]?.delta?.content;
+        if (token) onToken(token);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 // ----------------------------------------------------------------------- tgpt

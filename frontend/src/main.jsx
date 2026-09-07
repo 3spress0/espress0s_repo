@@ -20,3 +20,9 @@ requestAnimationFrame(() => {
   // genuinely stuck load gets its single retry again.
   try { sessionStorage.removeItem('espress0_boot_retry'); } catch { /* private mode */ }
 });
+
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {
+    // Offline caching is optional and must never prevent the app from loading.
+  });
+}

@@ -43,6 +43,11 @@ export default function ItemCard({ item, featured = false }) {
         <div className="flex items-center gap-3 mt-2 text-[11px] text-textMuted">
           {item.file_type && <span className="uppercase font-medium tracking-wide">{item.file_type}</span>}
           {item.folder_name && <span className="truncate">{item.folder_name}</span>}
+          {item.matchReasons?.length > 0 && (
+            <span className="truncate" title={`Search matched in ${item.matchReasons.join(', ')}`}>
+              Match: {item.matchReasons.join(', ')}
+            </span>
+          )}
           <span className="flex items-center gap-1 ml-auto shrink-0">
             <Download className="w-3 h-3" />
             {item.download_count || 0}

@@ -54,6 +54,7 @@ export default function CommandPalette({ onAskOpen }) {
   });
   const inputRef = useRef(null);
   const listRef = useRef(null);
+  const dialogRef = useRef(null);
   const chord = useRef({ key: null, at: 0 });
   const debounced = useDebounced(query, 150);
 
@@ -171,6 +172,27 @@ export default function CommandPalette({ onAskOpen }) {
     return () => window.removeEventListener('espress0:palette', h);
   }, [openPalette]);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    const onTab = (event) => {
+      if (event.key !== 'Tab') return;
+      const focusable = [...(dialogRef.current?.querySelectorAll('button, input') || [])]
+        .filter((element) => !element.disabled);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onTab);
+    return () => document.removeEventListener('keydown', onTab);
+  }, [open]);
+
   if (!open) return null;
 
   const onInputKey = (e) => {
@@ -181,12 +203,12 @@ export default function CommandPalette({ onAskOpen }) {
 
   let lastGroup = null;
   return (
-    <div className="fixed inset-0 z-[110] flex items-start justify-center pt-[12vh] px-4 bg-black/60 backdrop-blur-sm animate-fade-in" onMouseDown={() => setOpen(false)} role="dialog" aria-modal="true" aria-label="Command palette">
-      <div className="glass-strong w-full max-w-xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden animate-slide-up" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[110] flex items-start justify-center pt-[12vh] px-4 bg-black/60 backdrop-blur-sm animate-fade-in" onMouseDown={() => setOpen(false)} role="dialog" aria-modal="true" aria-labelledby="command-palette-title">
+      <div ref={dialogRef} className="glass-strong w-full max-w-xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden animate-slide-up" onMouseDown={(e) => e.stopPropagation()}>
         {help ? (
           <div className="p-5">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-textPrimary flex items-center gap-2"><Keyboard className="w-4 h-4 text-primary" /> Keyboard shortcuts</h3>
+              <h3 id="command-palette-title" className="font-semibold text-textPrimary flex items-center gap-2"><Keyboard className="w-4 h-4 text-primary" /> Keyboard shortcuts</h3>
               <button onClick={() => setHelp(false)} className="p-1.5 rounded-lg hover:bg-surfaceHover text-textMuted"><X className="w-4 h-4" /></button>
             </div>
             <ul className="space-y-2 text-sm">
@@ -203,10 +225,11 @@ export default function CommandPalette({ onAskOpen }) {
           <>
             <div className="flex items-center gap-3 px-4 py-3 border-b border-white/5">
               <Search className="w-4 h-4 text-textMuted flex-shrink-0" />
-              <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onInputKey} placeholder="Search the catalogue or type a command…" className="flex-1 bg-transparent text-sm text-textPrimary placeholder:text-textMuted focus:outline-none" autoComplete="off" spellCheck={false} />
+              <label id="command-palette-title" className="sr-only">Command palette search</label>
+              <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onInputKey} placeholder="Search the catalogue or type a command…" className="flex-1 bg-transparent text-sm text-textPrimary placeholder:text-textMuted focus:outline-none" autoComplete="off" spellCheck={false} aria-controls="command-palette-results" aria-activedescendant={rows[active] ? `command-row-${rows[active].id}` : undefined} />
               <kbd className="hidden sm:inline px-1.5 py-0.5 rounded bg-surface border border-border text-[10px] font-mono text-textMuted">Esc</kbd>
             </div>
-            <div ref={listRef} className="max-h-[50vh] overflow-y-auto py-2" role="listbox">
+            <div id="command-palette-results" ref={listRef} className="max-h-[50vh] overflow-y-auto py-2" role="listbox">
               {rows.length === 0 && <p className="px-4 py-6 text-sm text-textMuted text-center">Nothing matches.</p>}
               {rows.map((row, i) => {
                 const Icon = row.icon;
@@ -215,7 +238,7 @@ export default function CommandPalette({ onAskOpen }) {
                 return (
                   <div key={row.id}>
                     {header && <div className="px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider text-textMuted">{header}</div>}
-                    <button data-index={i} role="option" aria-selected={i === active} onMouseEnter={() => setActive(i)} onClick={() => row.run()}
+                    <button id={`command-row-${row.id}`} data-index={i} role="option" aria-selected={i === active} onMouseEnter={() => setActive(i)} onClick={() => row.run()}
                       className={`w-full flex items-center gap-3 px-4 py-2 text-sm text-left ${i === active ? 'bg-primary/15 text-textPrimary' : 'text-textSecondary hover:bg-surfaceHover'}`}>
                       <Icon className="w-4 h-4 flex-shrink-0 text-textMuted" />
                       <span className="flex-1 truncate">{row.label}{row.sub && <span className="ml-2 text-[11px] text-textMuted uppercase">{row.sub}</span>}</span>

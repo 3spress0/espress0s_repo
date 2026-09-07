@@ -164,6 +164,10 @@ export const itemsApi = {
   delete: (id) => api.delete(`/items/${id}`).then(r => r.data),
 };
 
+export const duplicateApi = {
+  check: (data) => api.post('/admin/items/duplicates', data).then(r => r.data),
+};
+
 export const categoriesApi = {
   list: () => api.get('/categories').then(r => r.data),
   get: (slug) => api.get(`/categories/${slug}`).then(r => r.data),
@@ -196,13 +200,30 @@ export const aiApi = {
    * server needs it to resolve follow-ups ("does that work on my pc?"). Ten
    * turns matches MAX_CONTEXT_MESSAGES in backend/src/services/aiService.js.
    */
-  askPost: (question, messages = []) => api.post('/ai/ask', {
+  askPost: (question, messages = [], config = {}) => api.post('/ai/ask', {
     question,
     messages: messages
       .filter(m => m && (m.role === 'user' || m.role === 'assistant') && !m.error)
       .slice(-10)
       .map(m => ({ role: m.role, content: String(m.content || '').slice(0, 2000) })),
-  }, { timeout: AI_TIMEOUT }).then(r => r.data),
+  }, { timeout: AI_TIMEOUT, ...config }).then(r => r.data),
+  askStream: async (question, messages = [], { signal, onToken, onDone, onError } = {}) => {
+    const response = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/ai/ask/stream`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': readCookie('espress0_csrf') || '' },
+      body: JSON.stringify({ question, messages }), signal,
+    });
+    if (!response.ok || !response.body) throw new Error(`AI stream failed (${response.status})`);
+    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n'); buffer = events.pop() || '';
+      for (const event of events) {
+        const type = event.match(/^event: ([^\n]+)/m)?.[1]; const data = JSON.parse(event.match(/^data: (.+)$/m)?.[1] || '{}');
+        if (type === 'token') onToken?.(data.token); else if (type === 'done') onDone?.(data); else if (type === 'error') onError?.(data);
+      }
+    }
+  },
   suggestions: () => api.get('/ai/suggestions').then(r => r.data),
   status: () => api.get('/ai/status').then(r => r.data),
   faq: () => api.get('/faq').then(r => r.data),

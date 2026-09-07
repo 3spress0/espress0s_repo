@@ -4,7 +4,7 @@ import {
   Search, Plus, Edit, Trash2, Eye, Link2, ImageIcon, Copy,
   EyeOff, AlertTriangle, CheckCircle2, Star, Folder,
 } from 'lucide-react';
-import { adminApi, itemsApi, foldersApi, categoriesApi, catalogAdminApi } from '../../lib/api';
+import { adminApi, itemsApi, foldersApi, categoriesApi, catalogAdminApi, snapshotApi } from '../../lib/api';
 import ItemEditor from '../../components/admin/ItemEditor';
 import { proxyImageUrl } from '../../lib/imageProxy';
 import Loading, { LoadingDots } from '../../components/Loading';
@@ -105,6 +105,7 @@ export default function AdminItems() {
   const [selected, setSelected] = useState([]); // ids
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null); // { kind, message }
+  const [undo, setUndo] = useState(null); // { snapshotPath, message }
   const [confirm, setConfirm] = useState(null); // { title, body, confirmLabel, run }
 
   const notify = (kind, message) => {
@@ -285,10 +286,19 @@ export default function AdminItems() {
     setProgress({ label: label || action, value: 5, sublabel: `${count} selected` });
     try {
       const res = await adminApi.bulkItems(action, selected, value ?? undefined);
-      setProgress({ label: label || action, value: 75, sublabel: `${res.affected} updated` });
+      const skipped = Math.max(0, count - Number(res.affected || 0));
+      setProgress({
+        label: label || action,
+        value: 75,
+        sublabel: `${res.affected || 0} updated · ${skipped} skipped · 0 failed`,
+      });
       load();
       setSelected([]);
-      notify('success', `${label || action}: ${res.affected} page${res.affected === 1 ? '' : 's'}`);
+      notify('success', `${res.affected || 0} updated · ${skipped} skipped · 0 failed`);
+      if (action === 'archive' && res.backupPath) {
+        setUndo({ snapshotPath: res.backupPath, message: `${res.affected || 0} archived` });
+        setTimeout(() => setUndo(null), 5000);
+      }
       setProgress({ label: 'Done', value: 100, tone: 'success' });
     } catch (e) {
       notify('error', e.response?.data?.error || 'Bulk action failed');
@@ -296,6 +306,21 @@ export default function AdminItems() {
     } finally {
       setBusy(false);
       setTimeout(() => setProgress(null), 1200);
+    }
+  };
+
+  const undoLastArchive = async () => {
+    if (!undo) return;
+    setBusy(true);
+    try {
+      await snapshotApi.restore(undo.snapshotPath, { scope: 'catalogue' });
+      setUndo(null);
+      load();
+      notify('success', 'Archive undone');
+    } catch (e) {
+      notify('error', e.response?.data?.error || 'Could not undo archive');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -694,7 +719,14 @@ export default function AdminItems() {
               : 'bg-green-500/10 border-green-500/30 text-green-300'
           }`}
         >
-          {toast.message}
+          <div className="flex items-center gap-3">
+            <span>{toast.message}</span>
+            {undo && toast.kind === 'success' && (
+              <button type="button" onClick={undoLastArchive} disabled={busy} className="font-semibold underline underline-offset-2 hover:text-white disabled:opacity-50">
+                Undo
+              </button>
+            )}
+          </div>
         </div>
       )}
 

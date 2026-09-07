@@ -4,7 +4,7 @@ import {
   RotateCcw, Sparkles, CheckCircle2, Circle, ArrowLeft, ArrowRight,
   Wand2, GitBranch, Plus, Trash2,
 } from 'lucide-react';
-import { itemsApi, categoriesApi, foldersApi, adminApi, catalogAdminApi } from '../../lib/api';
+import { itemsApi, categoriesApi, foldersApi, adminApi, catalogAdminApi, duplicateApi } from '../../lib/api';
 import { LoadingDots } from '../Loading';
 import Progress from '../Progress';
 import RequirementsEditor from './RequirementsEditor';
@@ -163,6 +163,10 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
   const [relatedType, setRelatedType] = useState('related');
   const [relatedBusy, setRelatedBusy] = useState(false);
   const [slugSuggestion, setSlugSuggestion] = useState(null);
+  const [duplicates, setDuplicates] = useState([]);
+  const [draftNotice, setDraftNotice] = useState('');
+  const baselineRef = useRef('');
+  const draftKey = `espress0:item-draft:${item?.id || 'new'}`;
 
   const isEdit = !!item?.id;
   const sections = useMemo(
@@ -170,6 +174,7 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
     [isEdit]
   );
   const [section, setSection] = useState(isEdit ? 'basics' : 'start');
+  const effectiveSlug = slugify(form.slug || form.name);
 
   useEffect(() => {
     categoriesApi.list().then(d => setCategories(d.categories || [])).catch(() => {});
@@ -178,19 +183,75 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
 
   useEffect(() => {
     if (!item) {
-      setForm(emptyForm());
-      setLinks([]);
+      const savedDraft = (() => { try { return JSON.parse(localStorage.getItem(draftKey) || 'null'); } catch { return null; } })();
+      const nextForm = savedDraft?.form || emptyForm();
+      const nextLinks = savedDraft?.links || [];
+      setForm(nextForm);
+      setLinks(nextLinks);
+      baselineRef.current = JSON.stringify({ form: nextForm, links: nextLinks });
+      setDraftNotice(savedDraft ? 'Recovered an unsaved draft from this browser.' : '');
       setSlugTouched(false);
       setSection('start');
       setTemplateId(null);
       return;
     }
-    setForm(itemToForm(item));
+    const nextForm = itemToForm(item);
+    const nextLinks = (item.download_links || []).map(l => ({ ...l }));
+    const savedDraft = (() => { try { return JSON.parse(localStorage.getItem(draftKey) || 'null'); } catch { return null; } })();
+    const recoveredForm = savedDraft?.form || nextForm;
+    const recoveredLinks = savedDraft?.links || nextLinks;
+    setForm(recoveredForm);
+    baselineRef.current = JSON.stringify({ form: nextForm, links: nextLinks });
     setSlugTouched(true); // an existing page already has a URL people may share
     setSection('basics');
     // Copy so mutations in the editor never touch the caller's object.
-    setLinks((item.download_links || []).map(l => ({ ...l })));
-  }, [item]);
+    setLinks(recoveredLinks);
+    setDraftNotice(savedDraft ? 'Recovered an unsaved draft from this browser.' : '');
+  }, [item, draftKey]);
+
+  const currentDraft = useMemo(() => JSON.stringify({ form, links }), [form, links]);
+  const isDirty = Boolean(baselineRef.current && baselineRef.current !== currentDraft);
+
+  useEffect(() => {
+    if (!baselineRef.current) baselineRef.current = currentDraft;
+  }, [currentDraft]);
+
+  useEffect(() => {
+    if (!isDirty) return undefined;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(draftKey, JSON.stringify({ form, links, savedAt: Date.now() }));
+        setDraftNotice('Draft saved locally.');
+      } catch { /* local drafts are optional */ }
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [currentDraft, draftKey, form, links, isDirty]);
+
+  useEffect(() => {
+    const beforeUnload = (event) => {
+      if (!isDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, [isDirty]);
+
+  useEffect(() => {
+    const value = form.name.trim();
+    if (value.length < 2) { setDuplicates([]); return undefined; }
+    const timer = setTimeout(() => {
+      duplicateApi.check({ name: value, slug: effectiveSlug, version: form.version, excludeId: item?.id })
+        .then((result) => setDuplicates(result.matches || []))
+        .catch(() => setDuplicates([]));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [form.name, form.version, effectiveSlug, item?.id]);
+
+  const requestClose = () => {
+    if (isDirty && !window.confirm('You have unsaved changes. Close and discard them?')) return;
+    onClose?.();
+  };
 
   const set = (field) => (e) => {
     const value = e?.target?.type === 'checkbox' ? e.target.checked : e.target.value;
@@ -202,8 +263,6 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
     const name = e.target.value;
     setForm(f => ({ ...f, name, slug: slugTouched ? f.slug : slugify(name) }));
   };
-
-  const effectiveSlug = slugify(form.slug || form.name);
 
   // Debounced availability check so the admin sees a clash before saving.
   useEffect(() => {
@@ -308,6 +367,8 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
     setSaving(true);
     try {
       const saved = isEdit ? await itemsApi.update(item.id, body) : await itemsApi.create(body);
+      try { localStorage.removeItem(draftKey); } catch { /* optional */ }
+      baselineRef.current = '';
       if (opts.publish !== undefined) setForm(f => ({ ...f, published: !!opts.publish }));
       onSaved?.(saved);
     } catch (err) {
@@ -318,7 +379,7 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
     } finally {
       setSaving(false);
     }
-  }, [payload, isEdit, item, onSaved, slugState, effectiveSlug]);
+  }, [payload, isEdit, item, onSaved, slugState, effectiveSlug, draftKey]);
 
   /**
    * Ask the server for the slug it would generate, including a collision-free
@@ -633,7 +694,7 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
           {onClose && (
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               title="Close the editor"
               aria-label="Close editor"
               className="p-2 hover:bg-surfaceHover rounded-xl"
@@ -1114,6 +1175,22 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
           <span>{error}</span>
         </div>
       )}
+      {draftNotice && <p className="mt-3 text-xs text-textMuted">{draftNotice}</p>}
+      {duplicates.length > 0 && (
+        <div className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-sm text-amber-200">
+          <strong>Possible duplicate{duplicates.length === 1 ? '' : 's'}:</strong>
+          <ul className="mt-1 space-y-1">
+            {duplicates.map(match => (
+              <li key={match.id}>
+                <a href={`/file/${match.slug}`} target="_blank" rel="noreferrer" className="underline hover:text-white">
+                  {match.name}{match.version ? ` ${match.version}` : ''}
+                </a>
+                <span className="text-amber-200/70"> — {match.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3 mt-6 pt-4 border-t border-border">
         <button
@@ -1137,7 +1214,7 @@ export default function ItemEditor({ item, onSaved, onClose, compact = false }) 
 
         <div className="flex items-center gap-2 ml-auto">
           {onClose && (
-            <button type="button" onClick={onClose} className="px-4 py-2.5 bg-surface border border-border rounded-xl text-sm">
+            <button type="button" onClick={requestClose} className="px-4 py-2.5 bg-surface border border-border rounded-xl text-sm">
               Cancel
             </button>
           )}

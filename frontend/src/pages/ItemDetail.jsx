@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Download, HardDrive, Calendar, Tag, Cpu, Monitor, FileType, Hash, ArrowLeft, Eye, Clock, Music, Video, Play, Image as Disc, File, Link2, Star, Lock, AlertTriangle, Pencil, Folder } from 'lucide-react';
+import { Download, HardDrive, Calendar, Tag, Cpu, Monitor, FileType, Hash, ArrowLeft, Eye, Clock, Music, Video, Play, Image as Disc, File, Link2, Star, Lock, AlertTriangle, Pencil, Folder, Copy, Check } from 'lucide-react';
 import { itemsApi } from '../lib/api';
 import { formatBytes, formatDate, startDownload } from '../lib/utils';
 import Markdown from '../lib/markdown.jsx';
@@ -34,6 +34,7 @@ export default function ItemDetail() {
   const [previewError, setPreviewError] = useState(null);
   const [editing, setEditing] = useState(false);
   const [favoriteError, setFavoriteError] = useState('');
+  const [downloadStatus, setDownloadStatus] = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -50,6 +51,7 @@ export default function ItemDetail() {
       navigate('/login?redirect=' + encodeURIComponent(window.location.pathname));
       return;
     }
+    setDownloadStatus('Preparing secure download…');
     try {
       const baseUrl = linkId ? `/api/download/${item.id}/${linkId}` : `/api/download/${item.id}`;
       const response = await fetch(`${baseUrl}?json=1`, {
@@ -59,15 +61,17 @@ export default function ItemDetail() {
       if (!response.ok) {
         const err = await response.json().catch(() => ({ error: 'Download failed' }));
         if (response.status === 401) { navigate('/login?redirect=' + encodeURIComponent(window.location.pathname)); return; }
-        if (response.status === 503) { alert(`Mirror down: ${err.reason || err.error}`); return; }
+        if (response.status === 503) { setDownloadStatus(`Mirror unavailable: ${err.reason || err.error}`); return; }
         throw new Error(err.error || 'Download failed');
       }
       const data = await response.json();
       if (data.downloadUrl) {
+        setDownloadStatus(`Opening ${data.mirrorLabel || primaryLink?.label || 'download'}…`);
         startDownload(data.downloadUrl, data.fileName);
+        setTimeout(() => setDownloadStatus('Download opened'), 3000);
       }
     } catch (e) {
-      alert(`Download failed: ${e.message}`);
+      setDownloadStatus(`Download failed: ${e.message}`);
     }
   };
 
@@ -297,6 +301,7 @@ export default function ItemDetail() {
                   <Download className="w-5 h-5" />Download {primaryLink ? `• ${primaryLink.label}` : ''}
                 </button>
               )}
+              {downloadStatus && <p role="status" className="text-xs text-textMuted text-center">{downloadStatus}</p>}
 
               {canPreview && (
                 <button onClick={handlePreview} disabled={previewLoading} className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-surface border border-border hover:border-primary/30 rounded-2xl font-medium text-sm transition-all disabled:opacity-50">
@@ -438,7 +443,7 @@ export default function ItemDetail() {
           <div className="glass rounded-2xl border border-white/5 p-6">
             <h2 className="font-semibold text-textPrimary mb-4 flex items-center gap-2"><FileType className="w-4 h-4 text-primary" />File Details</h2>
             <div className="grid sm:grid-cols-2 gap-4 text-sm">
-              <DetailRow icon={FileType} label="File Name" value={item.file_name} mono />
+              <DetailRow icon={FileType} label="File Name" value={item.file_name} mono copyable />
               <DetailRow icon={HardDrive} label="File Size" value={`${formatBytes(item.file_size)} (${item.file_size?.toLocaleString() || 0} bytes)`} />
               <DetailRow icon={FileType} label="File Type" value={item.file_type?.toUpperCase()} />
               <DetailRow icon={Monitor} label="Platform" value={item.platform} />
@@ -453,7 +458,7 @@ export default function ItemDetail() {
                 <h3 className="text-xs font-medium text-textMuted uppercase tracking-widest mb-3 flex items-center gap-2"><Hash className="w-3 h-3" />Checksums</h3>
                 <div className="bg-surface rounded-xl p-3 border border-border">
                   <div className="text-[11px] text-textMuted mb-1">SHA-256</div>
-                  <code className="text-xs font-mono text-textPrimary break-all">{item.sha256}</code>
+                  <CopyValue value={item.sha256} />
                 </div>
               </div>
             )}
@@ -552,7 +557,7 @@ export default function ItemDetail() {
   );
 }
 
-function DetailRow({ icon: Icon, label, value, mono }) {
+function DetailRow({ icon: Icon, label, value, mono, copyable = false }) {
   if (!value) return null;
   return (
     <div className="flex gap-3">
@@ -561,9 +566,33 @@ function DetailRow({ icon: Icon, label, value, mono }) {
       </div>
       <div className="min-w-0">
         <div className="text-xs text-textMuted uppercase tracking-wide">{label}</div>
-        <div className={`text-sm font-medium text-textPrimary mt-0.5 ${mono ? 'font-mono text-xs break-all' : ''}`}>{value}</div>
+        <div className="flex items-start gap-2 mt-0.5">
+          <div className={`text-sm font-medium text-textPrimary ${mono ? 'font-mono text-xs break-all' : ''}`}>{value}</div>
+          {copyable && <CopyValue value={value} compact />}
+        </div>
       </div>
     </div>
+  );
+}
+
+function CopyValue({ value, compact = false }) {
+  const [copied, setCopied] = useState(false);
+  if (!value) return null;
+  const copy = async (event) => {
+    event.preventDefault();
+    try {
+      await navigator.clipboard.writeText(String(value));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <button type="button" onClick={copy} title="Copy value" aria-label={`Copy ${value}`}
+      className={`inline-flex items-center gap-1 rounded-md border border-border text-textMuted hover:text-primary hover:border-primary/40 transition-colors ${compact ? 'p-1' : 'px-2 py-1 text-xs'}`}>
+      {copied ? <><Check className="w-3 h-3 text-green-400" />Copied</> : <><Copy className="w-3 h-3" />{compact ? null : 'Copy'}</>}
+    </button>
   );
 }
 
