@@ -224,7 +224,15 @@ fastify.addHook('onResponse', async (request, reply) => {
   monitoringService.recordRequest(request, reply, reply.elapsedTime);
 });
 
-getDb();
+// Do not make liveness depend on SQLite. A damaged, locked, or temporarily
+// unavailable database must produce a visible health response (and a useful
+// journal error), not prevent Fastify from binding its port at all. Database-
+// backed routes still call getDb() lazily and report their own failures.
+try {
+  getDb();
+} catch (error) {
+  fastify.log.error({ err: error }, 'Database initialization failed; starting in degraded mode');
+}
 
 // OpenAPI: must be registered before any route so its onRoute hook sees them.
 await fastify.register(openapiPlugin);
@@ -238,7 +246,7 @@ await fastify.register(openapiPlugin);
  * relies on exactly that: it compares this value to the commit it deployed and
  * refuses to call an update successful until they match.
  */
-fastify.get('/api/health', async () => {
+const healthResponse = async () => {
   return {
     status: 'ok',
     service: "espress0's repo",
@@ -248,7 +256,12 @@ fastify.get('/api/health', async () => {
     startedAt: STARTED_AT,
     timestamp: new Date().toISOString(),
   };
-});
+};
+
+// Keep both paths: /api/health is used by deployment tooling, while /health
+// is convenient for reverse proxies and platform probes.
+fastify.get('/api/health', healthResponse);
+fastify.get('/health', healthResponse);
 
 await fastify.register(async (api) => {
   await api.register(itemsRoutes);

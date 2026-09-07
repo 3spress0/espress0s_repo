@@ -6,11 +6,12 @@ import fs from 'fs';
 export async function monitoringRoutes(fastify) {
   // Public health (basic)
   fastify.get('/monitoring/health', async (request, reply) => {
-    const db = getDb();
+    let db = null;
     let dbStatus = 'ok';
     let dbError = null;
     
     try {
+      db = getDb();
       db.prepare('SELECT 1').get();
     } catch (e) {
       dbStatus = 'error';
