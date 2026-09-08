@@ -67,17 +67,17 @@ describe('provider resolution', () => {
   it('does not let a tgpt-era key silently retarget the calls at Google', async () => {
     // The upgrade hazard: an existing .env with TGPT_API_KEY=sk-... (the key for
     // TGPT_PROVIDER=openai) and tgpt installed must keep using tgpt.
-    const legacy = await decide({ apiKey: 'sk-proj-abcdefghij0123', apiKeySource: 'TGPT_API_KEY' },
+    const legacy = await decide({ apiKey: 'sk-proj-not-a-real-key-0123', apiKeySource: 'TGPT_API_KEY' },
       { tgptAvailable: true });
     assert.equal(legacy.provider, 'tgpt', 'a TGPT_API_KEY must not imply the Gemini backend');
     assert.equal(legacy.keyHint, undefined);
 
     // Same key under a Gemini-meaning name, and auto does mean Gemini.
-    assert.equal((await decide({ apiKey: 'sk-proj-abcdefghij0123', apiKeySource: 'AI_API_KEY' },
+    assert.equal((await decide({ apiKey: 'sk-proj-not-a-real-key-0123', apiKeySource: 'AI_API_KEY' },
       { tgptAvailable: true })).provider, 'gemini');
 
     // Forced gemini with only a tgpt key: obey, but say so.
-    const forced = await decide({ provider: 'gemini', apiKey: 'sk-proj-abcdefghij0123', apiKeySource: 'TGPT_API_KEY' });
+    const forced = await decide({ provider: 'gemini', apiKey: 'sk-proj-not-a-real-key-0123', apiKeySource: 'TGPT_API_KEY' });
     assert.equal(forced.provider, 'gemini');
     assert.match(forced.notes.join(' '), /only key found is TGPT_API_KEY/);
   });
