@@ -2,15 +2,23 @@
 # Optimized for low-resource Azure VM
 
 # Stage 1: Build frontend
-FROM node:26-alpine AS frontend-builder
+#
+# Pinned to the Active LTS line, and specifically to a major better-sqlite3
+# supports: 12.2.0 declares engines "20.x || 22.x || 23.x || 24.x", so on
+# node:26-alpine the runner stage below cannot install it at all - no prebuilt
+# binary for that ABI, and no source build either. That is what broke
+# docker-build after the runtime was bumped to 26 (the job had been skipped for
+# weeks behind other failures, so nothing caught it). Raise this together with
+# better-sqlite3, never ahead of it.
+FROM node:24-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci || npm install
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Backend + frontend runner
-FROM node:26-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 
 # sqlite build deps (better-sqlite3) + the tools the entrypoint needs
@@ -35,7 +43,7 @@ RUN if [ "$WITH_TGPT" = "true" ]; then \
 # Copy backend
 COPY backend/package.json backend/package-lock.json* ./backend/
 WORKDIR /app/backend
-RUN npm ci --only=production || npm install --only=production
+RUN npm ci --omit=dev
 
 # Copy backend source
 COPY backend/src ./src
