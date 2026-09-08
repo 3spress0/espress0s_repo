@@ -99,6 +99,6 @@ jobs:
       # Reads .gitleaks.toml from the repo root. A PR scans its diff; the weekly
       # and dispatch runs walk all history, where the four allowlisted shape
       # false positives live - rationale in SECURITY-AUDIT.md.
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
