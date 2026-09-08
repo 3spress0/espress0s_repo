@@ -63,7 +63,9 @@ before(async () => {
   doomed = makeItem('vc-gone', 1);
 
   app = Fastify({ logger: false });
-  await app.register(cookie, { secret: 'view-counting-test-cookie-secret-0123' });
+  // No signing secret: this suite never reads or writes a signed cookie, and
+  // a fixture that looks like a credential is what the secret scanners fire on.
+  await app.register(cookie);
   await app.register(rateLimit, { global: false });
   await app.register(async (api) => { await api.register(itemsRoutes); }, { prefix: '/api' });
   await app.ready();

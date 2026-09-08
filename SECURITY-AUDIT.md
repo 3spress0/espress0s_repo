@@ -238,7 +238,11 @@ characters and 12 tokens, Levenshtein short-circuits above 64 characters, and
   CodeQL (security-and-quality, plus the alert-suppression query so in-source
   `// codeql[query-id]` comments work — see "Suppression comments" below),
   `dependency-review-action` on pull requests (fails on high), gitleaks for
-  committed secrets, and a report-only `npm audit` over dev dependencies;
+  committed secrets (read together with `.gitleaks.toml`, which allowlists the
+  values the suites have to write - fake cookie-signing secrets, an
+  `sk-test-not-a-real-key-…` AI stand-in - by *shape* rather than by directory,
+  so a real token committed into a test file is still reported), and a
+  report-only `npm audit` over dev dependencies;
   weekly on a schedule as well. `ci.yml` keeps failing the build on high
   advisories in production dependencies.
 
