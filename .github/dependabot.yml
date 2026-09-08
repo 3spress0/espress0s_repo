@@ -32,6 +32,23 @@ updates:
         patterns: ["react", "react-dom", "react-router*"]
       frontend-dev:
         dependency-type: development
+    # Two majors are held back on purpose, because taking them silently broke
+    # every install and every build on the VM (the updater then refused to
+    # deploy anything, which is how it surfaced):
+    #   * eslint 10 - eslint-plugin-react has no release that accepts it yet
+    #     (its peer range still stops at ^9.7), so `npm ci` ends in ERESOLVE.
+    #   * tailwindcss 4 - the PostCSS plugin moved to @tailwindcss/postcss and
+    #     the config format changed; this frontend is still v3-style
+    #     (@tailwind directives + tailwind.config.js), so `vite build` fails.
+    # Both are deliberate migrations, not dependency bumps. Remove the entry
+    # once the migration is actually done.
+    ignore:
+      - dependency-name: eslint
+        update-types: [version-update:semver-major]
+      - dependency-name: "@eslint/js"
+        update-types: [version-update:semver-major]
+      - dependency-name: tailwindcss
+        update-types: [version-update:semver-major]
     labels: [dependencies, frontend]
     commit-message:
       prefix: "deps(frontend)"

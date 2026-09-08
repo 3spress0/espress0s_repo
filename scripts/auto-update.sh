@@ -10,6 +10,21 @@
 #   ./scripts/auto-update.sh --no-migrate       skip the database migrations
 #   ./scripts/auto-update.sh --no-restart       deploy WITHOUT restarting (offline)
 #
+# Resource safety (a small VM has to survive its own updates):
+#   --min-free-mem MB     do not start the build phase with less than this
+#                         available (default 512; 0 disables the gate)
+#   --min-free-disk MB    do not stage a release with less than this free on
+#                         the checkout's filesystem (default 2048; 0 disables)
+#   --step-timeout SEC    hard cap per expensive step - dependency install,
+#                         frontend build, migration rehearsal (default 900)
+#   --build-heap MB       heap ceiling for the frontend build, passed as
+#                         NODE_OPTIONS=--max-old-space-size (default 512; 0 = leave alone)
+#   --max-sockets N       npm's parallel connections per origin (default 4;
+#                         npm's own default of 15 is a lot for a 1-vCPU box)
+#   --build-online        the historic order: build the staged tree while the
+#                         app keeps serving. Faster, no build-window outage,
+#                         and the reason a small VM could OOM mid-update.
+#
 # Restart target: detected automatically, override to be explicit.
 #   --service NAME        systemd unit, via systemctl (sudo -n when needed)
 #   --tmux-session NAME   the 'app'/'backend' window of a start-tmux session
@@ -25,16 +40,37 @@
 #   want an offline file-only deploy"; it is never the default.
 #
 # How it updates:
-#   --mode clone (default)  the new code is cloned and BUILT in .auto-update/next
-#       while the site keeps running. Nothing in the live tree changes until the
-#       staged build is proven (frontend built, migrations rehearsed against a
-#       copy of the database). Only then: stop -> swap -> migrate -> start ->
-#       health check. If the site does not come back, the previous commit is put
-#       back and started again, so a bad release costs seconds instead of uptime.
+#   --mode clone (default)  the new code is cloned into .auto-update/next while
+#       the site keeps running. The release is then proven - dependency graph
+#       resolved, dependencies installed, frontend built, migrations rehearsed
+#       against a copy of the database - before anything in the live tree moves.
+#       Only then: swap -> migrate -> start -> health check. If the site does
+#       not come back, the previous commit is put back and started again, so a
+#       bad release costs seconds instead of uptime.
 #   --mode pull             fast-forward in place, but with the same
 #       stop -> deps -> migrate -> build -> start -> verify -> rollback order.
 #
+# Where the expensive work happens (and why it changed):
+#   `npm ci` and `vite build` are the two heaviest things this box ever runs.
+#   Doing them while the app, its page cache and the updater all compete for
+#   RAM is what can push a small VM into swap and then into the OOM killer -
+#   which takes down SSH and the site, not just the update. So by DEFAULT the
+#   application is stopped BEFORE the install/build phase and started again
+#   whatever the outcome. That trades a short, predictable build window for not
+#   losing the machine. --build-online restores the old overlap for hosts with
+#   RAM to spare.
+#
 # Safety:
+#   * A resource preflight runs before anything is staged (disk) and again
+#     before the heavy phase (memory). Below the thresholds the cycle is
+#     refused with the live tree untouched and the app running.
+#   * Every expensive step runs under `timeout`, at nice 10 / best-effort I/O
+#     priority 7, with npm's socket count reduced. A wedged build fails the
+#     cycle instead of pinning the box.
+#   * Dependencies are installed with `npm ci` from the lockfile, never
+#     `npm install`: a release whose lockfile does not resolve (a peer
+#     dependency conflict, say) is caught by a --dry-run check while the site
+#     is still up, instead of after the app has been stopped.
 #   * --mode pull only ever fast-forwards. Local commits/divergence are never
 #     reset away - the cycle is skipped and logged instead.
 #   * A dirty working tree skips the cycle in BOTH modes: a clone deploy
@@ -76,6 +112,20 @@ STAGE_DIR="$STAGE_ROOT/next"
 STATE_FILE="data/.auto-update-status"
 DISABLE_FILE="data/.auto-update-disabled"
 LOCK_FILE="data/.auto-update.lock"
+
+# ------------------------------------------------------------ resource policy
+# Defaults are deliberately modest: this runs on 1-2 GB Azure VMs where the app
+# unit itself is capped at MemoryMax=800M. Every one of them is overridable by
+# flag or environment, because "how much RAM is enough" is a property of the
+# box, not of this script.
+MIN_FREE_MEM_MB="${MIN_FREE_MEM_MB:-512}"    # gate for the install/build phase
+MIN_FREE_DISK_MB="${MIN_FREE_DISK_MB:-2048}" # gate for staging a clone at all
+STEP_TIMEOUT="${STEP_TIMEOUT:-900}"          # per expensive step
+BUILD_HEAP_MB="${BUILD_HEAP_MB:-512}"        # NODE_OPTIONS for the frontend build
+NPM_MAX_SOCKETS="${NPM_MAX_SOCKETS:-4}"      # npm defaults to 15 per origin
+NICE_LEVEL="${NICE_LEVEL:-10}"
+BUILD_ONLINE=0                               # 1 = build while the app serves
+
 
 # Set by resolve_restart_target(); everything downstream reads these instead of
 # re-deriving "how is this app supervised" at each call site.
@@ -121,6 +171,17 @@ while [ $# -gt 0 ]; do
     --health-url=*)   HEALTH_URL="${1#*=}" ;;
     --no-migrate)     MIGRATE=0 ;;
     --no-restart)     NO_RESTART=1 ;;
+    --build-online)   BUILD_ONLINE=1 ;;
+    --min-free-mem)   MIN_FREE_MEM_MB="${2:-}"; shift ;;
+    --min-free-mem=*) MIN_FREE_MEM_MB="${1#*=}" ;;
+    --min-free-disk)   MIN_FREE_DISK_MB="${2:-}"; shift ;;
+    --min-free-disk=*) MIN_FREE_DISK_MB="${1#*=}" ;;
+    --step-timeout)   STEP_TIMEOUT="${2:-}"; shift ;;
+    --step-timeout=*) STEP_TIMEOUT="${1#*=}" ;;
+    --build-heap)     BUILD_HEAP_MB="${2:-}"; shift ;;
+    --build-heap=*)   BUILD_HEAP_MB="${1#*=}" ;;
+    --max-sockets)    NPM_MAX_SOCKETS="${2:-}"; shift ;;
+    --max-sockets=*)  NPM_MAX_SOCKETS="${1#*=}" ;;
     -h|--help)        usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -129,6 +190,15 @@ done
 
 case "$INTERVAL" in (*[!0-9]*|'') echo "!! --interval must be a number of seconds." >&2; exit 1 ;; esac
 [ "$INTERVAL" -lt 30 ] && INTERVAL=30   # be nice to the remote (and the disk)
+# The resource knobs are all plain integers; a typo here would otherwise only
+# surface much later, in the middle of a deploy.
+for _opt in MIN_FREE_MEM_MB MIN_FREE_DISK_MB STEP_TIMEOUT BUILD_HEAP_MB NPM_MAX_SOCKETS NICE_LEVEL; do
+  case "${!_opt}" in
+    (*[!0-9]*|'') echo "!! $_opt must be a whole number (got '${!_opt}')." >&2; exit 1 ;;
+  esac
+done
+[ "$STEP_TIMEOUT" -lt 5 ] && STEP_TIMEOUT=5
+[ "$NPM_MAX_SOCKETS" -lt 1 ] && NPM_MAX_SOCKETS=1
 case "$MODE" in
   clone|pull) ;;
   *) echo "!! --mode must be 'clone' or 'pull' (got '$MODE')." >&2; exit 1 ;;
@@ -170,6 +240,161 @@ refuse() { # <reason>
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { log "FATAL: '$1' not installed"; exit 1; }; }
 need_cmd git
 need_cmd npm
+
+# ------------------------------------------------------------------- resources
+#
+# The updater is the heaviest thing this machine runs: a clone, two dependency
+# installs and a bundler, historically all while the app was still serving. On
+# a 1-2 GB VM that combination is enough to exhaust memory, start swapping and
+# end at the OOM killer - which does not politely pick the build, it takes SSH
+# and the site with it. None of the careful rollback machinery below helps if
+# the box itself stops answering.
+#
+# So: measure first, refuse early, and never let a single step run unbounded.
+
+# MemAvailable is the kernel's own estimate of what can be allocated without
+# swapping - a much better signal than 'free' minus 'used', which counts the
+# page cache as gone.
+mem_available_mb() {
+  local kb
+  kb="$(awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null)"
+  [ -n "$kb" ] || return 1
+  printf '%d' $((kb / 1024))
+}
+
+mem_total_mb() {
+  local kb
+  kb="$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null)"
+  [ -n "$kb" ] || return 1
+  printf '%d' $((kb / 1024))
+}
+
+swap_summary() {
+  local total used
+  total="$(awk '/^SwapTotal:/ {print int($2/1024); exit}' /proc/meminfo 2>/dev/null)"
+  used="$(awk '/^SwapFree:/ {print int($2/1024); exit}' /proc/meminfo 2>/dev/null)"
+  [ -n "$total" ] || { printf 'unknown'; return 0; }
+  if [ "$total" = "0" ]; then printf 'none'; else printf '%dM free of %dM' "${used:-0}" "$total"; fi
+}
+
+disk_free_mb() { # <path>
+  df -Pm "$1" 2>/dev/null | awk 'NR == 2 { print $4; exit }'
+}
+
+# One line an operator can read in journalctl and immediately understand, plus
+# the raw tools' output when they exist - this is the evidence that says whether
+# an update was refused for a good reason.
+log_resources() { # <label>
+  local avail total
+  avail="$(mem_available_mb || echo '?')"
+  total="$(mem_total_mb || echo '?')"
+  log "$1: RAM ${avail}M available of ${total}M, swap $(swap_summary), disk $(disk_free_mb "$ROOT" || echo '?')M free on $ROOT"
+}
+
+# Gate a phase on free memory. Returns non-zero (without touching anything) when
+# the box does not have the headroom the caller says it needs.
+require_memory() { # <needed_mb> <phase>
+  local need="$1" phase="$2" avail
+  [ "$need" -gt 0 ] || return 0
+  avail="$(mem_available_mb)" || { log "cannot read /proc/meminfo - skipping the memory gate"; return 0; }
+  if [ "$avail" -lt "$need" ]; then
+    log "only ${avail}M available, ${need}M needed for $phase"
+    log "  raise or disable the gate with --min-free-mem <MB> (0 = off), or give the VM more RAM/swap."
+    return 1
+  fi
+  log "memory gate passed for $phase: ${avail}M available, ${need}M required"
+  return 0
+}
+
+require_disk() { # <needed_mb>
+  local need="$1" free
+  [ "$need" -gt 0 ] || return 0
+  free="$(disk_free_mb "$ROOT")" || return 0
+  [ -n "$free" ] || return 0
+  if [ "$free" -lt "$need" ]; then
+    log "only ${free}M free on $ROOT, ${need}M needed to stage a release"
+    log "  a clone plus two node_modules trees is not small; free space or lower --min-free-disk."
+    return 1
+  fi
+  return 0
+}
+
+# Run one expensive step with the brakes on:
+#   timeout  - a wedged npm/vite fails the cycle instead of running forever
+#   nice     - the app (when it is up) and sshd outrank the updater for CPU
+#   ionice   - and for disk, which is what actually starves a small VM
+#   npm_*    - fewer parallel sockets, no audit/fund round-trips, no progress
+#              redraws in a journal
+# Returns the command's exit status; 124/137 are reported as a timeout.
+run_step() { # <seconds> <label> <command...>
+  local secs="$1" label="$2"; shift 2
+  local -a wrap=()
+  command -v timeout >/dev/null 2>&1 && wrap+=(timeout -k 30 "$secs")
+  command -v nice    >/dev/null 2>&1 && wrap+=(nice -n "$NICE_LEVEL")
+  command -v ionice  >/dev/null 2>&1 && wrap+=(ionice -c2 -n7)
+  local rc=0
+  "${wrap[@]}" env \
+    npm_config_maxsockets="$NPM_MAX_SOCKETS" \
+    npm_config_audit=false \
+    npm_config_fund=false \
+    npm_config_progress=false \
+    "$@" || rc=$?
+  case "$rc" in
+    0)        ;;
+    124|137)  log "$label TIMED OUT after ${secs}s (--step-timeout)" ;;
+    *)        log "$label failed (exit $rc)" ;;
+  esac
+  return $rc
+}
+
+# Dependencies come from the lockfile, or they do not come at all.
+#
+# `npm install` resolves afresh and rewrites package-lock.json, so a manifest
+# whose peer dependencies cannot be satisfied gets papered over locally and the
+# deployed tree stops matching the repository. `npm ci` installs exactly the
+# lockfile and fails loudly when it disagrees with package.json - which is what
+# a deployment wants. (npm's own guidance for CI/deploys.)
+npm_install_in() { # <dir> <label>
+  local dir="$1" label="$2"
+  if [ -f "$dir/package-lock.json" ]; then
+    ( cd "$dir" && run_step "$STEP_TIMEOUT" "$label npm ci" npm ci --no-audit --no-fund --loglevel=error )
+  else
+    log "$label: no package-lock.json in this release - falling back to npm install"
+    ( cd "$dir" && run_step "$STEP_TIMEOUT" "$label npm install" npm install --no-audit --no-fund --loglevel=error )
+  fi
+}
+
+# Resolve the release's dependency graph WITHOUT installing it, while the site
+# is still up. This is the cheap way to catch the class of failure that took
+# this deployment down: package.json asking for a major that no other package
+# accepts, so every install ends in ERESOLVE. Discovering that after the app has
+# been stopped costs an outage; discovering it here costs nothing.
+validate_dependency_graph() { # <dir>
+  local dir="$1" pkg
+  for pkg in backend frontend; do
+    [ -d "$dir/$pkg" ] || continue
+    [ -f "$dir/$pkg/package-lock.json" ] || continue
+    if ! ( cd "$dir/$pkg" && run_step "$STEP_TIMEOUT" "$pkg dependency check" \
+             npm ci --dry-run --ignore-scripts --no-audit --no-fund --loglevel=error ); then
+      log "$pkg: this release's dependencies do not resolve against its lockfile"
+      log "  (npm ci --dry-run failed - a peer conflict or an out-of-date lockfile)"
+      return 1
+    fi
+  done
+  log "dependency graphs resolve for this release"
+  return 0
+}
+
+# The frontend build, capped. vite/rollup will happily grow past the whole VM;
+# a heap ceiling makes it fail as a build rather than as a machine.
+build_frontend_in() { # <dir>
+  local dir="$1"
+  [ -d "$dir/frontend" ] || return 0
+  local heap=()
+  [ "$BUILD_HEAP_MB" -gt 0 ] && heap=(NODE_OPTIONS="--max-old-space-size=$BUILD_HEAP_MB")
+  ( cd "$dir/frontend" && run_step "$STEP_TIMEOUT" "frontend build" env "${heap[@]}" npm run build ) >/dev/null 2>&1 \
+    && [ -f "$dir/frontend/dist/index.html" ]
+}
 
 # Default: follow whatever the checkout currently tracks.
 [ -n "$BRANCH" ] || BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
@@ -547,7 +772,7 @@ run_migrations() { # <label> <dir> — the dir's DB config decides which file it
     log "$1: cannot run migrations here (better-sqlite3 unavailable) - skipping"
     return 0
   fi
-  (cd "$2" && node src/db/migrate.js) >/dev/null 2>&1 \
+  (cd "$2" && run_step "$STEP_TIMEOUT" "$1 migrations" node src/db/migrate.js) >/dev/null 2>&1 \
     && { log "$1: migrations applied"; return 0; } \
     || { log "$1: MIGRATIONS FAILED"; return 1; }
 }
@@ -590,7 +815,8 @@ rehearse_migrations() {
   # here would point at $STAGE_DIR/data and miss the copy made above - the
   # rehearsal would run, pass, and have tested an empty file it just created.
   local staged_db="$ROOT/$STAGE_DIR/backend/data/repo.db"
-  if (cd "$STAGE_DIR/backend" && DATABASE_PATH="$staged_db" node src/db/migrate.js) >/dev/null 2>&1; then
+  if (cd "$STAGE_DIR/backend" && run_step "$STEP_TIMEOUT" "migration rehearsal" \
+        env DATABASE_PATH="$staged_db" node src/db/migrate.js) >/dev/null 2>&1; then
     log "migrations rehearse cleanly"
     return 0
   fi
@@ -647,10 +873,18 @@ install_deps_in() { # <dir>
   local dir="$1"
   local pkg
   for pkg in backend frontend; do
-    if [ ! -d "$dir/$pkg/node_modules" ] || [ -z "$(ls -A "$dir/$pkg/node_modules" 2>/dev/null)" ]; then
-      log "installing $pkg dependencies (staged)"
-      (cd "$dir/$pkg" && npm install --no-audit --no-fund --loglevel=error) || { log "npm install failed in $dir/$pkg"; return 1; }
+    [ -d "$dir/$pkg" ] || continue
+    # A symlink here is reuse_live_deps' doing: the manifests are identical to
+    # the running commit, so there is nothing to install.
+    if [ -L "$dir/$pkg/node_modules" ]; then
+      log "$pkg: reusing the live node_modules (manifests unchanged)"
+      continue
     fi
+    if [ -d "$dir/$pkg/node_modules" ] && [ -n "$(ls -A "$dir/$pkg/node_modules" 2>/dev/null)" ]; then
+      continue
+    fi
+    log "installing $pkg dependencies (staged, from the lockfile)"
+    npm_install_in "$dir/$pkg" "$pkg" || { log "dependency install failed in $dir/$pkg"; return 1; }
   done
   return 0
 }
@@ -710,7 +944,7 @@ restore_dist_snapshot() {
       || log "could not restore the dist snapshot - rebuild the frontend by hand"
   elif [ -f frontend/package.json ]; then
     log "no dist snapshot - rebuilding the frontend from the restored source"
-    (cd frontend && npm run build) >/dev/null 2>&1 || log "rollback rebuild FAILED"
+    build_frontend_in "$ROOT" || log "rollback rebuild FAILED"
   fi
 }
 
@@ -796,7 +1030,36 @@ rollback_to() { # <old_sha> <new_sha>
 
 # ------------------------------------------------------------------- the two modes
 
-# clone mode: prove the build off to the side, then swap and restart.
+# The expensive half of a clone deploy: dependencies, the frontend bundle and
+# the migration rehearsal. Split out because WHEN it runs is now a policy
+# decision - by default with the app stopped (so the build is not competing
+# with the running site for a small VM's memory), or, with --build-online, the
+# historic overlap. Sets STAGE_FAIL to the state message for the caller.
+STAGE_FAIL=""
+stage_build() { # <local_sha> <remote_sha>
+  STAGE_FAIL=""
+  if deps_changed "$1" "$2"; then
+    log "dependency manifests changed - staged tree gets its own install"
+  else
+    reuse_live_deps
+  fi
+  if ! install_deps_in "$STAGE_DIR"; then
+    STAGE_FAIL="Dependency install failed in the staged tree - live tree untouched"
+    return 1
+  fi
+  if ! build_frontend_in "$STAGE_DIR"; then
+    log "the new frontend does not build - not deploying"
+    STAGE_FAIL="Frontend build failed in the staged tree - live tree untouched"
+    return 1
+  fi
+  if ! rehearse_migrations; then
+    STAGE_FAIL="Migrations failed against a copy of the live DB - not deployed"
+    return 1
+  fi
+  return 0
+}
+
+# clone mode: prove the release off to the side, then swap and restart.
 deploy_via_clone() { # <local_sha> <remote_sha>
   local remote_url
   remote_url="$(git remote get-url "$REMOTE" 2>/dev/null)"
@@ -804,6 +1067,15 @@ deploy_via_clone() { # <local_sha> <remote_sha>
     log "no '$REMOTE' URL to clone from - falling back to --mode pull"
     deploy_via_pull "$1" "$2"
     return $?
+  fi
+
+  # Preflight, before a single byte is written: staging a release costs a git
+  # clone plus (usually) two node_modules trees. Running out of disk halfway
+  # through that is a much worse place to discover it.
+  log_resources "before staging"
+  if ! require_disk "$MIN_FREE_DISK_MB"; then
+    refuse "Not enough free disk to stage a release safely (need ${MIN_FREE_DISK_MB}M on $ROOT)."
+    return 1
   fi
 
   log "cloning $remote_url ($BRANCH @ ${2:0:7}) into $STAGE_DIR"
@@ -825,35 +1097,59 @@ deploy_via_clone() { # <local_sha> <remote_sha>
   fi
 
   carry_runtime_state
-  if deps_changed "$1" "$2"; then
-    log "dependency manifests changed - staged tree gets its own install"
+
+  # Cheap, read-only, and it runs while the site is still up: does this
+  # release's dependency graph resolve at all? An unresolvable manifest is the
+  # single most common way a release cannot be installed, and the one failure
+  # we refuse to discover with the application already stopped.
+  if ! validate_dependency_graph "$STAGE_DIR"; then
+    write_state error "This release's dependencies do not resolve (npm ci --dry-run) - live tree untouched, app still serving."
+    return 1
+  fi
+
+  if [ "$BUILD_ONLINE" = 1 ]; then
+    # Historic order: build alongside the running app. Kept for hosts with the
+    # memory to spare, never the default on a small VM.
+    log "--build-online: building the staged tree while the app keeps serving"
+    if ! stage_build "$1" "$2"; then
+      write_state error "$STAGE_FAIL"
+      return 1
+    fi
+    release_live_deps
+    log "staged build is good - stopping the app to swap"
+    if ! stop_app; then
+      refuse "Could not stop the application ($SUPERVISOR:$SUPERVISOR_NAME); live tree and database untouched."
+      return 1
+    fi
   else
-    reuse_live_deps
-  fi
-  if ! install_deps_in "$STAGE_DIR"; then
-    write_state error "Dependency install failed in the staged tree - live tree untouched"
-    return 1
-  fi
-  if ! (cd "$STAGE_DIR/frontend" && npm run build) >/dev/null 2>&1 || [ ! -f "$STAGE_DIR/frontend/dist/index.html" ]; then
-    log "the new frontend does not build - not deploying"
-    write_state error "Frontend build failed in the staged tree - live tree untouched"
-    return 1
-  fi
-  if ! rehearse_migrations; then
-    write_state error "Migrations failed against a copy of the live DB - not deployed"
-    return 1
-  fi
+    # Default order. The app goes down FIRST, so the install and the bundler get
+    # the machine to themselves - no 800M of Node, no live page cache, no
+    # request traffic to compete with. The tree and the database are still
+    # untouched at this point, so every failure below simply starts the app
+    # again on the commit it was already running.
+    log "stopping the app before the install/build phase (see --build-online)"
+    if ! stop_app; then
+      refuse "Could not stop the application ($SUPERVISOR:$SUPERVISOR_NAME); live tree and database untouched."
+      return 1
+    fi
 
-  # Everything above ran with the site up and the live tree untouched.
-  release_live_deps
-  log "staged build is good - stopping the app to swap"
+    log_resources "after stopping the app"
+    if ! require_memory "$MIN_FREE_MEM_MB" "the install/build phase"; then
+      start_app
+      refuse "Not enough free memory to build this release safely; the app was restarted on ${1:0:7} and nothing else was touched."
+      return 1
+    fi
 
-  # The gate. Nothing below this line may run unless the application is
-  # genuinely stopped: swap_tree, the live migration and the HEAD move all
-  # assume no process is reading the tree they are rewriting.
-  if ! stop_app; then
-    refuse "Could not stop the application ($SUPERVISOR:$SUPERVISOR_NAME); live tree and database untouched."
-    return 1
+    if ! stage_build "$1" "$2"; then
+      log "the staged build failed with the app down - restarting the previous release"
+      release_live_deps
+      start_app
+      verify_healthy "$1" >/dev/null 2>&1 || log "the previous release is not answering - check the logs"
+      write_state error "${STAGE_FAIL%% - *} - the app was restarted on ${1:0:7}; the live tree, build and database were never touched."
+      return 1
+    fi
+    release_live_deps
+    log "staged build is good, and the app is already stopped - swapping"
   fi
 
   save_dist_snapshot
@@ -879,11 +1175,13 @@ deploy_via_clone() { # <local_sha> <remote_sha>
   fi
 
   # Deps actually changed: install against the live tree now that the app is
-  # stopped, so node_modules never moves under a running process.
+  # stopped, so node_modules never moves under a running process. The staged
+  # tree already proved this lockfile installs, so a failure here is a genuine
+  # surprise and is logged as one.
   if deps_changed "$1" "$2"; then
     log "dependency manifests changed - installing into the live tree"
-    (cd backend && npm install --no-audit --no-fund --loglevel=error) || log "backend npm install FAILED"
-    (cd frontend && npm run build) >/dev/null 2>&1 || log "frontend rebuild FAILED (staged build kept)"
+    npm_install_in "$ROOT/backend" "backend (live)" || log "backend dependency install FAILED"
+    build_frontend_in "$ROOT" || log "frontend rebuild FAILED (staged build kept)"
   fi
 
   if run_migrations "live database" backend; then
@@ -946,6 +1244,16 @@ deploy_via_pull() { # <local_sha> <remote_sha>
     refuse "Could not stop the application ($SUPERVISOR:$SUPERVISOR_NAME); the checkout was left on ${1:0:7}."
     return 1
   fi
+
+  # Same gate as clone mode, just later: pull mode does its install and build in
+  # the live tree, and it is already stopped by here.
+  log_resources "after stopping the app"
+  if ! require_memory "$MIN_FREE_MEM_MB" "the in-place install/build"; then
+    start_app
+    refuse "Not enough free memory to rebuild in place; the app was restarted on ${1:0:7} and the checkout was left alone."
+    return 1
+  fi
+
   save_dist_snapshot
   if ! save_db_snapshot; then
     start_app
@@ -964,13 +1272,13 @@ deploy_via_pull() { # <local_sha> <remote_sha>
   log "merged to $(git rev-parse --short HEAD)"
 
   if deps_changed "$1" "$2"; then
-    log "dependency manifests changed - reinstalling"
-    (cd backend && npm ci --no-audit --no-fund) || log "backend npm ci FAILED"
-    (cd frontend && npm ci --no-audit --no-fund) || log "frontend npm ci FAILED"
+    log "dependency manifests changed - reinstalling from the lockfiles"
+    npm_install_in "$ROOT/backend" "backend" || log "backend dependency install FAILED"
+    npm_install_in "$ROOT/frontend" "frontend" || log "frontend dependency install FAILED"
   fi
   if ! git diff --quiet "$1..$2" -- frontend 2>/dev/null || [ ! -f frontend/dist/index.html ]; then
     log "frontend changed - rebuilding"
-    (cd frontend && npm run build) || log "frontend build FAILED"
+    build_frontend_in "$ROOT" || log "frontend build FAILED"
   fi
   if run_migrations "live database" backend; then
     ST_MIGRATED=ok
@@ -1072,6 +1380,14 @@ check_and_update() {
 
 log "tracking $REMOTE/$BRANCH every ${INTERVAL}s, mode=$MODE (pause: touch $DISABLE_FILE)"
 log "health/verification endpoint: $HEALTH_URL"
+if [ "$BUILD_ONLINE" = 1 ]; then
+  log "build policy: --build-online (install/build run while the app serves)"
+else
+  log "build policy: the app is stopped for the install/build phase"
+fi
+log "resource policy: >=${MIN_FREE_MEM_MB}M free RAM to build, >=${MIN_FREE_DISK_MB}M free disk to stage,"
+log "  ${STEP_TIMEOUT}s per step, nice ${NICE_LEVEL}, npm maxsockets ${NPM_MAX_SOCKETS}, build heap ${BUILD_HEAP_MB}M"
+log_resources "at startup"
 
 if [ "$ONCE" = 1 ]; then
   check_and_update

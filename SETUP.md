@@ -104,13 +104,39 @@ yourself) pass `--no-restart`. That is the only way to get the old
 warn-and-continue behaviour, and it reports its state as
 `deployed-not-restarted` rather than claiming an update.
 
-Behaviour notes: by default the next commit is cloned and built in
-`.auto-update/next` while the site keeps running, and its migrations are
-rehearsed against a *copy* of the database, so a bad release is caught before
-the live tree is touched at all. `--mode pull` keeps the in-place fast-forward
-behaviour (local commits are never reset away, a dirty working tree postpones
-updates) under the same rules. `touch data/.auto-update-disabled` pauses
-everything.
+Behaviour notes: by default the next commit is cloned into `.auto-update/next`
+while the site keeps running, its dependency graph is resolved there
+(`npm ci --dry-run`, so an unresolvable release is caught before anything
+stops), and its migrations are rehearsed against a *copy* of the database, so a
+bad release is caught before the live tree is touched at all. `--mode pull`
+keeps the in-place fast-forward behaviour (local commits are never reset away, a
+dirty working tree postpones updates) under the same rules. `touch
+data/.auto-update-disabled` pauses everything.
+
+**Resource safety.** `npm ci` and `vite build` are the heaviest things the box
+ever runs, and doing them next to a live Node process is what can drive a small
+VM into swap and then the OOM killer — which takes the machine down, not just
+the update. So:
+
+* The application is **stopped before the install/build phase** and started
+  again whatever the outcome. A failure there restarts the previous release and
+  leaves the tree, build and database untouched. `--build-online` restores the
+  old overlap on hosts with RAM to spare.
+* A preflight refuses the cycle when the machine is short on disk
+  (`--min-free-disk`, default 2048 MB) or, once the app is down, on memory
+  (`--min-free-mem`, default 512 MB). Both accept `0` to disable.
+* Every expensive step runs under `timeout` (`--step-timeout`, default 900 s) at
+  `nice 10` / best-effort I/O priority 7, with `npm` limited to 4 sockets
+  (`--max-sockets`) and the frontend build given a heap ceiling
+  (`--build-heap`, default 512 MB).
+* Dependencies are installed with `npm ci`, never `npm install`: the lockfile is
+  the contract, and a release whose lockfile does not resolve is rejected
+  instead of silently reresolved.
+* The systemd unit runs in its own capped cgroup (`MemoryHigh`/`MemoryMax`,
+  `CPUQuota`, `TasksMax`, `Nice`, I/O priority). `./espress0 deploy` sizes those
+  from the machine's real RAM and CPU count and passes a matching
+  `--min-free-mem`; override with `UPDATER_MEMORY_MAX_MB` / `UPDATER_CPU_QUOTA`,
+  or `sudo systemctl edit espress0-repo-updater`.
 
 Status is written to `data/.auto-update-status` and includes the expected
 commit, the running commit, the selected supervisor, whether each of

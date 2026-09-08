@@ -87,6 +87,14 @@ J
   cat > "$up/frontend/package.json" <<'J'
 {"name":"f","version":"1.0.0","private":true,"scripts":{"build":"node build.js"}}
 J
+  # Lockfiles, because that is what a real release has - and what decides
+  # whether the updater may use `npm ci` at all.
+  cat > "$up/backend/package-lock.json" <<'J'
+{"name":"b","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"b","version":"1.0.0"}}}
+J
+  cat > "$up/frontend/package-lock.json" <<'J'
+{"name":"f","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"f","version":"1.0.0"}}}
+J
   # A "build" that just produces dist/index.html, so no npm/vite is needed.
   cat > "$up/frontend/build.js" <<'J'
 const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.writeFileSync('dist/index.html','<html>built</html>');
@@ -125,6 +133,10 @@ J
   echo ""              > "$sb/mock-state/tmux-windows"
   echo "$OLD_SHA"      > "$sb/mock-state/serving-commit"
   echo "up"            > "$sb/mock-state/http"
+  echo "0"             > "$sb/mock-state/npm-install-rc"
+  echo "0"             > "$sb/mock-state/npm-build-rc"
+  echo "0"             > "$sb/mock-state/npm-dryrun-rc"
+  echo "0"             > "$sb/mock-state/npm-sleep"
   : > "$sb/mock-state/calls"
 
   write_mocks "$sb"
@@ -223,14 +235,29 @@ EOF
 exit 1
 EOF
 
-  # npm: only 'run build' and 'install/ci' are ever invoked here.
+  # npm: 'ci', 'install', 'ci --dry-run' (the pre-stop dependency check) and
+  # 'run build' are what the updater calls. Each can be made to fail or to hang
+  # from mock-state, which is how the resource/ordering tests drive it.
   cat > "$sb/mock-bin/npm" <<EOF
 #!/usr/bin/env bash
 ST="$st"
 echo "npm \$*" >> "\$ST/calls"
-if [ "\$1" = "run" ] && [ "\$2" = "build" ]; then
-  mkdir -p dist && echo '<html>built</html>' > dist/index.html
-fi
+rc_for() { cat "\$ST/\$1" 2>/dev/null || echo 0; }
+nap() { local s; s="\$(cat "\$ST/npm-sleep" 2>/dev/null || echo 0)"; [ "\$s" = "0" ] || sleep "\$s"; }
+case "\$*" in
+  *--dry-run*)
+    exit "\$(rc_for npm-dryrun-rc)" ;;
+  "run build"*)
+    nap
+    if [ "\$(rc_for npm-build-rc)" = "0" ]; then
+      mkdir -p dist && echo '<html>built</html>' > dist/index.html
+      exit 0
+    fi
+    exit "\$(rc_for npm-build-rc)" ;;
+  ci*|install*)
+    nap
+    exit "\$(rc_for npm-install-rc)" ;;
+esac
 exit 0
 EOF
 
@@ -238,12 +265,18 @@ EOF
 }
 
 # Run the updater inside a sandbox with the mocks on PATH.
+#
+# The resource gates are switched OFF here (MIN_FREE_*=0) so the suite is not a
+# function of how much RAM the machine running it happens to have; the tests
+# that exercise the gates pass explicit --min-free-* flags.
 run_updater() { # <sandbox> [args...]
   local sb="$1"; shift
   ( cd "$sb/live" \
     && PATH="$sb/mock-bin:$PATH" \
        TMUX_SESSION_NAME=espress0 \
        HOME="$sb" \
+       MIN_FREE_MEM_MB=0 \
+       MIN_FREE_DISK_MB=0 \
        timeout 120 bash "$sb/live/scripts/auto-update.sh" --once --health-url "http://127.0.0.1:3999/api/health" "$@" \
   ) > "$sb/out.log" 2>&1
   echo $? > "$sb/rc"
@@ -251,6 +284,30 @@ run_updater() { # <sandbox> [args...]
 
 live_sha()    { git -C "$1/live" rev-parse HEAD; }
 state_file()  { echo "$1/live/data/.auto-update-status"; }
+
+# Ordering assertions read the mock call log: every stub appends the command it
+# was given, so "did the stop happen before the build" is answerable.
+call_line() { # <sandbox> <fixed-string> -> line number of the first match, or 0
+  local n
+  n="$(grep -nF -- "$2" "$1/mock-state/calls" 2>/dev/null | head -1 | cut -d: -f1)"
+  echo "${n:-0}"
+}
+assert_call_before() { # <sandbox> <first> <second> <label>
+  local a b
+  a="$(call_line "$1" "$2")"; b="$(call_line "$1" "$3")"
+  if [ "$a" -gt 0 ] && [ "$b" -gt 0 ] && [ "$a" -lt "$b" ]; then
+    ok "$4"
+  else
+    bad "$4 ('$2' at line $a, '$3' at line $b)"
+    sed 's/^/      /' "$1/mock-state/calls" | head -n 20
+  fi
+}
+assert_no_call() { # <sandbox> <fixed-string> <label>
+  if [ "$(call_line "$1" "$2")" = "0" ]; then ok "$3"; else
+    bad "$3 (unexpected call: $2)"
+    sed 's/^/      /' "$1/mock-state/calls" | head -n 20
+  fi
+}
 
 # ================================================================== the tests
 
@@ -709,6 +766,182 @@ EOF
     || bad "the tree was left half-swapped: $(cat "$SB/live/VERSION")"
   test -e "$SB/live/NEWFILE" \
     && bad "a file the failed release added survived the rollback" || ok "release-added files were cleaned up"
+fi
+
+# --- 15. resource safety -----------------------------------------------------
+#
+# The failure these pin is not a bad release, it is a dead VM. The updater used
+# to clone, `npm install` twice and run vite WHILE the app was still resident,
+# on a box where the app alone is capped at 800M. Memory pressure, swap, OOM
+# killer, machine unreachable until someone rebooted it - and the update itself
+# never even reached the swap step.
+#
+# The rules now: prove the dependency graph while the site is up, stop the app
+# before the expensive phase, gate that phase on real free memory, cap every
+# step in time, and never install anything except what the lockfile says.
+
+if should_run "heavy phase ordering"; then
+testcase "the install/build phase runs with the app stopped, from the lockfile"
+  new_sandbox heavy-phase
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  run_updater "$SB"
+  assert_eq "$(cat "$SB/rc")" "0" "the update succeeds"
+  assert_eq "$(live_sha "$SB")" "$NEW_SHA" "and deploys the new commit"
+  # The cheap read-only check happens while the app is still serving...
+  assert_call_before "$SB" "npm ci --dry-run" "systemctl stop" \
+    "the dependency graph is resolved BEFORE the app is stopped"
+  # ...the expensive work does not.
+  assert_call_before "$SB" "systemctl stop" "npm run build" \
+    "the frontend build runs only after the app is stopped"
+  assert_contains "$SB/out.log" "stopping the app before the install/build phase" \
+    "the log says which order was used"
+  assert_contains "$SB/mock-state/calls" "npm ci --no-audit" \
+    "dependencies are installed with npm ci"
+  assert_not_contains "$SB/mock-state/calls" "npm install" \
+    "npm install never runs: the lockfile is the contract"
+fi
+
+if should_run "build-online opt-out"; then
+testcase "--build-online restores the historic overlap for hosts with RAM to spare"
+  new_sandbox build-online
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  run_updater "$SB" --build-online
+  assert_eq "$(cat "$SB/rc")" "0" "the update still succeeds"
+  assert_call_before "$SB" "npm run build" "systemctl stop" \
+    "the build runs first, then the app is stopped"
+  assert_contains "$SB/out.log" "building the staged tree while the app keeps serving" \
+    "and it says so explicitly"
+fi
+
+if should_run "unresolvable dependencies"; then
+testcase "a release whose dependencies do not resolve is caught before the app is stopped"
+  new_sandbox eresolve
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  echo 1          > "$SB/mock-state/npm-dryrun-rc"   # npm ERESOLVE
+  run_updater "$SB"
+  assert_eq "$(cat "$SB/rc")" "1" "the cycle fails"
+  assert_contains "$SB/out.log" "do not resolve against its lockfile" "it names the real problem"
+  assert_no_call "$SB" "systemctl stop" "the application was never stopped"
+  assert_eq "$(live_sha "$SB")" "$OLD_SHA" "HEAD did not move"
+  assert_contains "$SB/live/frontend/dist/index.html" "old build" "the serving build is untouched"
+  assert_file_contains "$(state_file "$SB")" '"state":"error"' "the state file records the error"
+  assert_file_contains "$(state_file "$SB")" "app still serving" "and that the site is still up"
+fi
+
+if should_run "staged build failure restarts"; then
+testcase "a staged build that fails with the app down restarts the previous release"
+  new_sandbox build-fails
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  echo 1          > "$SB/mock-state/npm-build-rc"
+  run_updater "$SB"
+  assert_eq "$(cat "$SB/rc")" "1" "the cycle fails"
+  assert_contains "$SB/out.log" "restarting the previous release" "the app is brought back up"
+  assert_call_before "$SB" "systemctl stop" "systemctl restart" "stop is followed by a restart"
+  assert_eq "$(live_sha "$SB")" "$OLD_SHA" "HEAD stayed on the old commit"
+  [ -f "$SB/live/NEWFILE" ] && bad "the failed release's files were swapped in" \
+                            || ok "the live tree was never swapped"
+  assert_contains "$SB/live/frontend/dist/index.html" "old build" "the previous build still serves"
+  assert_file_contains "$(state_file "$SB")" "the app was restarted on" \
+    "the state file says the app is back on the old commit"
+fi
+
+if should_run "memory gate"; then
+testcase "the build phase is refused when the machine has no memory for it"
+  new_sandbox low-memory
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  # No machine has 64 TB available, so the gate always trips here.
+  run_updater "$SB" --min-free-mem 67108864
+  assert_eq "$(cat "$SB/rc")" "1" "the cycle fails"
+  assert_contains "$SB/out.log" "needed for the install/build phase" "it reports the shortfall"
+  assert_contains "$SB/out.log" "REFUSING TO DEPLOY" "and refuses"
+  assert_contains "$SB/out.log" "--min-free-mem" "pointing at the knob that governs it"
+  assert_no_call "$SB" "npm run build" "no build was attempted"
+  assert_call_before "$SB" "systemctl stop" "systemctl restart" "the app was started again"
+  assert_eq "$(live_sha "$SB")" "$OLD_SHA" "HEAD did not move"
+fi
+
+if should_run "disk gate"; then
+testcase "staging is refused when the filesystem is nearly full"
+  new_sandbox low-disk
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  run_updater "$SB" --min-free-disk 67108864
+  assert_eq "$(cat "$SB/rc")" "1" "the cycle fails"
+  assert_contains "$SB/out.log" "needed to stage a release" "it reports the shortfall"
+  assert_contains "$SB/out.log" "REFUSING TO DEPLOY" "and refuses"
+  assert_no_call "$SB" "systemctl stop" "the app was never stopped"
+  [ -d "$SB/live/.auto-update/next" ] && bad "a clone was staged anyway" \
+                                      || ok "nothing was even cloned"
+  assert_eq "$(live_sha "$SB")" "$OLD_SHA" "HEAD did not move"
+fi
+
+if should_run "step timeout"; then
+testcase "a wedged npm step is killed instead of pinning the box"
+  new_sandbox step-timeout
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  echo 30         > "$SB/mock-state/npm-sleep"       # a build/install that hangs
+  run_updater "$SB" --step-timeout 5
+  assert_eq "$(cat "$SB/rc")" "1" "the cycle fails instead of hanging"
+  assert_contains "$SB/out.log" "TIMED OUT after 5s" "the step is reported as timed out"
+  assert_eq "$(live_sha "$SB")" "$OLD_SHA" "HEAD did not move"
+  assert_call_before "$SB" "systemctl stop" "systemctl restart" "the app was restarted afterwards"
+fi
+
+if should_run "no lockfile"; then
+testcase "a release with no lockfile still installs, and says it fell back"
+  new_sandbox no-lockfile
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  rm -f "$SB/upstream/backend/package-lock.json" "$SB/upstream/frontend/package-lock.json"
+  git -C "$SB/upstream" add -A
+  git -C "$SB/upstream" commit -qm "drop the lockfiles"
+  NEW_SHA="$(git -C "$SB/upstream" rev-parse HEAD)"
+  run_updater "$SB"
+  assert_eq "$(cat "$SB/rc")" "0" "the update still completes"
+  assert_eq "$(live_sha "$SB")" "$NEW_SHA" "and deploys"
+  assert_contains "$SB/out.log" "no package-lock.json in this release - falling back to npm install" \
+    "the fallback is explicit in the log, not silent"
+fi
+
+if should_run "updater unit is capped"; then
+testcase "the updater unit runs in a resource-capped cgroup"
+  UNIT="$REPO_ROOT/systemd/espress0-repo-updater.service"
+  assert_contains "$UNIT" "MemoryMax=" "the updater has a hard memory ceiling"
+  assert_contains "$UNIT" "MemoryHigh=" "and a soft one, so it throttles before it is killed"
+  assert_contains "$UNIT" "CPUQuota=" "CPU is capped"
+  assert_contains "$UNIT" "TasksMax=" "the task count is capped"
+  assert_contains "$UNIT" "Nice=10" "it yields CPU to the app and sshd"
+  assert_contains "$UNIT" "IOSchedulingClass=best-effort" "and disk I/O too"
+  # The app unit's own limits must not have been disturbed.
+  assert_contains "$REPO_ROOT/systemd/espress0-repo.service" "MemoryMax=800M" \
+    "the application unit keeps its own 800M cap"
+fi
+
+if should_run "deploy sizes the updater"; then
+testcase "deploy sizes the updater's limits for the real machine"
+  assert_contains "$DEPLOY" "size_updater_limits" "deploy computes limits from the host"
+  assert_contains "$DEPLOY" "MemTotal:" "it reads the machine's actual RAM"
+  assert_contains "$DEPLOY" 's|^MemoryMax=.*|MemoryMax=${UPD_MEM_MAX}M|' \
+    "and writes them into the generated unit"
+  assert_contains "$DEPLOY" '--min-free-mem ${UPD_MEM_MAX}' \
+    "the script's own memory gate matches the cgroup it runs in"
+  assert_contains "$DEPLOY" "UPDATER_MEMORY_MAX_MB" "the operator can override the sizing"
+fi
+
+if should_run "resource knobs documented"; then
+testcase "the resource contract is in --help"
+  HELP2="$WORK/help-resources.txt"
+  bash "$UPDATER" --help > "$HELP2" 2>&1
+  assert_contains "$HELP2" "--min-free-mem" "the memory gate is documented"
+  assert_contains "$HELP2" "--step-timeout" "the per-step timeout is documented"
+  assert_contains "$HELP2" "--build-online" "the escape hatch is documented"
+  assert_contains "$HELP2" "OOM" "and the reason the default order changed"
 fi
 
 # ===================================================================== summary

@@ -113,6 +113,10 @@ else
 fi
 
 if [ "$WITH_UPDATER" = 1 ]; then
+  # No systemd here, so no cgroup around the updater: its own governor (the
+  # memory/disk preflight, per-step timeouts, nice/ionice and npm socket limit
+  # in auto-update.sh) is what keeps an update from swamping the machine. On a
+  # small box prefer the systemd unit, which adds a hard MemoryMax on top.
   tmux new-window -t "$SESSION" -n updater \
     "cd '$ROOT' && ./scripts/auto-update.sh --tmux-session '$SESSION'; echo '[updater exited — remove data/.auto-update-disabled to re-enable]'; read"
 fi

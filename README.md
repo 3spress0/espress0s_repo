@@ -524,6 +524,8 @@ The repository also includes an automatic updater that fetches new commits, buil
 
 The updater will not deploy over an application it cannot restart. It detects the supervisor (systemd unit for this checkout, or a tmux session) before touching anything, and aborts if it finds none, because swapping files under a still-running process leaves the code on disk and the code in memory on different commits. It confirms success by reading the commit that `/api/health` reports — captured when the process started — so an old process cannot pass the check just because the files changed. Use `--no-restart` for a deliberate offline, file-only deploy.
 
+It is also built not to take the machine down with it. The install and build phase is the heaviest workload on the VM, so the app is stopped for it by default, the cycle is refused when free memory or disk is below a configurable threshold, every expensive step runs under a timeout at low CPU/IO priority, dependencies come from the lockfile via `npm ci`, and the systemd unit runs inside its own memory/CPU/task-capped cgroup sized for the host. See [SETUP.md](SETUP.md#hands-free-the-auto-updater) and `./espress0 update --help`.
+
 ## Project structure
 
 ```text
