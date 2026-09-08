@@ -1,22 +1,33 @@
 import { Link } from 'react-router-dom';
-import { Database, Shield, Rss } from 'lucide-react';
+import { Database, Shield, Rss, Tag } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 import { safeHref } from '../lib/utils';
+import { footerVersionLabel } from '../lib/footerVersion.js';
 import { LOGO_SRC } from '../lib/brand.js';
 
 /**
  * Footer. Branding, intro copy and every link come from site settings, so an
  * admin can restructure the footer from /admin/settings without a deploy.
  * `footer_links` is a JSON array of { label, href, group, external }.
+ * The version stamp at the bottom is the one exception: it is read from the
+ * server rather than a setting, because a value an admin can type would drift
+ * from the build that is actually running. `footer_show_version` only decides
+ * whether it is shown at all.
  */
 export default function Footer() {
-  const { get } = useSettings();
+  const { get, app } = useSettings();
 
   const siteName = get('site_name', '');
   const tagline = get('site_tagline', '');
   const note = get('footer_note', '');
   const intro = get('footer_intro', '');
   const copyright = get('footer_copyright', '');
+  // Prints the release the server reports (see lib/footerVersion.js), not a
+  // setting an admin can type, so it cannot go stale on the next deploy.
+  const versionLabel = footerVersionLabel({
+    app,
+    showVersion: get('footer_show_version', true),
+  });
 
   const links = Array.isArray(get('footer_links', [])) ? get('footer_links', []) : [];
 
@@ -71,8 +82,17 @@ export default function Footer() {
         </div>
 
         <div className="mt-12 pt-8 pb-safe border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-xs text-textMuted">
-            {copyright || `© ${new Date().getFullYear()} ${siteName}`}
+          <p className="text-xs text-textMuted flex items-center gap-2">
+            <span>{copyright || `© ${new Date().getFullYear()} ${siteName}`}</span>
+            {/* Which release this instance runs, for visitors and their bug
+                reports. Turned off in Admin -> Site settings -> Footer, and
+                hidden by itself when the server has no version to name. */}
+            {versionLabel && (
+              <span className="flex items-center gap-1.5" title="The release this instance is running">
+                <Tag className="w-3.5 h-3.5" />
+                <span className="font-mono">{versionLabel}</span>
+              </span>
+            )}
           </p>
           <div className="flex items-center gap-4 text-xs text-textMuted">
             {note && <span>{note}</span>}

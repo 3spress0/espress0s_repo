@@ -1,5 +1,6 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -18,8 +19,12 @@ import Fastify from 'fastify';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
 
-const { COMMIT, COMMIT_SHORT, STARTED_AT, resolveCommit } = await import('../src/lib/buildInfo.js');
+const { COMMIT, COMMIT_SHORT, STARTED_AT, APP_VERSION, resolveCommit, resolveVersion } = await import('../src/lib/buildInfo.js');
 const { healthRoutes } = await import('../src/routes/health.js');
+
+// The manifest, not a copy of it: the footer prints whatever this says, so the
+// health contract below is pinned to the file that actually holds the number.
+const manifestVersion = JSON.parse(fs.readFileSync(path.resolve(here, '../package.json'), 'utf8')).version;
 
 function gitHead() {
   try {
@@ -105,7 +110,7 @@ describe('health endpoint contract', () => {
       assert.deepStrictEqual(buildInfo, {
         status: 'ok',
         service: "espress0's repo",
-        version: '1.0.0',
+        version: manifestVersion,
         commit: COMMIT,
         commitShort: COMMIT_SHORT,
         startedAt: STARTED_AT,
@@ -134,4 +139,42 @@ describe('health endpoint contract', () => {
       }
     });
   }
+});
+
+/**
+ * The version number itself, which the visitor-facing footer prints.
+ *
+ * It used to be the literal '1.0.0' copy-pasted into the health endpoint, the
+ * monitoring endpoint and the OpenAPI header. Nothing kept them in step, so a
+ * release bump that forgot one left that endpoint advertising the previous
+ * version forever - and a footer stamp built on those would have told visitors
+ * something untrue. backend/package.json is the single source now.
+ */
+describe('app version', () => {
+  it('is the version in backend/package.json', () => {
+    assert.equal(APP_VERSION, manifestVersion);
+    assert.match(APP_VERSION, /^\d+\.\d+\.\d+/);
+  });
+
+  it('prefers an explicit version from the environment (a container may ship no manifest)', () => {
+    const previous = process.env.APP_VERSION;
+    process.env.APP_VERSION = '9.9.9';
+    try {
+      assert.equal(resolveVersion(), '9.9.9');
+    } finally {
+      if (previous === undefined) delete process.env.APP_VERSION;
+      else process.env.APP_VERSION = previous;
+    }
+  });
+
+  it('falls back to the manifest when the environment value is blank, and never throws', () => {
+    const previous = process.env.APP_VERSION;
+    process.env.APP_VERSION = '   ';
+    try {
+      assert.equal(resolveVersion(), manifestVersion, 'a whitespace-only override must not print an empty version');
+    } finally {
+      if (previous === undefined) delete process.env.APP_VERSION;
+      else process.env.APP_VERSION = previous;
+    }
+  });
 });

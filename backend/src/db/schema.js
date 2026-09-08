@@ -227,6 +227,21 @@ CREATE TABLE IF NOT EXISTS item_versions (
 
 CREATE INDEX IF NOT EXISTS idx_item_versions_item ON item_versions(item_id, version_num DESC);
 
+-- One row per (item, account) that opened the page, so an account adds at most
+-- one view however often it returns. Anonymous visitors get no row here at all:
+-- the app records nothing that could identify a device, and their dedupe lives
+-- in the browser (frontend/src/lib/viewCounting.js). The viewed_at stamp is
+-- why the row exists rather than a bare counter: it says when a page started
+-- being worth reading, and it is what a per-day views series would build on.
+CREATE TABLE IF NOT EXISTS item_views (
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (item_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_views_user ON item_views(user_id, viewed_at DESC);
+
 -- Site-wide configuration. Everything the UI shows that isn't item data lives
 -- here so admins can change copy/branding/links without a code deploy.
 CREATE TABLE IF NOT EXISTS site_settings (
@@ -448,6 +463,7 @@ export const DEFAULT_SETTINGS = [
   { key: 'footer_intro', value: 'A curated personal repository for software, ISOs, tools and documentation. Built for a low-resource VM with external storage: metadata is encrypted here, the files themselves live off-VM.', type: 'textarea', group_name: 'footer', label: 'Footer intro', description: 'Paragraph in the left-hand footer column.', public: 1 },
   { key: 'footer_copyright', value: '', type: 'text', group_name: 'footer', label: 'Copyright line', description: 'Leave blank to auto-generate "© <year> <site name>".', public: 1 },
   { key: 'footer_note', value: 'Storage: GDrive, OneDrive, External', type: 'text', group_name: 'footer', label: 'Footer note', description: 'Line at the bottom of the footer.', public: 1 },
+  { key: 'footer_show_version', value: 'true', type: 'boolean', group_name: 'footer', label: 'Show version in the footer', description: 'Prints the release the server is running (backend/package.json) next to the copyright line, so visitors and bug reports can tell which build this is. Off hides it.', public: 1 },
   { key: 'footer_links', value: JSON.stringify([
     { label: 'Operating Systems', href: '/browse?category=operating-systems', group: 'Browse' },
     { label: 'ISOs', href: '/browse?category=isos', group: 'Browse' },

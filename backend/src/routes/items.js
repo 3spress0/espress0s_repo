@@ -295,10 +295,10 @@ export async function itemsRoutes(fastify) {
       return reply.code(404).send({ error: 'Item not found' });
     }
 
-    // Admin previews of a draft should not inflate public view counts.
-    if (item.published) {
-      db.prepare('UPDATE items SET view_count = view_count + 1 WHERE id = ?').run(item.id);
-    }
+    // No view is recorded here: this handler answers the SPA, a draft's
+    // preview link, an admin's own read and any scripted client alike, and only
+    // the first of those has seen the page. See POST /api/items/:slug/view
+    // below, which is the only way left to move the counter.
 
     const related = db.prepare(`
       SELECT id, name, slug, description, version, file_type, platform, architecture, icon_url, image_url
@@ -348,6 +348,51 @@ export async function itemsRoutes(fastify) {
       primary_download: availableLinks.find(l => l.is_primary) || availableLinks[0] || links.find(l => l.is_primary) || links[0] || null,
       encryption: { atRest: 'storage_path, download_url, external_url, license_notes encrypted', version: item.encryption_version || 'v1' }
     };
+  });
+
+  /**
+   * POST /api/items/:slug/view - "a human looked at this page".
+   *
+   * Counting used to ride on GET /items/:slug, so every read of an item was a
+   * view: a refresh, a back-navigation, React StrictMode's double effect, a
+   * link previewer or a scraper's probe all added to the same number. A page
+   * view is not a read, so it is now announced by the browser when the page is
+   * actually shown, and this is the only way to move the counter.
+   *
+   * Dedupe is done by whoever can do it without becoming worse:
+   *
+   *   - signed in: by `user_id`, in `item_views`. One row per (item, account),
+   *     ever, so clearing localStorage or switching browsers cannot inflate an
+   *     account's contribution, and a returning visitor is not counted twice.
+   *   - anonymous: by the browser (see frontend/src/lib/viewCounting.js). The
+   *     server keeps no record of a device at all - `recentlyViewed.js`
+   *     documents that as a deliberate property, and the per-IP rate limit
+   *     below is what stops the endpoint being farmed. An anonymous visitor who
+   *     wipes their storage is counted again; the alternative is a tracking
+   *     cookie, which is the trade this codebase has already declined.
+   *
+   * Drafts are never counted, matching the old rule: preview links and staff
+   * reviews of an unpublished page must not inflate a public number.
+   */
+  fastify.post('/items/:slug/view', {
+    preHandler: [optionalAuthenticate],
+    config: { rateLimit: { max: 60, timeWindow: '1 hour' } },
+  }, async (request, reply) => {
+    const { slug } = request.params;
+    const db = getDb();
+    const item = db.prepare('SELECT id, published FROM items WHERE slug = ? OR id = ?').get(slug, slug);
+    // 404 for a draft, as the read does: this must not confirm a hidden slug
+    // exists, and a draft has no public view count to move.
+    if (!item || !item.published) return reply.code(404).send({ error: 'Item not found' });
+
+    const userId = request.user?.id ?? null;
+    if (userId) {
+      const seen = db.prepare('INSERT OR IGNORE INTO item_views (item_id, user_id) VALUES (?, ?)').run(item.id, userId);
+      if (!seen.changes) return { counted: false, reason: 'already viewed' };
+    }
+
+    db.prepare('UPDATE items SET view_count = view_count + 1 WHERE id = ?').run(item.id);
+    return { counted: true };
   });
 
   // POST /api/items - create (admin)

@@ -1,0 +1,38 @@
+# gitleaks configuration
+#
+# Default rules stay in force; nothing here disables a detector. This file
+# allowlists only values that cannot authenticate anything, so that a scan of
+# committed history reports the findings worth reading instead of 20-odd lines of
+# fixtures. gitleaks picks this file up from the repository root automatically, and
+# so does `gitleaks detect --source .` for anyone running it by hand.
+#
+# Why this exists: the backend suites each sign a throwaway Fastify cookie with a
+# fixture named `<thing>-test-cookie-secret-0123…` (@fastify/cookie refuses to
+# register signed cookies without a secret), and the AI tests set
+# AI_API_KEY='sk-test-not-a-real-key-…'. Key called `secret`/`api_key`, long
+# quoted alphanumeric value: precisely the shape generic-api-key hunts. Every scan
+# listed them, and a wall of known-fake lines is where a real leak hides.
+#
+# Values, not paths: a genuine credential committed into backend/tests/ is still
+# reported. Only the one file below is exempted by name, for the reason in its
+# comment.
+
+[allowlist]
+  description = "Inert test fixtures and documented development placeholders"
+  paths = [
+    # tests/setup.mjs is the --import hook every backend suite loads. Its literals
+    # exist to *replace* real credentials - temp DATABASE_PATH, inert JWT and
+    # encryption stand-ins, AI provider variables blanked to '' - so the file can
+    # only ever contain fake ones. One path, not the test directory.
+    '''^backend/tests/setup\.mjs$''',
+  ]
+  regexes = [
+    # The @fastify/cookie signing secret each backend test file invents for its
+    # own app instance (17 of them).
+    '''(?i)[a-z0-9]+(-[a-z0-9]+)*-test-cookie-secret-[0-9a-f]{4,}''',
+    # The placeholder vocabulary scripts/vuln-scan.sh already filters on, line 64:
+    # dummy | example | placeholder | not-a-real | test-only | change-in-production
+    # | redacted | CHANGEME | ChangeMe. Same words, same intent - so `./espress0
+    # scan --full` and CI's gitleaks report the same set of findings.
+    '''(?i)^[a-z0-9_./-]*(dummy|example\.?com?|placeholder|not-a-real|test-only|change-in-production|redacted|change-?me)[a-z0-9!_./+-]*$''',
+  ]

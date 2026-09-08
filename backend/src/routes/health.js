@@ -1,4 +1,4 @@
-import { COMMIT, COMMIT_SHORT, STARTED_AT } from '../lib/buildInfo.js';
+import { APP_VERSION, COMMIT, COMMIT_SHORT, STARTED_AT } from '../lib/buildInfo.js';
 
 /**
  * Health, and the proof of which release is actually serving it.
@@ -16,7 +16,7 @@ export async function healthRoutes(fastify) {
     return {
       status: 'ok',
       service: "espress0's repo",
-      version: '1.0.0',
+      version: APP_VERSION,
       commit: COMMIT,
       commitShort: COMMIT_SHORT,
       startedAt: STARTED_AT,
