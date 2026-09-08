@@ -1,38 +1,53 @@
 # gitleaks configuration
 #
-# Default rules stay in force; nothing here disables a detector. This file
-# allowlists only values that cannot authenticate anything, so that a scan of
-# committed history reports the findings worth reading instead of 20-odd lines of
-# fixtures. gitleaks picks this file up from the repository root automatically, and
-# so does `gitleaks detect --source .` for anyone running it by hand.
+# Default rules stay in force; no detector is disabled or narrowed. This allowlists
+# specific findings, each one checked against the report it silences rather than
+# guessed at. `gitleaks-action@v2` runs `gitleaks detect` with no --log-opts on
+# schedule and workflow_dispatch events, so those runs walk the whole history;
+# `paths` and value shapes survive history, which is why there are no
+# .gitleaksignore fingerprints here (they pin commit SHAs and rot).
 #
-# Why this exists: the backend suites each sign a throwaway Fastify cookie with a
-# fixture named `<thing>-test-cookie-secret-0123…` (@fastify/cookie refuses to
-# register signed cookies without a secret), and the AI tests set
-# AI_API_KEY='sk-test-not-a-real-key-…'. Key called `secret`/`api_key`, long
-# quoted alphanumeric value: precisely the shape generic-api-key hunts. Every scan
-# listed them, and a wall of known-fake lines is where a real leak hides.
-#
-# Values, not paths: a genuine credential committed into backend/tests/ is still
-# reported. Only the one file below is exempted by name, for the reason in its
-# comment.
+# Everything below is `generic-api-key`, which matches on shape - a word like
+# key / api / password / secret / token near a `:` `=` or `,`, followed by a 10+
+# character value - so it cannot tell a credential from prose or from catalogue
+# data. Two traps for anyone editing this:
+#   * allowlist `regexes` are matched against the whole match (regexTarget "match"
+#     -> finding.Match), keyword, separator and quote included. An anchored
+#     `^value$` can therefore never match; keep these unanchored.
+#   * the `password: 'StrongPass123!'` style fixtures are NOT here, and were never
+#     the problem: their values end in punctuation, which falls outside the rule's
+#     value class. Same for the 17 `<thing>-test-cookie-secret-<hex>` fixtures in
+#     backend/tests/ - 8.24.3's own rule allowlist swallows those via the
+#     stopwords "cookie" and "view". If you pin a gitleaks without them, the shape
+#     to add is [a-z0-9-]+-test-cookie-secret-[0-9a-f]+.
 
 [allowlist]
-  description = "Inert test fixtures and documented development placeholders"
+  description = "Catalogue data, prose and inert fixtures that a shape-based rule cannot distinguish from credentials"
   paths = [
-    # tests/setup.mjs is the --import hook every backend suite loads. Its literals
-    # exist to *replace* real credentials - temp DATABASE_PATH, inert JWT and
-    # encryption stand-ins, AI provider variables blanked to '' - so the file can
-    # only ever contain fake ones. One path, not the test directory.
+    # tests/setup.mjs is the --import hook every backend suite loads. Its only
+    # "credential" is a base64 stand-in whose decoded text says test-only, and it
+    # exists to keep a test run off the operator's .env and off the live repo.db.
+    # One file, not the test directory: a real token elsewhere in backend/tests/
+    # is still reported.
     '''^backend/tests/setup\.mjs$''',
+    # The catalogue's data files. An archive of vintage software has to record
+    # public install keys - the Windows 95 key is printed on millions of CDs and
+    # checked only by a ten-digit checksum, and the rest are Microsoft's published
+    # setup keys for releases that no longer activate - and list npm package
+    # names, which match because `api-extractor', 'applicationinsights-web'`
+    # looks like `key: value` to a comma-loving regex. Seeded catalogue rows
+    # grant access to nothing; .env, which does, stays reportable.
+    '''^backend/src/db/seed-(catalog|archive|modern)\.js$''',
   ]
   regexes = [
-    # The @fastify/cookie signing secret each backend test file invents for its
-    # own app instance (17 of them).
-    '''(?i)[a-z0-9]+(-[a-z0-9]+)*-test-cookie-secret-[0-9a-f]{4,}''',
-    # The placeholder vocabulary scripts/vuln-scan.sh already filters on, line 64:
-    # dummy | example | placeholder | not-a-real | test-only | change-in-production
-    # | redacted | CHANGEME | ChangeMe. Same words, same intent - so `./espress0
-    # scan --full` and CI's gitleaks report the same set of findings.
-    '''(?i)^[a-z0-9_./-]*(dummy|example\.?com?|placeholder|not-a-real|test-only|change-in-production|redacted|change-?me)[a-z0-9!_./+-]*$''',
+    # The login-flow diagram in totpService.js's header comment: "password ok,
+    # totp_enabled=0 -> full session". The rule took the comma as a separator and
+    # the flag as the secret.
+    '''totp_enabled=[01]''',
+    # aiConfig.test.js's stand-in for a tgpt-era OpenAI key, which is why the
+    # value has to look like one. Renamed to sk-proj-not-a-real-key-0123 (the
+    # convention the other AI tests use, and one scripts/vuln-scan.sh already
+    # filters), but a history walk still sees the line in the commit that added
+    # it - and history is what the scheduled scan reads.
+    '''sk-proj-abcdefghij0123''',
   ]

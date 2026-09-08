@@ -96,8 +96,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      # gitleaks reads .gitleaks.toml from the repository root; it allowlists the
-      # inert fixture values the backend suites have to write. See SECURITY-AUDIT.md.
+      # Reads .gitleaks.toml from the repo root. A PR scans its diff; the weekly
+      # and dispatch runs walk all history, where the four allowlisted shape
+      # false positives live - rationale in SECURITY-AUDIT.md.
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

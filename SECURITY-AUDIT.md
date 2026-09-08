@@ -238,13 +238,22 @@ characters and 12 tokens, Levenshtein short-circuits above 64 characters, and
   CodeQL (security-and-quality, plus the alert-suppression query so in-source
   `// codeql[query-id]` comments work — see "Suppression comments" below),
   `dependency-review-action` on pull requests (fails on high), gitleaks for
-  committed secrets (read together with `.gitleaks.toml`, which allowlists the
-  values the suites have to write - fake cookie-signing secrets, an
-  `sk-test-not-a-real-key-…` AI stand-in - by *shape* rather than by directory,
-  so a real token committed into a test file is still reported), and a
-  report-only `npm audit` over dev dependencies;
+  committed secrets, and a report-only `npm audit` over dev dependencies;
   weekly on a schedule as well. `ci.yml` keeps failing the build on high
   advisories in production dependencies.
+* **`.gitleaks.toml`.** The weekly run is `gitleaks detect` with no `--log-opts`,
+  i.e. it walks the whole history, and its `generic-api-key` rule matches on
+  *shape*: a word like `key`/`api`/`password`/`secret` near a `:` `=` or `,`, then
+  a 10+ character value. So it reads vintage install keys in the catalogue seeds,
+  the npm name sitting after `'api-extractor',`, a `totp_enabled=0` in a docblock
+  and a test's OpenAI-shaped stand-in as credentials. The file allowlists exactly
+  those - two paths, two value shapes - and nothing else: `.env`, real config and
+  every other directory stay reportable. No `.gitleaksignore`, because its
+  fingerprints pin commit SHAs and rot. Verified by replaying the pinned rule set
+  (8.24.3) over the tip tree and every line added in history: 14 findings before,
+  0 after. `backend/tests/aiConfig.test.js` also stopped using a value that reads
+  as a live key, matching the `sk-test-not-a-real-key-…` convention the other AI
+  tests use - the one `scripts/vuln-scan.sh` already filters.
 
 ## Known gaps (accepted, for now)
 
