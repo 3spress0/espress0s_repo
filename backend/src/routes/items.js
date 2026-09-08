@@ -404,7 +404,7 @@ export async function itemsRoutes(fastify) {
       return reply.code(400).send({ error: 'Invalid download link(s)', linkErrors: links.errors });
     }
     const parsed = itemSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     const data = parsed.data;
     const db = getDb();
@@ -515,7 +515,7 @@ export async function itemsRoutes(fastify) {
     }
 
     const parsed = itemSchema.partial().safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     const data = parsed.data;
 
@@ -629,7 +629,7 @@ export async function itemsRoutes(fastify) {
     if (!item) return reply.code(404).send({ error: 'Item not found' });
 
     const parsed = downloadLinkSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     const ld = normalizeLinkProvider(parsed.data);
     const encLink = encryptLinkFields({ storage_path: ld.storage_path || null, download_url: ld.download_url || null, down_reason: ld.down_reason || null });
@@ -661,7 +661,7 @@ export async function itemsRoutes(fastify) {
     if (!existingLink) return reply.code(404).send({ error: 'Link not found' });
 
     const parsed = downloadLinkSchema.partial().safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     const data = normalizeLinkProvider(parsed.data);
     if (data.is_primary) db.prepare('UPDATE item_download_links SET is_primary = 0 WHERE item_id = ?').run(item.id);

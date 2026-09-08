@@ -173,7 +173,7 @@ export async function authRoutes(fastify) {
     config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }
   }, async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Invalid input', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid input', details: parsed.error.issues });
 
     const { username, password, captchaId, captchaAnswer, captchaToken } = request.body;
     if (captchaRequired()) {
@@ -335,7 +335,7 @@ export async function authRoutes(fastify) {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } }
   }, async (request, reply) => {
     const parsed = registerSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     // Checked before any lookup: with registration closed the endpoint must
     // not double as a username/email oracle.
@@ -410,7 +410,7 @@ export async function authRoutes(fastify) {
 
   fastify.put('/auth/profile', { preHandler: [authenticate] }, async (request, reply) => {
     const parsed = profileSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     const { username, email, currentPassword, newPassword, avatar_url, bio, theme, favorites_default_public } = parsed.data;
     const db = getDb();

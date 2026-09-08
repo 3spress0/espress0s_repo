@@ -70,7 +70,7 @@ export async function foldersRoutes(fastify) {
   // POST /api/folders - create (admin)
   fastify.post('/folders', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const parsed = folderSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     const data = parsed.data;
     const slug = data.slug || makeSlug(data.name);
@@ -96,7 +96,7 @@ export async function foldersRoutes(fastify) {
     if (!existing) return reply.code(404).send({ error: 'Folder not found' });
 
     const parsed = folderSchema.partial().safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     const data = parsed.data;
     if (data.slug && data.slug !== existing.slug) {
