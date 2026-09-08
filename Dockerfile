@@ -46,7 +46,15 @@ RUN if [ "$WITH_TGPT" = "true" ]; then \
 # Copy backend
 COPY backend/package.json backend/package-lock.json* ./backend/
 WORKDIR /app/backend
-RUN npm ci --omit=dev
+# --ignore-scripts, deliberately. Nothing in the production tree declares an
+# install script; what npm would otherwise run is its IMPLICIT `node-gyp
+# rebuild` for better-sqlite3, triggered by the binding.gyp in the tarball.
+# That build is a no-op - the gyp file detects the shipped prebuild and
+# compiles nothing - but node-gyp still has to configure, which means python3,
+# make, g++ and a download of the Node headers, in the runtime image, on every
+# build. Skipping it keeps the toolchain out of the published image; the check
+# below is what proves the result actually works.
+RUN npm ci --omit=dev --ignore-scripts
 # Prove the native driver actually loads on this base image. `npm ci` succeeding
 # says the tarball unpacked, not that there is a binary for this platform/ABI -
 # and a database driver that only fails at boot is exactly the class of break

@@ -1089,6 +1089,17 @@ testcase "CI, the Docker image, the VM installer and package.json agree on Node"
   assert_eq "$(grep -cE "^FROM node:${DOCKER_MAJOR}-alpine" "$REPO_ROOT/Dockerfile")" \
             "$(grep -cE '^FROM node:' "$REPO_ROOT/Dockerfile")" \
             "every build stage uses the same base image major"
+  # The image must not depend on a compiler it does not install.
+  if grep -qE '^RUN apk add .*(python3|g\+\+)' "$REPO_ROOT/Dockerfile"; then
+    assert_contains "$REPO_ROOT/Dockerfile" "npm ci --omit=dev" \
+      "the runtime stage installs production dependencies"
+  else
+    assert_contains "$REPO_ROOT/Dockerfile" "npm ci --omit=dev --ignore-scripts" \
+      "with no toolchain in the image, the runtime install must skip build scripts"
+  fi
+  assert_contains "$REPO_ROOT/Dockerfile" "require('better-sqlite3')" \
+    "and the image proves the native driver loads at build time"
+
   # The floor has to be one the database driver accepts.
   BSQL_ENGINE="$(grep -A2 '"engines"' \
     "$REPO_ROOT/backend/node_modules/better-sqlite3/package.json" 2>/dev/null \

@@ -798,7 +798,12 @@ fi
 # --- 1. system packages ------------------------------------------------------
 step "Installing system packages"
 $SUDO apt-get update -qq
-PKGS="ca-certificates curl gnupg git nginx"
+# python3/make/g++ are the "build prerequisites" this step has always claimed to
+# install. npm needs them for any package with a binding.gyp - including
+# better-sqlite3, whose implicit `node-gyp rebuild` compiles nothing (it detects
+# the shipped prebuild) but still has to configure. Without them a fresh VM
+# fails at `npm ci`, which for the updater means a refused deploy.
+PKGS="ca-certificates curl gnupg git nginx python3 make g++"
 $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $PKGS > /dev/null
 ok "nginx and build prerequisites"
 
