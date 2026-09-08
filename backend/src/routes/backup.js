@@ -147,7 +147,7 @@ export async function backupRoutes(fastify) {
       return reply.code(400).send({
         error: 'Not a valid export file',
         hint: `Expected { "format": "${EXPORT_FORMAT}", "version": 1, ... } produced by GET /api/admin/export`,
-        details: parsed.error.errors.slice(0, 10),
+        details: parsed.error.issues.slice(0, 10),
       });
     }
 
@@ -213,7 +213,7 @@ export async function backupRoutes(fastify) {
           const candidate = pickItemFields(rawItem);
           const itemParsed = itemSchema.partial().safeParse(candidate);
           if (!itemParsed.success) {
-            noteItemError(rawItem.slug, itemParsed.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join('; '));
+            noteItemError(rawItem.slug, itemParsed.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join('; '));
             continue;
           }
           const item = itemParsed.data;

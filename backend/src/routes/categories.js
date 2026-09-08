@@ -46,7 +46,7 @@ export async function categoriesRoutes(fastify) {
   fastify.post('/categories', { preHandler: [authenticate, requireEditor] }, async (request, reply) => {
     const parsed = categorySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+      return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
     }
 
     const data = parsed.data;
@@ -81,7 +81,7 @@ export async function categoriesRoutes(fastify) {
     if (!existing) return reply.code(404).send({ error: 'Not found' });
 
     const parsed = categorySchema.partial().safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     const data = parsed.data;
     const updates = [];

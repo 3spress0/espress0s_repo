@@ -32,6 +32,23 @@ updates:
         patterns: ["react", "react-dom", "react-router*"]
       frontend-dev:
         dependency-type: development
+    # Two majors are held back on purpose, because taking them silently broke
+    # every install and every build on the VM (the updater then refused to
+    # deploy anything, which is how it surfaced):
+    #   * eslint 10 - eslint-plugin-react has no release that accepts it yet
+    #     (its peer range still stops at ^9.7), so `npm ci` ends in ERESOLVE.
+    #   * tailwindcss 4 - the PostCSS plugin moved to @tailwindcss/postcss and
+    #     the config format changed; this frontend is still v3-style
+    #     (@tailwind directives + tailwind.config.js), so `vite build` fails.
+    # Both are deliberate migrations, not dependency bumps. Remove the entry
+    # once the migration is actually done.
+    ignore:
+      - dependency-name: eslint
+        update-types: [version-update:semver-major]
+      - dependency-name: "@eslint/js"
+        update-types: [version-update:semver-major]
+      - dependency-name: tailwindcss
+        update-types: [version-update:semver-major]
     labels: [dependencies, frontend]
     commit-message:
       prefix: "deps(frontend)"
@@ -50,6 +67,18 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    # The Node major in the Dockerfile is bounded by two things dependabot
+    # cannot see: the native modules the image installs (better-sqlite3 12.x
+    # declared engines "20.x || 22.x || 23.x || 24.x", which is why the jump to
+    # 26 left the runner stage unable to install it at all), and the fact that
+    # this image is deployed unattended to small VMs, where the Active LTS
+    # major is the only sensible choice. better-sqlite3 13 now allows ">=22",
+    # so the block is policy rather than impossibility - raise the pin when 26
+    # becomes LTS, together with deploy-ubuntu.sh/setup.sh/CI, and let
+    # docker-build prove it before merging.
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]
     labels: [dependencies, docker]
     commit-message:
       prefix: "deps(docker)"

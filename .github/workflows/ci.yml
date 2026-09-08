@@ -13,15 +13,18 @@ jobs:
       - uses: actions/checkout@v7
       
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
-          cache-dependency-path: backend/package.json
+          cache-dependency-path: backend/package-lock.json
       
       - name: Install backend deps
         working-directory: ./backend
-        run: npm ci || npm install
+        # npm ci, with no `|| npm install` fallback: a lockfile that does not
+        # resolve must fail the build here rather than be quietly re-resolved
+        # into something the VM will never install.
+        run: npm ci
       
       - name: Run migrations
         working-directory: ./backend
@@ -51,15 +54,15 @@ jobs:
       - uses: actions/checkout@v7
       
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
-          cache-dependency-path: frontend/package.json
+          cache-dependency-path: frontend/package-lock.json
       
       - name: Install frontend deps
         working-directory: ./frontend
-        run: npm ci || npm install
+        run: npm ci
       
       - name: Lint frontend
         working-directory: ./frontend
@@ -79,22 +82,22 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       # Production dependencies only: a dev-only advisory should not block a
       # release, but anything shipped to the VM should.
       - name: Audit backend dependencies
         working-directory: ./backend
         run: |
-          npm ci --omit=dev --ignore-scripts || npm install --omit=dev --ignore-scripts
+          npm ci --omit=dev --ignore-scripts
           npm audit --omit=dev --audit-level=high
 
       - name: Audit frontend dependencies
         working-directory: ./frontend
         run: |
-          npm ci --omit=dev --ignore-scripts || npm install --omit=dev --ignore-scripts
+          npm ci --omit=dev --ignore-scripts
           npm audit --omit=dev --audit-level=high
 
   docker-build:

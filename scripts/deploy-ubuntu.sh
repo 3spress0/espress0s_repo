@@ -439,6 +439,40 @@ UPDATER_NAME="${APP_NAME}-updater"
 UPDATER_FILE="/etc/systemd/system/${UPDATER_NAME}.service"
 SUDOERS_FILE="/etc/sudoers.d/espress0-updater"
 
+# How much of this machine may the updater use?
+#
+# The shipped unit is sized for a 1 GB VM. Rather than leave every larger box
+# throttled to 512M (a vite build there would be OOM-killed for no reason) or
+# every smaller one uncapped, the limits are derived from the real hardware and
+# written into the generated unit. UPDATER_MEMORY_MAX_MB / UPDATER_CPU_QUOTA in
+# the environment win, for the operator who knows better.
+#
+# Sets UPD_MEM_MAX / UPD_MEM_HIGH (MB) and UPD_CPU_QUOTA (percent).
+size_updater_limits() {
+  local total_mb cpus
+  total_mb="$(awk '/^MemTotal:/ {printf "%d", $2/1024; exit}' /proc/meminfo 2>/dev/null || echo 0)"
+  cpus="$(nproc 2>/dev/null || echo 1)"
+
+  if [ -n "${UPDATER_MEMORY_MAX_MB:-}" ]; then
+    UPD_MEM_MAX="$UPDATER_MEMORY_MAX_MB"
+  elif [ "$total_mb" -le 0 ];      then UPD_MEM_MAX=512
+  elif [ "$total_mb" -le 1200 ];   then UPD_MEM_MAX=384
+  elif [ "$total_mb" -le 2200 ];   then UPD_MEM_MAX=640
+  elif [ "$total_mb" -le 4500 ];   then UPD_MEM_MAX=1024
+  else                                  UPD_MEM_MAX=1536
+  fi
+  UPD_MEM_HIGH=$(( UPD_MEM_MAX * 3 / 4 ))
+
+  # One core's worth on a multi-core box, half a core on a single-core one, so
+  # the machine keeps enough CPU to answer SSH while a build runs.
+  if [ -n "${UPDATER_CPU_QUOTA:-}" ]; then
+    UPD_CPU_QUOTA="${UPDATER_CPU_QUOTA%\%}"
+  elif [ "$cpus" -ge 2 ]; then UPD_CPU_QUOTA=100
+  else                         UPD_CPU_QUOTA=50
+  fi
+  ok "Sized the updater for ${total_mb}M RAM / ${cpus} vCPU: MemoryHigh=${UPD_MEM_HIGH}M, MemoryMax=${UPD_MEM_MAX}M, CPUQuota=${UPD_CPU_QUOTA}%"
+}
+
 install_auto_updater() {
   step "Installing automatic updates"
 
@@ -491,11 +525,36 @@ SUDO
       -e "s|^Group=.*|Group=$APP_USER|" \
       "$src" > "$tmp_unit"
 
+  # Resource limits sized for THIS machine, not for the 1 GB floor the shipped
+  # unit assumes. Without them the updater's npm/vite phase is the one workload
+  # on the box that can take the whole VM into swap and OOM.
+  size_updater_limits
+  sed -i -e "s|^MemoryHigh=.*|MemoryHigh=${UPD_MEM_HIGH}M|" \
+         -e "s|^MemoryMax=.*|MemoryMax=${UPD_MEM_MAX}M|" \
+         -e "s|^CPUQuota=.*|CPUQuota=${UPD_CPU_QUOTA}%|" \
+         "$tmp_unit"
+
   # Pin the unit it manages, so detection never has to guess on this box.
   if grep -q '^ExecStart=' "$tmp_unit" && ! grep -q -- '--service' "$tmp_unit"; then
     sed -i "s|^\(ExecStart=.*auto-update.sh.*\)$|\1 --service $APP_NAME|" "$tmp_unit"
   fi
   sed -i "s|--service espress0-repo\b|--service $APP_NAME|g" "$tmp_unit"
+
+  # The script's own memory gate should agree with the cgroup it runs in: do not
+  # start an install/build that may need MemoryMax when the machine does not
+  # have that much free right now.
+  if ! grep -q -- '--min-free-mem' "$tmp_unit"; then
+    sed -i "s|^\(ExecStart=.*auto-update.sh.*\)$|\1 --min-free-mem ${UPD_MEM_MAX}|" "$tmp_unit"
+  fi
+
+  # The version marker is how the updater tells an operator that the units on
+  # this machine are older than the checkout. A generation step that dropped it
+  # would silence that warning for good, so fail loudly here instead.
+  if ! grep -q '^X-Espress0-Unit-Version=' "$tmp_unit"; then
+    err "the generated updater unit lost its X-Espress0-Unit-Version marker"
+    rm -f "$tmp_unit"
+    return 0
+  fi
 
   if grep -q '/opt/espress0s-repo' "$tmp_unit"; then
     err "the generated updater unit still contains /opt/espress0s-repo"
@@ -739,24 +798,41 @@ fi
 # --- 1. system packages ------------------------------------------------------
 step "Installing system packages"
 $SUDO apt-get update -qq
-PKGS="ca-certificates curl gnupg git nginx"
+# python3/make/g++ are the "build prerequisites" this step has always claimed to
+# install. npm needs them for any package with a binding.gyp - including
+# better-sqlite3, whose implicit `node-gyp rebuild` compiles nothing (it detects
+# the shipped prebuild) but still has to configure. Without them a fresh VM
+# fails at `npm ci`, which for the updater means a refused deploy.
+PKGS="ca-certificates curl gnupg git nginx python3 make g++"
 $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $PKGS > /dev/null
 ok "nginx and build prerequisites"
 
-# --- 2. Node 20 --------------------------------------------------------------
+# --- 2. Node -----------------------------------------------------------------
+# The floor is set by the dependencies, not by taste: better-sqlite3 13
+# declares engines ">=22", and installing it on Node 20 gets you a database
+# driver that npm only WARNS about (EBADENGINE is not an error) and that can
+# fail when it is first required - at boot, in production. New machines get 24,
+# the Active LTS major that CI and the Docker image both use, so the three
+# places this code runs agree on one runtime.
+NODE_FLOOR=22
+NODE_INSTALL=24
 step "Checking Node.js"
 NEED_NODE=1
 if command -v node >/dev/null 2>&1; then
   MAJOR="$(node -v | sed 's/^v\([0-9]*\).*/\1/')"
-  if [ "$MAJOR" -ge 20 ]; then NEED_NODE=0; ok "Node $(node -v) present"; else warn "Node $(node -v) too old"; fi
+  if [ "$MAJOR" -ge "$NODE_FLOOR" ]; then
+    NEED_NODE=0; ok "Node $(node -v) present"
+  else
+    warn "Node $(node -v) is below the required $NODE_FLOOR - upgrading to $NODE_INSTALL"
+  fi
 fi
 if [ "$NEED_NODE" -eq 1 ]; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | root_bash > /dev/null
+  curl -fsSL "https://deb.nodesource.com/setup_${NODE_INSTALL}.x" | root_bash > /dev/null
   $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs > /dev/null
   ok "Installed Node $(node -v)"
 fi
 MAJOR="$(node -v | sed 's/^v\([0-9]*\).*/\1/')"
-[ "$MAJOR" -ge 20 ] || die "Node $MAJOR is below the required 20."
+[ "$MAJOR" -ge "$NODE_FLOOR" ] || die "Node $MAJOR is below the required $NODE_FLOOR (better-sqlite3 needs 22+)."
 
 # --- 3. .env -----------------------------------------------------------------
 step "Configuring .env"
@@ -896,6 +972,11 @@ if [ "$INTERNAL_PORT" -lt 1024 ]; then
   fi
   ok "Unit grants CAP_NET_BIND_SERVICE (port $INTERNAL_PORT is privileged)"
 fi
+
+# Same marker check as the updater unit: the app unit is regenerated by a long
+# chain of seds, and losing the version line would blind the drift warning.
+grep -q '^X-Espress0-Unit-Version=' "$TMP" || \
+  warn "generated app unit has no X-Espress0-Unit-Version marker - the updater cannot report unit drift for it"
 
 $SUDO cp "$TMP" "$SERVICE_FILE"
 rm -f "$TMP"

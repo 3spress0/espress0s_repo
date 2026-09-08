@@ -1,6 +1,14 @@
 import { z } from 'zod';
 
 /**
+ * A note on reading validation failures, since it is easy to get wrong:
+ * a ZodError's list of problems is `error.issues`. Zod 4 removed the old
+ * `error.errors` alias, and reading it now yields `undefined` - which does not
+ * throw where it is written, but a few lines later on `.map`/`.slice`, turning
+ * every "400 Validation failed" into a 500. Always `.issues`.
+ */
+
+/**
  * A URL field that also accepts paths to files uploaded through this app
  * (e.g. `/api/uploads/abc123.png`). `z.string().url()` rejects relative paths,
  * which would make admin-uploaded cover images impossible to save.

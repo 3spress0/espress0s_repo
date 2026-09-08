@@ -181,10 +181,10 @@ export function readCatalogFromZip(buffer, limits = {}) {
 
   const parsed = catalogSchema.safeParse(raw);
   if (!parsed.success) {
-    const details = parsed.error.errors.slice(0, MAX_INLINE_ERRORS)
+    const details = parsed.error.issues.slice(0, MAX_INLINE_ERRORS)
       .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`);
     const err = new CatalogError(
-      `Catalogue failed validation (${parsed.error.errors.length} problem${parsed.error.errors.length === 1 ? '' : 's'}): ${details.slice(0, 5).join('; ')}`,
+      `Catalogue failed validation (${parsed.error.issues.length} problem${parsed.error.issues.length === 1 ? '' : 's'}): ${details.slice(0, 5).join('; ')}`,
       'CATALOG_SCHEMA'
     );
     err.details = details;
@@ -363,7 +363,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false, detect
     links.forEach((l, i) => {
       const parsed = downloadLinkSchema.partial().safeParse(l);
       if (!parsed.success || !parsed.data.label) {
-        noteError(null, `link ${i} is not valid: ${parsed.success ? 'missing label' : parsed.error.errors[0]?.message}`, 'links');
+        noteError(null, `link ${i} is not valid: ${parsed.success ? 'missing label' : parsed.error.issues[0]?.message}`, 'links');
         return;
       }
       const d = parsed.data;
@@ -428,7 +428,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false, detect
         // error report, not a rejected archive.
         const entryParsed = catalogItemSchema.safeParse(entryClean);
         if (!entryParsed.success) {
-          noteError(errorSlug, entryParsed.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; '));
+          noteError(errorSlug, entryParsed.error.issues.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; '));
           continue;
         }
         const valid = entryParsed.data;
@@ -447,7 +447,7 @@ export function runCatalogPlan(catalog, { mode = 'upsert', apply = false, detect
 
         const parsed = itemSchema.partial().safeParse(candidate);
         if (!parsed.success) {
-          noteError(errorSlug, parsed.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; '));
+          noteError(errorSlug, parsed.error.issues.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; '));
           continue;
         }
         const item = parsed.data;

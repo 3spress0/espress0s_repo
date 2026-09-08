@@ -1,6 +1,11 @@
 [Unit]
 Description=espress0's repo - Personal Software Archive
 After=network.target
+# Version of this template. scripts/auto-update.sh compares it against the copy
+# installed in /etc/systemd/system and warns when the machine is behind, because
+# git updating the checkout does NOT update the units. Bump it whenever a change
+# here needs to reach existing installations (systemd ignores X- keys).
+X-Espress0-Unit-Version=1
 
 [Service]
 Type=simple

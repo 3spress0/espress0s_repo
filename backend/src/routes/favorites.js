@@ -75,7 +75,7 @@ export async function favoritesRoutes(fastify) {
     config: { rateLimit: { max: 240, timeWindow: '15 minutes' } },
   }, async (request, reply) => {
     const parsed = createSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     const itemRef = parseItemRef(parsed.data.item_id ?? parsed.data.slug);
     if (itemRef === null) return reply.code(400).send({ error: 'Invalid item reference' });
@@ -106,7 +106,7 @@ export async function favoritesRoutes(fastify) {
     if (itemRef === null) return reply.code(400).send({ error: 'Invalid item reference' });
 
     const parsed = visibilitySchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
 
     // Unstarred files have no visibility to set, so there is nothing to patch.
     const updated = setFavoriteVisibility(request.user.id, itemRef, parsed.data.is_public);

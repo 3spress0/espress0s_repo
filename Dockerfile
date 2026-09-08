@@ -2,19 +2,30 @@
 # Optimized for low-resource Azure VM
 
 # Stage 1: Build frontend
-FROM node:26-alpine AS frontend-builder
+#
+# Pinned to the Active LTS line. The bump to node:26-alpine (#17) is what broke
+# docker-build: better-sqlite3 12.2.0 declares engines "20.x || 22.x || 23.x ||
+# 24.x", so the runner stage below could not install the database driver at all
+# - no prebuilt binary for that ABI and no source build. better-sqlite3 13
+# (below) lifts that specific block, but the pin stays on the LTS major
+# deliberately: the appliance this image runs on is a 1-2 GB VM nobody watches,
+# which is not where a Current release belongs. Move it when 26 goes LTS.
+FROM node:24-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci || npm install
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Backend + frontend runner
-FROM node:26-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 
-# sqlite build deps (better-sqlite3) + the tools the entrypoint needs
-RUN apk add --no-cache python3 make g++ sqlite wget bash curl git
+# The tools the entrypoint and scripts need. No python3/make/g++: better-sqlite3
+# 13 ships Node-API prebuilds for musl (prebuilds/linuxmusl-{x64,arm64}.node)
+# and has no install script at all, so nothing in this image compiles - which
+# also means no C toolchain sitting in the published runtime.
+RUN apk add --no-cache sqlite wget bash curl git
 
 # Barista's AI backend is HTTP-first: with AI_API_KEY set the app calls the
 # Gemini API directly, so the image needs no CLI. tgpt - the free, keyless
@@ -35,7 +46,20 @@ RUN if [ "$WITH_TGPT" = "true" ]; then \
 # Copy backend
 COPY backend/package.json backend/package-lock.json* ./backend/
 WORKDIR /app/backend
-RUN npm ci --only=production || npm install --only=production
+# --ignore-scripts, deliberately. Nothing in the production tree declares an
+# install script; what npm would otherwise run is its IMPLICIT `node-gyp
+# rebuild` for better-sqlite3, triggered by the binding.gyp in the tarball.
+# That build is a no-op - the gyp file detects the shipped prebuild and
+# compiles nothing - but node-gyp still has to configure, which means python3,
+# make, g++ and a download of the Node headers, in the runtime image, on every
+# build. Skipping it keeps the toolchain out of the published image; the check
+# below is what proves the result actually works.
+RUN npm ci --omit=dev --ignore-scripts
+# Prove the native driver actually loads on this base image. `npm ci` succeeding
+# says the tarball unpacked, not that there is a binary for this platform/ABI -
+# and a database driver that only fails at boot is exactly the class of break
+# this Dockerfile already shipped once.
+RUN node -e "const D=require('better-sqlite3'); const d=new D(':memory:'); d.exec('create table t(x)'); d.close(); console.log('better-sqlite3 ok:', require('better-sqlite3/package.json').version)"
 
 # Copy backend source
 COPY backend/src ./src

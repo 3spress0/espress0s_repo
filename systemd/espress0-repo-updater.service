@@ -2,6 +2,11 @@
 Description=espress0's repo - git auto-updater (staged build, swap, health-verified restart)
 After=network-online.target espress0-repo.service
 Wants=network-online.target
+# Version of this template. scripts/auto-update.sh compares it against the copy
+# installed in /etc/systemd/system and warns when the machine is behind, because
+# git updating the checkout does NOT update the units. Bump it whenever a change
+# here needs to reach existing installations (systemd ignores X- keys).
+X-Espress0-Unit-Version=1
 
 [Service]
 Type=simple
@@ -26,6 +31,36 @@ RestartSec=30
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=espress0-repo-updater
+
+# --- resource containment ----------------------------------------------------
+# The updater is the heaviest workload on this machine: a git clone, two
+# dependency installs and a bundler. Uncapped, on a 1-2 GB VM, that is enough to
+# exhaust memory, start swapping and reach the OOM killer - which does not
+# politely pick the build, it can take sshd and the app with it. None of the
+# updater's rollback machinery helps if the box itself stops answering.
+#
+# Inside this cgroup a runaway install/build is killed instead: the update fails,
+# the updater's own error paths restart the app on the previous commit, and the
+# VM stays reachable. MemoryHigh throttles (reclaim pressure) before MemoryMax
+# kills, so a merely-large build slows down rather than dying.
+#
+# deploy-ubuntu.sh rewrites MemoryHigh/MemoryMax/CPUQuota to fit the real VM and
+# passes a matching --min-free-mem to the script; the values below are a safe
+# floor for a 1 GB box. Override per host with a drop-in:
+#   sudo systemctl edit espress0-repo-updater
+MemoryAccounting=yes
+MemoryHigh=384M
+MemoryMax=512M
+CPUAccounting=yes
+CPUQuota=50%
+TasksMax=256
+# The app and sshd outrank the updater for CPU and, more importantly, for disk.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# A cgroup OOM kill must not take the unit down permanently: the next cycle
+# refuses or rolls back cleanly, so let systemd restart it as usual.
+OOMPolicy=continue
 
 [Install]
 WantedBy=multi-user.target

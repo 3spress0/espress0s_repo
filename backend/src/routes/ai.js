@@ -30,7 +30,7 @@ export async function aiRoutes(fastify) {
   fastify.post('/ai/ask', askRateLimit, async (request, reply) => {
     const parsed = aiQuerySchema.safeParse(request.body || request.query);
     if (!parsed.success) {
-      return reply.code(400).send({ error: 'Invalid input', details: parsed.error.errors });
+      return reply.code(400).send({ error: 'Invalid input', details: parsed.error.issues });
     }
 
     const query = String(parsed.data.q || parsed.data.question || '').slice(0, MAX_QUESTION_LENGTH);
@@ -52,7 +52,7 @@ export async function aiRoutes(fastify) {
 
   fastify.post('/ai/ask/stream', askRateLimit, async (request, reply) => {
     const parsed = aiQuerySchema.safeParse(request.body || {});
-    if (!parsed.success) return reply.code(400).send({ error: 'Invalid input', details: parsed.error.errors });
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid input', details: parsed.error.issues });
     const query = String(parsed.data.q || parsed.data.question || '').slice(0, MAX_QUESTION_LENGTH);
     if (!query) return reply.code(400).send({ error: 'Missing question' });
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' });
