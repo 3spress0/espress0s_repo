@@ -219,12 +219,13 @@ json_str() { printf '%s' "${1:-}" | python3 -c 'import json,sys; print(json.dump
 # answering, and which step failed. "failed" with no detail sent people
 # reading journal logs to work out whether the app had even been stopped.
 write_state() { # state message
-  printf '{"state":"%s","message":%s,"at":"%s","branch":"%s","commit":"%s","expectedCommit":"%s","runningCommit":"%s","supervisor":"%s","target":%s,"stopped":"%s","migrated":"%s","started":"%s","verified":"%s","reason":%s}\n' \
+  printf '{"state":"%s","message":%s,"at":"%s","branch":"%s","commit":"%s","expectedCommit":"%s","runningCommit":"%s","supervisor":"%s","target":%s,"stopped":"%s","migrated":"%s","started":"%s","verified":"%s","unitDrift":%s,"reason":%s}\n' \
     "$1" "$(json_str "$2")" \
     "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$BRANCH" "$(git rev-parse --short HEAD 2>/dev/null)" \
     "${ST_EXPECTED:0:40}" "${ST_RUNNING:0:40}" \
     "${SUPERVISOR:-none}" "$(json_str "$SUPERVISOR_NAME")" \
-    "$ST_STOPPED" "$ST_MIGRATED" "$ST_STARTED" "$ST_VERIFIED" "$(json_str "$ST_REASON")" \
+    "$ST_STOPPED" "$ST_MIGRATED" "$ST_STARTED" "$ST_VERIFIED" \
+    "$(json_str "${UNIT_DRIFT:-}")" "$(json_str "$ST_REASON")" \
     > "$STATE_FILE" 2>/dev/null || true
 }
 
@@ -513,6 +514,82 @@ systemd_unit_matches_root() { # <unit>
   [ -n "$wd" ] || return 1
   wd="${wd%/}"
   [ "$wd" = "$ROOT" ] || [ "$wd" = "$ROOT/backend" ]
+}
+
+# ------------------------------------------------- installed-unit drift
+#
+# The files in systemd/ are templates, not the units that actually run:
+# deploy-ubuntu.sh rewrites paths and sizes the resource caps for the real
+# machine before installing them. So "is the installed unit current?" cannot be
+# answered with a diff - every installed copy legitimately differs.
+#
+# What CAN be compared is a version marker the template carries and the
+# installed copy inherits verbatim: X-Espress0-Unit-Version (systemd ignores
+# X- keys by design). Bump it in the template whenever a unit changes in a way
+# an existing installation needs.
+#
+# Why the updater cares: git updates the checkout, and nothing else. The
+# containment that keeps an update from OOM-killing the box - MemoryMax,
+# CPUQuota, TasksMax - lives in the unit, so a machine can pull a commit that
+# adds those caps and go on running completely uncapped, indefinitely, with no
+# symptom until the next heavy update takes the VM down. Exactly the failure
+# this script was rewritten to prevent.
+#
+# Detect-and-report is deliberately the ceiling here. The updater's sudoers
+# grant is three verbs (stop/start/restart) on one unit; writing
+# /etc/systemd/system and running `daemon-reload` is not in it, and widening
+# that grant to make an unattended job able to rewrite its own limits would be
+# a far worse trade than printing a line an operator can act on.
+UNIT_DRIFT=""          # space-separated unit names that are behind
+UNIT_DRIFT_LOGGED=""   # last value announced, so a 5-minute loop says it once
+
+unit_template_version() { # <unit file> -> integer version, empty if unmarked
+  awk -F= '/^[[:space:]]*X-Espress0-Unit-Version[[:space:]]*=/ {
+             gsub(/[^0-9]/, "", $2); print $2; exit }' "$1" 2>/dev/null
+}
+
+installed_unit_file() { # <unit name> -> path of the installed unit, or fail
+  local path
+  path="$(systemctl show -p FragmentPath --value "$1" 2>/dev/null)" || return 1
+  case "$path" in ''|/dev/null) return 1 ;; esac
+  [ -f "$path" ] || return 1
+  printf '%s' "$path"
+}
+
+check_unit_drift() {
+  UNIT_DRIFT=""
+  command -v systemctl >/dev/null 2>&1 || return 0
+  [ -d "$ROOT/systemd" ] || return 0
+
+  local tmpl name file want have
+  local -a details=()
+  for tmpl in "$ROOT"/systemd/*.service; do
+    [ -f "$tmpl" ] || continue
+    want="$(unit_template_version "$tmpl")"
+    [ -n "$want" ] || continue          # unversioned template: nothing to claim
+    name="$(basename "$tmpl")"
+    file="$(installed_unit_file "$name")" || continue   # not installed here
+    have="$(unit_template_version "$file")"
+    [ -n "$have" ] || have=0
+    [ "$have" -lt "$want" ] 2>/dev/null || continue
+    UNIT_DRIFT="${UNIT_DRIFT:+$UNIT_DRIFT }$name"
+    details+=("$name: installed version $have, this checkout ships $want ($file)")
+  done
+
+  [ -n "$UNIT_DRIFT" ] || { UNIT_DRIFT_LOGGED=""; return 0; }
+  [ "$UNIT_DRIFT" != "$UNIT_DRIFT_LOGGED" ] || return 0
+  UNIT_DRIFT_LOGGED="$UNIT_DRIFT"
+
+  log "WARNING: systemd units on this machine are older than the checkout."
+  local d
+  for d in "${details[@]}"; do log "  $d"; done
+  log "  Until they are reinstalled, unit-level changes are NOT in effect - including"
+  log "  the updater's own MemoryMax/CPUQuota, which is what keeps a build from taking"
+  log "  the VM down."
+  log "  Fix, on the host:  sudo ./espress0 deploy    (regenerates, reloads and restarts)"
+  log "  The updater cannot do this itself: its sudoers rule covers stop/start/restart of"
+  log "  the app unit and nothing else, deliberately."
+  return 0
 }
 
 tmux_session_has_app_window() { # <session>
@@ -1316,6 +1393,11 @@ deploy_via_pull() { # <local_sha> <remote_sha>
 }
 
 check_and_update() {
+  # Cheap, read-only, and independent of whether there is anything to deploy:
+  # a machine whose units are stale should say so on an idle cycle too, and the
+  # state file (which is all the admin card ever sees) should carry it.
+  check_unit_drift
+
   if [ -e "$DISABLE_FILE" ]; then
     write_state paused "Paused by $DISABLE_FILE - remove it to resume."
     return 0

@@ -151,13 +151,26 @@ write_mocks() { # <sandbox>
 ST="$st"
 echo "systemctl \$*" >> "\$ST/calls"
 verb="\$1"; shift
+unit=""
 case "\$verb" in
   is-active)
     [ "\$1" = "--quiet" ] && shift
     [ "\$(cat "\$ST/systemd-active")" = "active" ] && exit 0 || exit 3 ;;
   show)
-    # systemctl show -p WorkingDirectory --value <unit>
-    cat "\$ST/systemd-workdir"; exit 0 ;;
+    # systemctl show -p <Property> --value <unit>
+    prop=""
+    while [ \$# -gt 0 ]; do
+      case "\$1" in -p) prop="\$2"; shift 2 ;; --value) shift ;; *) unit="\$1"; shift ;; esac
+    done
+    case "\$prop" in
+      FragmentPath)
+        # Empty unless the test installed a unit file for this name, which is
+        # exactly how systemd answers for a unit it does not know.
+        cat "\$ST/fragment-\${unit}" 2>/dev/null || true ;;
+      *)
+        cat "\$ST/systemd-workdir" ;;
+    esac
+    exit 0 ;;
   stop)
     rc="\$(cat "\$ST/systemctl-stop-rc")"
     if [ "\$rc" = "0" ]; then
@@ -942,6 +955,114 @@ testcase "the resource contract is in --help"
   assert_contains "$HELP2" "--step-timeout" "the per-step timeout is documented"
   assert_contains "$HELP2" "--build-online" "the escape hatch is documented"
   assert_contains "$HELP2" "OOM" "and the reason the default order changed"
+fi
+
+# --- 16. installed-unit drift ------------------------------------------------
+#
+# The gap this closes: `git pull` updates the checkout, and nothing else. A
+# machine can therefore run a commit whose unit file caps the updater at
+# MemoryMax=512M while the unit actually loaded by systemd has no caps at all -
+# no error, no symptom, until an update takes the VM down. The updater compares
+# the version marker in systemd/*.service against the installed copy and says
+# so. It cannot install units itself (its sudoers rule is stop/start/restart on
+# the app unit only), so reporting is the whole contract.
+
+# Put a fake "installed" unit on disk and point the systemctl mock at it.
+install_fake_unit() { # <sandbox> <unit name> <version|none>
+  local sb="$1" name="$2" version="$3" file="$1/etc/$2"
+  mkdir -p "$sb/etc"
+  { printf '[Unit]\nDescription=fake %s\n' "$name"
+    [ "$version" = "none" ] || printf 'X-Espress0-Unit-Version=%s\n' "$version"
+    printf '\n[Service]\nExecStart=/bin/true\n'
+  } > "$file"
+  echo "$file" > "$sb/mock-state/fragment-$name"
+}
+
+# The checkout's own templates, copied into the sandbox so the test controls
+# the "shipped" version independently of what the repo happens to be at.
+ship_unit_templates() { # <sandbox> <version>
+  local sb="$1" version="$2" name
+  mkdir -p "$sb/live/systemd"
+  for name in espress0-repo.service espress0-repo-updater.service; do
+    printf '[Unit]\nDescription=%s\nX-Espress0-Unit-Version=%s\n\n[Service]\nMemoryMax=512M\nExecStart=/bin/true\n' \
+      "$name" "$version" > "$sb/live/systemd/$name"
+  done
+}
+
+if should_run "stale unit is reported"; then
+testcase "an installed unit older than the checkout is reported, without blocking the update"
+  new_sandbox unit-drift
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  ship_unit_templates "$SB" 3
+  install_fake_unit "$SB" espress0-repo-updater.service 1
+  install_fake_unit "$SB" espress0-repo.service 3
+  run_updater "$SB"
+  assert_eq "$(cat "$SB/rc")" "0" "the update still succeeds - drift is a warning, not a veto"
+  assert_eq "$(live_sha "$SB")" "$NEW_SHA" "and the new commit is deployed"
+  assert_contains "$SB/out.log" "systemd units on this machine are older than the checkout" \
+    "the drift is announced"
+  assert_contains "$SB/out.log" "espress0-repo-updater.service: installed version 1, this checkout ships 3" \
+    "naming the unit and both versions"
+  assert_contains "$SB/out.log" "sudo ./espress0 deploy" "with the command that fixes it"
+  assert_contains "$SB/out.log" "MemoryMax/CPUQuota" "and why it matters"
+  assert_not_contains "$SB/out.log" "espress0-repo.service: installed version" \
+    "the unit that IS current is not reported"
+  assert_file_contains "$(state_file "$SB")" '"unitDrift":"espress0-repo-updater.service"' \
+    "the state file carries it, so the admin card can show it"
+fi
+
+if should_run "unmarked unit counts as stale"; then
+testcase "a unit installed before versioning existed counts as behind"
+  new_sandbox unit-drift-unmarked
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  ship_unit_templates "$SB" 1
+  install_fake_unit "$SB" espress0-repo-updater.service none
+  install_fake_unit "$SB" espress0-repo.service none
+  run_updater "$SB"
+  assert_contains "$SB/out.log" "installed version 0, this checkout ships 1" \
+    "a missing marker reads as version 0"
+  assert_file_contains "$(state_file "$SB")" "espress0-repo-updater.service" \
+    "both stale units are recorded"
+fi
+
+if should_run "current units are silent"; then
+testcase "units that match the checkout produce no noise"
+  new_sandbox unit-drift-current
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  ship_unit_templates "$SB" 2
+  install_fake_unit "$SB" espress0-repo-updater.service 2
+  install_fake_unit "$SB" espress0-repo.service 5   # ahead: also not a problem
+  run_updater "$SB"
+  assert_eq "$(cat "$SB/rc")" "0" "the update succeeds"
+  assert_not_contains "$SB/out.log" "older than the checkout" "nothing is reported"
+  assert_file_contains "$(state_file "$SB")" '"unitDrift":""' "and the state file says so"
+fi
+
+if should_run "units not installed"; then
+testcase "a checkout with no units installed (tmux, docker, dev) says nothing"
+  new_sandbox unit-drift-absent
+  echo active     > "$SB/mock-state/systemd-active"
+  echo "$SB/live" > "$SB/mock-state/systemd-workdir"
+  ship_unit_templates "$SB" 9      # shipped, but nothing installed on this host
+  run_updater "$SB"
+  assert_eq "$(cat "$SB/rc")" "0" "the update succeeds"
+  assert_not_contains "$SB/out.log" "older than the checkout" \
+    "an uninstalled unit is not drift"
+fi
+
+if should_run "unit templates are versioned"; then
+testcase "the shipped units carry a version marker, and deploy preserves it"
+  assert_contains "$REPO_ROOT/systemd/espress0-repo-updater.service" "X-Espress0-Unit-Version=" \
+    "the updater unit is versioned"
+  assert_contains "$REPO_ROOT/systemd/espress0-repo.service" "X-Espress0-Unit-Version=" \
+    "the app unit is versioned"
+  assert_contains "$DEPLOY" "lost its X-Espress0-Unit-Version marker" \
+    "deploy refuses to install an updater unit whose marker a sed dropped"
+  assert_contains "$UPDATER" "FragmentPath" \
+    "the updater asks systemd which file is actually loaded"
 fi
 
 # ===================================================================== summary
