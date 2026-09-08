@@ -6,7 +6,7 @@ included — all are generated locally and covered by `.gitignore`.
 
 ## Deploying on an Ubuntu server
 
-One command does the whole thing — Node 20, dependencies, secrets, database,
+One command does the whole thing — Node 24, dependencies, secrets, database,
 frontend build, systemd service and an nginx reverse proxy. **The website is
 served on port 80**, so no port is needed in the URL:
 

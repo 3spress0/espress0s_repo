@@ -34,7 +34,7 @@ The application is designed to run on small machines, including old PCs, Raspber
 
 Requirements:
 
-* Node.js 20+
+* Node.js 22+ (24 recommended - what CI, Docker and the VM installer run)
 * npm
 
 Clone the repository:

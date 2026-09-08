@@ -802,20 +802,32 @@ PKGS="ca-certificates curl gnupg git nginx"
 $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $PKGS > /dev/null
 ok "nginx and build prerequisites"
 
-# --- 2. Node 20 --------------------------------------------------------------
+# --- 2. Node -----------------------------------------------------------------
+# The floor is set by the dependencies, not by taste: better-sqlite3 13
+# declares engines ">=22", and installing it on Node 20 gets you a database
+# driver that npm only WARNS about (EBADENGINE is not an error) and that can
+# fail when it is first required - at boot, in production. New machines get 24,
+# the Active LTS major that CI and the Docker image both use, so the three
+# places this code runs agree on one runtime.
+NODE_FLOOR=22
+NODE_INSTALL=24
 step "Checking Node.js"
 NEED_NODE=1
 if command -v node >/dev/null 2>&1; then
   MAJOR="$(node -v | sed 's/^v\([0-9]*\).*/\1/')"
-  if [ "$MAJOR" -ge 20 ]; then NEED_NODE=0; ok "Node $(node -v) present"; else warn "Node $(node -v) too old"; fi
+  if [ "$MAJOR" -ge "$NODE_FLOOR" ]; then
+    NEED_NODE=0; ok "Node $(node -v) present"
+  else
+    warn "Node $(node -v) is below the required $NODE_FLOOR - upgrading to $NODE_INSTALL"
+  fi
 fi
 if [ "$NEED_NODE" -eq 1 ]; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | root_bash > /dev/null
+  curl -fsSL "https://deb.nodesource.com/setup_${NODE_INSTALL}.x" | root_bash > /dev/null
   $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs > /dev/null
   ok "Installed Node $(node -v)"
 fi
 MAJOR="$(node -v | sed 's/^v\([0-9]*\).*/\1/')"
-[ "$MAJOR" -ge 20 ] || die "Node $MAJOR is below the required 20."
+[ "$MAJOR" -ge "$NODE_FLOOR" ] || die "Node $MAJOR is below the required $NODE_FLOOR (better-sqlite3 needs 22+)."
 
 # --- 3. .env -----------------------------------------------------------------
 step "Configuring .env"

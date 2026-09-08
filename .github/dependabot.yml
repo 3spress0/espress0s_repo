@@ -67,12 +67,15 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    # The Node major in the Dockerfile is bounded by the native modules the
-    # image installs, not by what Docker Hub tags exist: better-sqlite3 12.x
-    # declares engines "20.x || 22.x || 23.x || 24.x", so a jump to 26 left the
-    # runner stage unable to install it (no prebuilt binary, no source build).
-    # Raise this only together with better-sqlite3, and let docker-build prove
-    # it before merging.
+    # The Node major in the Dockerfile is bounded by two things dependabot
+    # cannot see: the native modules the image installs (better-sqlite3 12.x
+    # declared engines "20.x || 22.x || 23.x || 24.x", which is why the jump to
+    # 26 left the runner stage unable to install it at all), and the fact that
+    # this image is deployed unattended to small VMs, where the Active LTS
+    # major is the only sensible choice. better-sqlite3 13 now allows ">=22",
+    # so the block is policy rather than impossibility - raise the pin when 26
+    # becomes LTS, together with deploy-ubuntu.sh/setup.sh/CI, and let
+    # docker-build prove it before merging.
     ignore:
       - dependency-name: node
         update-types: [version-update:semver-major]

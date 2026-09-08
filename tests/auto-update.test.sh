@@ -1065,6 +1065,45 @@ testcase "the shipped units carry a version marker, and deploy preserves it"
     "the updater asks systemd which file is actually loaded"
 fi
 
+# --- 17. one runtime, four declarations --------------------------------------
+#
+# The docker-build break was a version mismatch nobody owned: CI tested on Node
+# 20, the image ran 26, the VM installer provisioned 20, and the database
+# driver supported neither combination. Each file was defensible on its own.
+# These assertions make the four declarations answer to each other.
+
+if should_run "node majors agree"; then
+testcase "CI, the Docker image, the VM installer and package.json agree on Node"
+  DOCKER_MAJOR="$(grep -m1 -oE '^FROM node:([0-9]+)' "$REPO_ROOT/Dockerfile" | grep -oE '[0-9]+')"
+  CI_MAJOR="$(grep -m1 -oE "node-version: '[0-9]+'" "$REPO_ROOT/.github/workflows/ci.yml" | grep -oE '[0-9]+')"
+  DEPLOY_INSTALL="$(grep -m1 -oE '^NODE_INSTALL=[0-9]+' "$DEPLOY" | grep -oE '[0-9]+')"
+  DEPLOY_FLOOR="$(grep -m1 -oE '^NODE_FLOOR=[0-9]+' "$DEPLOY" | grep -oE '[0-9]+')"
+  SETUP_MIN="$(grep -m1 -oE '^MIN_NODE_MAJOR=[0-9]+' "$REPO_ROOT/scripts/setup.sh" | grep -oE '[0-9]+')"
+  PKG_FLOOR="$(grep -m1 -oE '">=[0-9]+\.[0-9]+\.[0-9]+"' "$REPO_ROOT/backend/package.json" | grep -oE '^">=[0-9]+' | grep -oE '[0-9]+')"
+
+  assert_eq "$CI_MAJOR"       "$DOCKER_MAJOR"    "CI tests on the major the image runs"
+  assert_eq "$DEPLOY_INSTALL" "$DOCKER_MAJOR"    "the VM installer provisions that major too"
+  assert_eq "$SETUP_MIN"      "$DEPLOY_FLOOR"    "setup.sh and deploy-ubuntu.sh share one floor"
+  assert_eq "$PKG_FLOOR"      "$DEPLOY_FLOOR"    "and package.json engines states it"
+  # Every Docker stage, not just the first.
+  assert_eq "$(grep -cE "^FROM node:${DOCKER_MAJOR}-alpine" "$REPO_ROOT/Dockerfile")" \
+            "$(grep -cE '^FROM node:' "$REPO_ROOT/Dockerfile")" \
+            "every build stage uses the same base image major"
+  # The floor has to be one the database driver accepts.
+  BSQL_ENGINE="$(grep -A2 '"engines"' \
+    "$REPO_ROOT/backend/node_modules/better-sqlite3/package.json" 2>/dev/null \
+    | grep -m1 -oE '">=[0-9]+' | grep -oE '[0-9]+')"
+  if [ -n "$BSQL_ENGINE" ]; then
+    if [ "$DEPLOY_FLOOR" -ge "$BSQL_ENGINE" ]; then
+      ok "the Node floor ($DEPLOY_FLOOR) satisfies better-sqlite3 (>=$BSQL_ENGINE)"
+    else
+      bad "the Node floor ($DEPLOY_FLOOR) is below better-sqlite3's engines (>=$BSQL_ENGINE)"
+    fi
+  else
+    ok "better-sqlite3 not installed here - engine check skipped"
+  fi
+fi
+
 # ===================================================================== summary
 printf '\n────────────────────────────────────────\n'
 printf '%s%d passed%s, %s%d failed%s\n' "$GRN" "$PASS" "$RST" \

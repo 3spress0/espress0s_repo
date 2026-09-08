@@ -50,8 +50,10 @@ FORCE_SECRETS=0
 ADMIN_PASSWORD_OVERRIDE=""
 GENERATED_ADMIN_PASSWORD=""
 
-MIN_NODE_MAJOR=18
-RECOMMENDED_NODE_MAJOR=20
+# better-sqlite3 13 declares engines ">=22"; 24 is what CI, the Docker image
+# and deploy-ubuntu.sh all run.
+MIN_NODE_MAJOR=22
+RECOMMENDED_NODE_MAJOR=24
 
 # --- output helpers ----------------------------------------------------------
 if [ -t 1 ]; then
