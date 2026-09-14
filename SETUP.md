@@ -196,6 +196,46 @@ generated systemd unit grants exactly one capability,
 `AmbientCapabilities=CAP_NET_BIND_SERVICE`. Use `--port 3000` if you would
 rather keep nginx as the only thing on 80.
 
+#### Scheduled host reboots
+
+`./espress0 deploy` also **installs and enables a reboot schedule by default**:
+the host reboots every **12 hours**, at **00:30 and 12:30 local time**. The
+work is done by two systemd units:
+
+* `espress0-repo-reboot.timer` — the hardcoded 12-hour schedule. The reboot is
+  the OS scheduler's job, never the app's, so it happens even if the app is
+  wedged. Change the times per host with a drop-in
+  (`sudo systemctl edit espress0-repo-reboot.timer`), not by editing the
+  generated file.
+* `espress0-repo-reboot.service` — a oneshot that stops
+  `espress0-repo-updater` and `espress0-repo` cleanly first (so SQLite is
+  flushed and any backup/update/import can wind down), then calls
+  `systemctl reboot` for an orderly shutdown. **The reboot always wins**: the
+  stops are best-effort, so a service that fails to stop can never cancel the
+  reboot.
+
+Only the *timer* is enabled — the service deliberately has no `[Install]`
+section, because a reboot unit that ran at boot would reboot the host on every
+boot, forever. The app and the updater come back automatically after the
+reboot (see *After a reboot* below).
+
+Opt out at deploy time:
+
+```bash
+sudo ./espress0 deploy --no-scheduled-reboot
+```
+
+or on a live host:
+
+```bash
+sudo systemctl disable --now espress0-repo-reboot.timer   # stop the schedule
+sudo systemctl list-timers espress0-repo-reboot.timer     # next two triggers
+```
+
+On a non-systemd box there is nothing to install — put an equivalent in cron
+(`0 0,12 * * * root /usr/bin/systemctl stop espress0-repo-updater espress0-repo; /sbin/reboot`)
+or your scheduler of choice.
+
 ### After a reboot
 
 A production deploy starts itself — the unit is enabled at install time, so

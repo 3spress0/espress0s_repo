@@ -1,0 +1,32 @@
+[Unit]
+Description=espress0's repo - graceful stop and host reboot (scheduled)
+# Stop our own services before the system-wide shutdown, so the Node app gets
+# a clean SIGTERM and flushes SQLite (WAL checkpoint), and any in-flight
+# backup/update/import can wind down on its own terms instead of being
+# SIGKILLed by the generic shutdown sequence.
+After=espress0-repo.service espress0-repo-updater.service
+# Version of this template. scripts/auto-update.sh compares it against the copy
+# installed in /etc/systemd/system and warns when the machine is behind.
+# Bump it whenever a change here needs to reach existing installations.
+X-Espress0-Unit-Version=1
+
+[Service]
+Type=oneshot
+# Runs as root (no User=), because it must be able to reboot the host.
+#
+# "Reboot has priority 1": the `-` prefix on the pre-steps means a stop that
+# failed or timed out is ignored, so a wedged service can never cancel the
+# scheduled reboot. The final ExecStart is an orderly shutdown - systemd stops
+# every remaining unit (SIGTERM, then SIGKILL after the unit's timeout), syncs
+# the filesystems and reboots.
+ExecStartPre=-/usr/bin/systemctl stop espress0-repo-updater.service
+ExecStartPre=-/usr/bin/systemctl stop espress0-repo.service
+ExecStart=/usr/bin/systemctl reboot
+# Room for the graceful stops above (each may wait out a unit's own
+# TimeoutStopSec). The reboot itself is bounded by the shutdown sequence, not
+# by this value.
+TimeoutStartSec=15min
+
+# NEVER enable this unit directly. It deliberately carries no Install section:
+# it is triggered only by espress0-repo-reboot.timer. Enabling it as a start-up
+# unit would reboot the host on every boot, forever.

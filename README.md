@@ -460,6 +460,8 @@ The repository includes a deployment script that can configure:
 * systemd
 * nginx
 * HTTPS with Let's Encrypt
+* Automatic updates with rollback
+* Scheduled host reboots every 12 hours
 
 Example:
 
@@ -487,6 +489,13 @@ recovery commands instead of claiming success over a broken site. Automatic,
 fully staged updates with rollback are also installed by default
 (`espress0-repo-updater`); pause them with
 `touch data/.auto-update-disabled`.
+
+A scheduled host reboot is likewise installed by default: a systemd timer
+(`espress0-repo-reboot.timer`) fires every 12 hours (00:30 and 12:30 local
+time), stops the app and the updater cleanly, then reboots — and the reboot
+always wins, even if a stop fails. Opt out with
+`sudo ./espress0 deploy --no-scheduled-reboot`, or disable just the timer with
+`sudo systemctl disable --now espress0-repo-reboot.timer`.
 
 ### Docker
 
