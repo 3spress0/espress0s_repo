@@ -37,9 +37,12 @@ let nextActivityId = 1;
 
 function readJsonFile(file, fallback = null, maxBytes = MAX_STATUS_BYTES) {
   try {
-    const stat = fs.statSync(file);
-    if (!stat.isFile() || stat.size > maxBytes) return fallback;
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    // Read once, then size-check the same bytes. A preceding stat() would be a
+    // TOCTOU check: a writable data file could change between that check and
+    // this read, exactly when we are deciding how much to parse.
+    const contents = fs.readFileSync(file, 'utf8');
+    if (Buffer.byteLength(contents, 'utf8') > maxBytes) return fallback;
+    return JSON.parse(contents);
   } catch {
     return fallback;
   }
@@ -189,9 +192,11 @@ export function recordMaintenanceEvent(type, message, { source = 'application' }
 
 export function recentMaintenanceEvents(limit = MAX_EVENTS) {
   try {
-    const stat = fs.statSync(OPERATIONS_EVENTS_FILE);
-    if (!stat.isFile() || stat.size > MAX_EVENT_BYTES) return [];
-    const rows = fs.readFileSync(OPERATIONS_EVENTS_FILE, 'utf8').trim().split('\n');
+    // As above, inspect the exact bytes we read rather than stat-then-read a
+    // data file that the app and the reboot unit may append concurrently.
+    const contents = fs.readFileSync(OPERATIONS_EVENTS_FILE, 'utf8');
+    if (Buffer.byteLength(contents, 'utf8') > MAX_EVENT_BYTES) return [];
+    const rows = contents.trim().split('\n');
     return rows
       .slice(-Math.min(Math.max(Number(limit) || MAX_EVENTS, 1), MAX_EVENTS))
       .map(line => { try { return JSON.parse(line); } catch { return null; } })
