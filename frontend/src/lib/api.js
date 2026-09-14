@@ -332,6 +332,12 @@ export const autoUpdateApi = {
   status: () => api.get('/admin/auto-update').then(r => r.data),
 };
 
+/** Read-only host-maintenance facts; browser clients never execute systemctl. */
+export const operationsApi = {
+  status: () => api.get('/admin/operations').then(r => r.data),
+  notice: () => api.get('/maintenance/notice').then(r => r.data),
+};
+
 export const backupApi = {
   /** Triggers a file download of the full JSON export. */
   export: () => api.get('/admin/export', { responseType: 'blob' }).then(r => r.data),

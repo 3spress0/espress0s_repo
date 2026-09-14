@@ -35,6 +35,12 @@
 # a checkout in /home/<user>/espress0s_repo works exactly like /opt. Opt out
 # with --no-auto-update.
 #
+# A scheduled host reboot is also installed and enabled by default: a systemd
+# timer (<app>-reboot.timer) fires every 12 hours (00:30 and 12:30 local time)
+# and runs a oneshot that stops the app and the updater cleanly before
+# rebooting - and the reboot always wins, even if a stop fails or times out.
+# Opt out with --no-scheduled-reboot.
+#
 # The repository URL is remembered in /etc/espress0-repo/deploy.conf, so
 # --update needs no arguments after the first run. .env, data/ and backups/
 # are never touched by an update.
@@ -65,6 +71,7 @@ RESUME=0
 START_ONLY=0
 SKIP_FIREWALL=0
 AUTO_UPDATE=1
+SCHEDULED_REBOOT=1
 PORT_GIVEN=0
 REPO_URL=""
 BRANCH=""
@@ -110,6 +117,8 @@ while [ $# -gt 0 ]; do
     --skip-firewall)   SKIP_FIREWALL=1 ;;
     --no-auto-update)  AUTO_UPDATE=0 ;;
     --auto-update)     AUTO_UPDATE=1 ;;
+    --no-scheduled-reboot) SCHEDULED_REBOOT=0 ;;
+    --scheduled-reboot)    SCHEDULED_REBOOT=1 ;;
     -h|--help)         usage; exit 0 ;;
     *)                 die "Unknown option: $1 (try --help)" ;;
   esac
@@ -179,7 +188,7 @@ fi
 #     anything piped into a root shell goes through this helper.
 root_bash() { if [ -n "$SUDO" ]; then $SUDO -E bash -; else bash -; fi; }
 
-for f in backend/package.json frontend/package.json .env.example systemd/${APP_NAME}.service systemd/${APP_NAME}-updater.service; do
+for f in backend/package.json frontend/package.json .env.example scripts/record-operations-event.sh systemd/${APP_NAME}.service systemd/${APP_NAME}-updater.service systemd/${APP_NAME}-reboot.service systemd/${APP_NAME}-reboot.timer; do
   [ -e "$f" ] || die "Missing $f - run this script from the repository root."
 done
 ok "Repository layout looks correct"
@@ -590,6 +599,104 @@ remove_auto_updater_if_disabled() {
   fi
 }
 
+# The scheduled host reboot: a systemd timer that fires a oneshot every 12
+# hours. The oneshot stops the app and the updater cleanly (best effort, so a
+# wedged service cannot cancel the reboot), then calls `systemctl reboot` for
+# an orderly shutdown. Only the TIMER is enabled - the service deliberately
+# has no [Install] section, because a reboot unit that started at boot would
+# reboot the host on every boot, forever.
+REBOOT_TIMER_NAME="${APP_NAME}-reboot"
+REBOOT_TIMER_FILE="/etc/systemd/system/${REBOOT_TIMER_NAME}.timer"
+REBOOT_SERVICE_FILE="/etc/systemd/system/${REBOOT_TIMER_NAME}.service"
+# Read by the app and updater; this is observability/coordination state only,
+# never a web-exposed way to alter systemd. The root deployment writes it after
+# each enable/disable so unprivileged services need no systemctl permission.
+REBOOT_STATUS_FILE="$ROOT_DIR/data/.scheduled-reboot-status.json"
+
+write_scheduled_reboot_status() { # true|false [reason]
+  local enabled="$1" reason="${2:-}" tmp
+  tmp="$(mktemp)"
+  printf '{"enabled":%s,"timer":"%s.timer","service":"%s.service","schedule":"00:30 and 12:30 local time","guardMinutes":60,"updatedAt":"%s","reason":"%s"}\n' \
+    "$enabled" "$REBOOT_TIMER_NAME" "$REBOOT_TIMER_NAME" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$reason" > "$tmp"
+  $SUDO cp "$tmp" "$REBOOT_STATUS_FILE"
+  $SUDO chmod 644 "$REBOOT_STATUS_FILE"
+  rm -f "$tmp"
+}
+
+install_scheduled_reboot() {
+  step "Installing scheduled host reboots (every 12 hours)"
+
+  local systemctl_bin
+  systemctl_bin="$(command -v systemctl || echo /usr/bin/systemctl)"
+
+  # Generated from the templates so the unit names always match this
+  # deployment's APP_NAME, and systemctl's path matches the host. The app name
+  # is fixed today, but the updater generation does the same rewriting, so a
+  # renamed unit stays consistent with it.
+  local src_svc="systemd/${APP_NAME}-reboot.service"
+  local src_tmr="systemd/${APP_NAME}-reboot.timer"
+  if [ ! -f "$src_svc" ] || [ ! -f "$src_tmr" ]; then
+    warn "$src_svc / $src_tmr missing - skipping scheduled host reboots."
+    return 0
+  fi
+
+  local tmp_svc tmp_tmr
+  tmp_svc="$(mktemp)"
+  tmp_tmr="$(mktemp)"
+  sed -e "s|/opt/espress0s-repo|$ROOT_DIR|g" \
+      -e "s|/usr/bin/systemctl|$systemctl_bin|g" \
+      -e "s|espress0-repo|$APP_NAME|g" \
+      "$src_svc" > "$tmp_svc"
+  sed -e "s|espress0-repo|$APP_NAME|g" \
+      "$src_tmr" > "$tmp_tmr"
+
+  # The version marker is how the updater tells an operator that the units on
+  # this machine are older than the checkout. A generation step that dropped it
+  # would silence that warning for good, so fail loudly here instead.
+  if ! grep -q '^X-Espress0-Unit-Version=' "$tmp_svc"; then
+    err "the generated reboot unit lost its X-Espress0-Unit-Version marker"
+    rm -f "$tmp_svc" "$tmp_tmr"
+    return 0
+  fi
+  if grep -q '/opt/espress0s-repo' "$tmp_svc"; then
+    err "the generated reboot unit still contains /opt/espress0s-repo"
+    rm -f "$tmp_svc" "$tmp_tmr"
+    return 0
+  fi
+
+  $SUDO cp "$tmp_svc" "$REBOOT_SERVICE_FILE"
+  $SUDO cp "$tmp_tmr" "$REBOOT_TIMER_FILE"
+  rm -f "$tmp_svc" "$tmp_tmr"
+  $SUDO chmod 644 "$REBOOT_SERVICE_FILE" "$REBOOT_TIMER_FILE"
+  ok "Generated $REBOOT_SERVICE_FILE and $REBOOT_TIMER_FILE"
+
+  $SUDO systemctl daemon-reload
+  # Enable only the TIMER, never the service (see the note above).
+  if $SUDO systemctl enable --now "$REBOOT_TIMER_NAME" >/dev/null 2>&1; then
+    write_scheduled_reboot_status true "Enabled by deploy-ubuntu.sh"
+    ok "Host will reboot every 12 hours ($REBOOT_TIMER_NAME active)"
+  else
+    write_scheduled_reboot_status false "The timer could not be enabled by deploy-ubuntu.sh"
+    warn "Could not enable $REBOOT_TIMER_NAME - journalctl -u $REBOOT_TIMER_NAME -n 50"
+  fi
+  printf '  %sNext triggers:%s  systemctl list-timers %s\n' "$B" "$R" "$REBOOT_TIMER_NAME"
+  printf '  %sDisable:%s      sudo systemctl disable --now %s\n' "$B" "$R" "$REBOOT_TIMER_NAME"
+}
+
+remove_scheduled_reboot_if_disabled() {
+  [ "$SCHEDULED_REBOOT" -eq 0 ] || return 0
+  if [ -f "$REBOOT_TIMER_FILE" ]; then
+    step "Disabling scheduled host reboots (--no-scheduled-reboot)"
+    $SUDO systemctl disable --now "$REBOOT_TIMER_NAME" >/dev/null 2>&1 || true
+    write_scheduled_reboot_status false "Disabled by --no-scheduled-reboot"
+    ok "Stopped and disabled $REBOOT_TIMER_NAME (units left in place)"
+  else
+    step "Skipping scheduled host reboots (--no-scheduled-reboot)"
+    write_scheduled_reboot_status false "Not installed (--no-scheduled-reboot)"
+    ok "The reboot timer was not installed"
+  fi
+}
+
 if [ "$START_ONLY" -eq 1 ]; then
   [ -f .env ] || die ".env not found in $ROOT_DIR - run a full deploy first."
   if start_and_verify; then
@@ -762,6 +869,7 @@ if [ "$UPDATE_ONLY" -eq 1 ] && [ "$RESUME" -eq 0 ]; then
     [ "$WANT_HTTPS" -eq 1 ] && REEXEC_ARGS+=(--https)
     # Without this the opt-out is silently forgotten by the second run.
     [ "$AUTO_UPDATE" -eq 0 ] && REEXEC_ARGS+=(--no-auto-update)
+    [ "$SCHEDULED_REBOOT" -eq 0 ] && REEXEC_ARGS+=(--no-scheduled-reboot)
     # ${BASH_SOURCE[0]} is whatever path invoked THIS copy: relative when the
     # ./espress0 wrapper execs scripts/deploy-ubuntu.sh, absolute when run as
     # 'sudo "$PWD/scripts/deploy-ubuntu.sh"'. "$ROOT_DIR/${BASH_SOURCE[0]}"
@@ -775,6 +883,7 @@ if [ "$UPDATE_ONLY" -eq 1 ] && [ "$RESUME" -eq 0 ]; then
 
   run_post_update
   if [ "$AUTO_UPDATE" -eq 1 ]; then install_auto_updater; else remove_auto_updater_if_disabled; fi
+  if [ "$SCHEDULED_REBOOT" -eq 1 ]; then install_scheduled_reboot; else remove_scheduled_reboot_if_disabled; fi
 
   printf '\n%s%s Update complete (%s) %s\n\n' "$B" "$GRN" "$AFTER" "$R"
   exit 0
@@ -785,6 +894,7 @@ if [ "$UPDATE_ONLY" -eq 1 ] && [ "$RESUME" -eq 1 ]; then
   step "Finishing update (post-sync)"
   run_post_update
   if [ "$AUTO_UPDATE" -eq 1 ]; then install_auto_updater; else remove_auto_updater_if_disabled; fi
+  if [ "$SCHEDULED_REBOOT" -eq 1 ]; then install_scheduled_reboot; else remove_scheduled_reboot_if_disabled; fi
   # "Update complete" over an unanswering site is how bricked deploys went
   # unnoticed; a failed verification now fails the run (non-zero exit).
   if ! start_and_verify; then
@@ -1006,11 +1116,17 @@ else
   warn "No git remote and no --repo given; --update will need --repo <url>."
 fi
 
-# --- 8b. automatic updates ---------------------------------------------------
+# --- 8b. automatic updates + scheduled reboot ---------------------------------
 if [ "$AUTO_UPDATE" -eq 1 ]; then
   install_auto_updater
 else
   remove_auto_updater_if_disabled
+fi
+
+if [ "$SCHEDULED_REBOOT" -eq 1 ]; then
+  install_scheduled_reboot
+else
+  remove_scheduled_reboot_if_disabled
 fi
 
 # --- 9. nginx ----------------------------------------------------------------
@@ -1137,6 +1253,10 @@ printf '  Restart:    sudo %s --start\n' "$0"
 printf '  Logs:       sudo journalctl -u %s -f\n' "$APP_NAME"
 printf '  Database:   %s/data/repo.db\n' "$ROOT_DIR"
 printf '  Back up:    ./scripts/backup.sh\n'
+if [ "$SCHEDULED_REBOOT" -eq 1 ]; then
+  printf '  Reboot:     every 12 h (00:30 / 12:30) - sudo systemctl list-timers %s\n' "$REBOOT_TIMER_NAME"
+  printf '  No reboot:  sudo systemctl disable --now %s\n' "$REBOOT_TIMER_NAME"
+fi
 
 if [ -n "$NEW_ADMIN_PW" ]; then
   printf '\n  %sAdmin credentials - shown once, store them now:%s\n' "$B" "$R"

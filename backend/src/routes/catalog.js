@@ -6,6 +6,7 @@ import {
 } from '../services/catalogService.js';
 import { toCatalogArchive, csvTemplate } from '../services/bulkFormats.js';
 import { ZipError } from '../lib/zip.js';
+import { maintenanceDeferral, trackMaintenanceRequest } from '../services/maintenanceService.js';
 
 /**
  * Bulk catalogue endpoints.
@@ -61,6 +62,11 @@ export async function catalogRoutes(fastify) {
   }, async (request, reply) => {
     const apply = request.query.apply === '1' || request.query.apply === 'true';
     const mode = String(request.query.mode || 'upsert');
+    if (apply) {
+      const deferred = maintenanceDeferral('the catalogue import');
+      if (deferred) return reply.code(503).send(deferred);
+      trackMaintenanceRequest(reply, 'catalogue-import', 'Applying a catalogue import');
+    }
     if (!IMPORT_MODES.includes(mode)) {
       return reply.code(400).send({ error: `Unknown mode "${mode}"`, modes: IMPORT_MODES });
     }

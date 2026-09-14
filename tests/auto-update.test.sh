@@ -614,6 +614,34 @@ testcase "deploy installs the updater by default and --no-auto-update opts out"
                                     || bad "auto-update does not default to on"
 fi
 
+if should_run "deploy installs scheduled reboot"; then
+testcase "deploy installs the reboot timer by default and --no-scheduled-reboot opts out"
+  assert_contains "$DEPLOY" "--no-scheduled-reboot" "deploy accepts --no-scheduled-reboot"
+  assert_contains "$DEPLOY" "install_scheduled_reboot" "deploy has a scheduled-reboot installation step"
+  grep -q 'SCHEDULED_REBOOT=1' "$DEPLOY" && ok "scheduled reboot defaults to on" \
+                                          || bad "scheduled reboot does not default to on"
+  # The reboot service must be triggered only by the timer: with no Install
+  # section it can never start at boot and put the host into a reboot loop.
+  assert_not_contains "$REPO_ROOT/systemd/espress0-repo-reboot.service" "[Install]" \
+    "the reboot service has no Install section (timer-triggered only)"
+  assert_contains "$REPO_ROOT/systemd/espress0-repo-reboot.service" "ExecStart=/usr/bin/systemctl reboot" \
+    "the reboot service issues an orderly reboot"
+  assert_contains "$REPO_ROOT/systemd/espress0-repo-reboot.service" "systemctl stop espress0-repo" \
+    "the reboot service stops the app/updater best-effort before rebooting"
+  assert_contains "$REPO_ROOT/systemd/espress0-repo-reboot.service" "/usr/bin/timeout 5m" \
+    "a wedged graceful stop is capped so it cannot cancel the reboot"
+  assert_contains "$REPO_ROOT/systemd/espress0-repo-reboot.service" "record-operations-event.sh scheduled-reboot-starting" \
+    "the reboot service records its durable operations event before stopping work"
+  assert_contains "$DEPLOY" ".scheduled-reboot-status.json" \
+    "deploy records whether the reboot timer is enabled for the operations UI"
+  assert_contains "$UPDATER" "scheduled_reboot_is_imminent" \
+    "the updater defers expensive work in the pre-reboot guard window"
+  assert_contains "$REPO_ROOT/systemd/espress0-repo-reboot.timer" "OnCalendar=" \
+    "the timer carries the hardcoded 12-hour schedule"
+  assert_contains "$REPO_ROOT/systemd/espress0-repo-reboot.timer" "Unit=espress0-repo-reboot.service" \
+    "the timer triggers the reboot service"
+fi
+
 if should_run "help documents"; then
 testcase "the documented contract is present in --help"
   HELP="$WORK/help.txt"

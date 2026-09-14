@@ -1,0 +1,26 @@
+[Unit]
+Description=espress0's repo - reboot the host every 12 hours (graceful)
+
+[Timer]
+# Hardcoded 12-hour schedule: fires at 00:30 and 12:30 local time, every day.
+# The reboot is the job of the OS scheduler (systemd), never of the app, so it
+# happens even if the app is wedged. The companion service stops the app and
+# the updater cleanly first, then reboots - and the reboot always wins, even
+# if a stop fails or times out.
+#
+# Override the times per host with a drop-in (this does not edit the file the
+# deploy script regenerates):
+#   sudo systemctl edit espress0-repo-reboot.timer
+#   # [Timer]
+#   # OnCalendar=*-*-* 03:00:00
+OnCalendar=*-*-* 0/12:30:00
+# A host that was off at the trigger time reboots at the NEXT trigger, not the
+# moment it comes back up - a machine that only boots briefly is not put into
+# a reboot loop. Set Persistent=true in a drop-in if a missed reboot should
+# fire at the next boot instead.
+Persistent=false
+RandomizedDelaySec=0
+Unit=espress0-repo-reboot.service
+
+[Install]
+WantedBy=timers.target

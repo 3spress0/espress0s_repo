@@ -19,6 +19,7 @@ function Status({ job }) {
   if (job.last_status === 'failed') return <span className="inline-flex items-center gap-1 text-xs text-red-400" title={job.last_error || ''}><XCircle className="w-3 h-3" /> failed</span>;
   if (job.last_status === 'ok-with-errors') return <span className="inline-flex items-center gap-1 text-xs text-amber-300"><AlertTriangle className="w-3 h-3" /> ok, with row errors</span>;
   if (job.last_status === 'ok') return <span className="inline-flex items-center gap-1 text-xs text-emerald-400"><CheckCircle2 className="w-3 h-3" /> ok</span>;
+  if (job.last_status === 'deferred') return <span className="inline-flex items-center gap-1 text-xs text-amber-300" title={job.last_error || ''}><CalendarClock className="w-3 h-3" /> deferred for maintenance</span>;
   return <span className="text-xs text-textMuted">not run yet</span>;
 }
 
@@ -71,8 +72,13 @@ export default function ImportJobs({ onNotify }) {
     setRunning(job.id); setPreview(null);
     try {
       const res = await importJobsApi.run(job.id, apply);
-      if (apply) notify('success', `Ran “${job.name}”: ${res.report.items.created} created, ${res.report.items.updated} updated, ${res.report.items.unchanged} unchanged${res.report.errorCount ? `, ${res.report.errorCount} row error(s)` : ''}`);
-      else setPreview({ job, report: res.report });
+      if (res.deferred) {
+        notify('success', `Deferred “${job.name}” until after the scheduled reboot.`);
+      } else if (apply) {
+        notify('success', `Ran “${job.name}”: ${res.report.items.created} created, ${res.report.items.updated} updated, ${res.report.items.unchanged} unchanged${res.report.errorCount ? `, ${res.report.errorCount} row error(s)` : ''}`);
+      } else {
+        setPreview({ job, report: res.report });
+      }
       await load();
     } catch (err) {
       const d = err.response?.data;

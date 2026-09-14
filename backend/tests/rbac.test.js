@@ -131,6 +131,7 @@ const ADMIN_ONLY = [
   { m: 'GET', url: '/api/admin/snapshots' },
   { m: 'GET', url: '/api/admin/backup-info' },
   { m: 'GET', url: '/api/admin/auto-update' },
+  { m: 'GET', url: '/api/admin/operations' },
   { m: 'POST', url: '/api/admin/items/bulk', body: { action: 'publish', ids: [] } },
   { m: 'GET', url: '/api/admin/settings' },
   { m: 'PUT', url: '/api/admin/settings', body: { site_name: 'x' } },

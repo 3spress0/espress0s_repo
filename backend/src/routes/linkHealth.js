@@ -1,5 +1,6 @@
 import { authenticate, requireAdmin } from '../middleware/auth.js';
 import { linkHealthService } from '../services/linkHealthService.js';
+import { maintenanceDeferral } from '../services/maintenanceService.js';
 
 /**
  * Admin endpoints for the download-link health checker. All of it is behind
@@ -22,6 +23,8 @@ export async function linkHealthRoutes(fastify) {
     if (linkHealthService.running) {
       return reply.code(409).send({ error: 'A link check run is already in progress' });
     }
+    const deferred = maintenanceDeferral('the link-health sweep');
+    if (deferred) return reply.code(503).send(deferred);
     const summary = await linkHealthService.runAll();
     request.log.info(summary, 'Link health run completed');
     return { success: true, run: summary };

@@ -1,0 +1,36 @@
+[Unit]
+Description=espress0's repo - graceful stop and host reboot (scheduled)
+# Stop our own services before the system-wide shutdown, so the Node app gets
+# a clean SIGTERM and flushes SQLite (WAL checkpoint), and any in-flight
+# backup/update/import can wind down on its own terms instead of being
+# SIGKILLed by the generic shutdown sequence.
+After=espress0-repo.service espress0-repo-updater.service
+# Version of this template. scripts/auto-update.sh compares it against the copy
+# installed in /etc/systemd/system and warns when the machine is behind.
+# Bump it whenever a change here needs to reach existing installations.
+X-Espress0-Unit-Version=3
+
+[Service]
+Type=oneshot
+# Runs as root (no User=), because it must be able to reboot the host.
+#
+# "Reboot has priority 1": the `-` prefix on the pre-steps means a stop that
+# failed or timed out is ignored, so a wedged service can never cancel the
+# scheduled reboot. Each stop client is capped at five minutes: an operator
+# could otherwise configure TimeoutStopSec=infinity and consume this whole
+# service's timeout before it reached ExecStart. The final ExecStart is an
+# orderly shutdown - systemd stops every remaining unit (SIGTERM, then SIGKILL
+# after the unit's timeout), syncs the filesystems and reboots. First leave a
+# durable event for the admin Operations timeline. It is best-effort for the
+# same reason the stop steps are: a write failure must never veto the reboot.
+ExecStartPre=-/opt/espress0s-repo/scripts/record-operations-event.sh scheduled-reboot-starting
+ExecStartPre=-/usr/bin/timeout 5m /usr/bin/systemctl stop espress0-repo-updater.service
+ExecStartPre=-/usr/bin/timeout 5m /usr/bin/systemctl stop espress0-repo.service
+ExecStart=/usr/bin/systemctl reboot
+# Two five-minute graceful-stop windows plus room to issue the reboot. The
+# reboot itself is bounded by systemd's shutdown sequence, not by this value.
+TimeoutStartSec=12min
+
+# NEVER enable this unit directly. It deliberately carries no Install section:
+# it is triggered only by espress0-repo-reboot.timer. Enabling it as a start-up
+# unit would reboot the host on every boot, forever.

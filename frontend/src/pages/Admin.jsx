@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Shield, Database, HardDrive, FolderTree, Folder, Users, Activity, ExternalLink, Settings, Archive, FileArchive, Webhook, Star, BarChart3 } from 'lucide-react';
+import { Shield, Database, HardDrive, FolderTree, Folder, Users, Activity, Clock, ExternalLink, Settings, Archive, FileArchive, Webhook, Star, BarChart3 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import Loading from '../components/Loading';
 
@@ -24,6 +24,7 @@ const NAV = [
   { to: '/admin/reviews', label: 'Reviews', icon: Star, editor: true },
   { to: '/admin/webhooks', label: 'Webhooks', icon: Webhook },
   { to: '/admin/settings', label: 'Site Settings', icon: Settings },
+  { to: '/admin/operations', label: 'Operations', icon: Clock },
   { to: '/admin/monitoring', label: 'Monitoring', icon: Activity },
 ];
 

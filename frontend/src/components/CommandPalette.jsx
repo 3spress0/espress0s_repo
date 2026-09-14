@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Package, Users, Shield, Settings, LogIn, UserPlus, Star, Sparkles, Palette, Upload, FolderTree, Tag, FileText, Command, CornerDownLeft, Keyboard, Home, X, BarChart3 } from 'lucide-react';
+import { Search, Package, Users, Shield, Settings, LogIn, UserPlus, Star, Sparkles, Palette, Upload, FolderTree, Tag, FileText, Command, CornerDownLeft, Keyboard, Home, X, BarChart3, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { searchApi } from '../lib/api';
@@ -98,6 +98,7 @@ export default function CommandPalette({ onAskOpen }) {
       list.push({ id: 'admin-imports', label: 'Admin: Catalogue import / export', icon: Upload, run: () => go('/admin/imports') });
       list.push({ id: 'admin-users', label: 'Admin: Users', icon: Users, run: () => go('/admin/users') });
       list.push({ id: 'admin-settings', label: 'Admin: Settings', icon: Settings, run: () => go('/admin/settings') });
+      list.push({ id: 'admin-operations', label: 'Admin: Operations & maintenance', icon: Clock, run: () => go('/admin/operations') });
     }
     if (themeCtx.allowUserChoice) {
       list.push({ id: 'theme-auto', label: 'Theme: match system', icon: Palette, run: () => { themeCtx.setTheme('auto'); setOpen(false); } });

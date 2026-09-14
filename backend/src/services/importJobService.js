@@ -27,6 +27,7 @@ import { importCatalogArchive, CATALOG_FORMAT, CATALOG_VERSION, IMPORT_MODES } f
 import { safeFetchBuffer } from '../lib/safeFetch.js';
 import { zip } from '../lib/zip.js';
 import { makeSlug } from '../utils/slug.js';
+import { beginMaintenanceActivity, maintenanceDeferral } from './maintenanceService.js';
 
 export const SOURCE_TYPES = ['catalog', 'github-releases'];
 const MIN_INTERVAL_MINUTES = 15;
@@ -243,9 +244,21 @@ export class ImportJobService {
     const job = this.get(id);
     if (!job) return null;
     if (this.runningIds.has(id)) return { job, skipped: true, reason: 'already running' };
+    const deferred = apply ? maintenanceDeferral(`import job “${job.name}”`) : null;
+    if (deferred) {
+      // A due scheduled job must not wake up every minute during the warning
+      // window. Keep it visibly deferred and retry after the reboot trigger.
+      getDb().prepare(`UPDATE import_jobs
+        SET last_status = 'deferred', last_error = ?, next_run_at = ?, updated_at = ?
+        WHERE id = ?`).run(deferred.error.slice(0, 1000), deferred.retryAt, nowIso(), id);
+      return { job: this.get(id), skipped: true, deferred: true, reason: deferred.error, retryAt: deferred.retryAt, apply };
+    }
     this.runningIds.add(id);
     const db = getDb();
     const startedAt = nowIso();
+    const finishActivity = apply
+      ? beginMaintenanceActivity('scheduled-import', `Running import job: ${job.name}`)
+      : null;
     try {
       const buffer = await this.fetchSource(job);
       const { report, history } = await importCatalogArchive({
@@ -267,6 +280,7 @@ export class ImportJobService {
       this.logger.warn?.({ jobId: id, err: message, manual }, 'Import job failed');
       return { job: this.get(id), error: message, apply };
     } finally {
+      finishActivity?.();
       this.runningIds.delete(id);
     }
   }

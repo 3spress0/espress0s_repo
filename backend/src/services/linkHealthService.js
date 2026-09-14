@@ -4,6 +4,7 @@ import { storageManager } from './storage/index.js';
 import { decryptLink } from './itemSerializer.js';
 import { settingsService } from './settingsService.js';
 import { safeProbeUrl } from '../lib/safeFetch.js';
+import { beginMaintenanceActivity, maintenanceDeferral } from './maintenanceService.js';
 
 /**
  * Download-link health checker.
@@ -159,7 +160,10 @@ export class LinkHealthService {
    */
   async runAll({ limit = 1000 } = {}) {
     if (this.running) return { alreadyRunning: true, ...this.lastRun };
+    const deferred = maintenanceDeferral('the link-health sweep');
+    if (deferred) return { deferred: true, reason: deferred.error, retryAt: deferred.retryAt };
     this.running = true;
+    const finishActivity = beginMaintenanceActivity('link-health-scan', 'Checking download-link health');
     const startedAt = new Date().toISOString();
     const summary = { startedAt, finishedAt: null, checked: 0, up: 0, down: 0, unknown: 0, skipped: 0 };
 
@@ -193,6 +197,7 @@ export class LinkHealthService {
       summary.finishedAt = new Date().toISOString();
       this.lastRun = summary;
       this.running = false;
+      finishActivity();
     }
     return summary;
   }

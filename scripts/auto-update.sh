@@ -89,6 +89,8 @@
 #     just deployed. The commit is captured when Node starts, so an old process
 #     answering on the port cannot pass the check.
 #   * Pause everything with: touch data/.auto-update-disabled
+#   * When deploy-ubuntu.sh's scheduled reboot is enabled, a release build is
+#     deferred during the final hour before the fixed reboot trigger.
 #   * A flock prevents two updaters from running at once.
 
 set -uo pipefail
@@ -112,6 +114,11 @@ STAGE_DIR="$STAGE_ROOT/next"
 STATE_FILE="data/.auto-update-status"
 DISABLE_FILE="data/.auto-update-disabled"
 LOCK_FILE="data/.auto-update.lock"
+# deploy-ubuntu.sh writes this only after it enables the hardcoded reboot timer.
+# It gives the updater a cheap, non-privileged way to defer a heavy release
+# build during the final hour before a reboot.
+REBOOT_STATE_FILE="data/.scheduled-reboot-status.json"
+SCHEDULED_REBOOT_GUARD_SECONDS=3600
 
 # ------------------------------------------------------------ resource policy
 # Defaults are deliberately modest: this runs on 1-2 GB Azure VMs where the app
@@ -227,6 +234,30 @@ write_state() { # state message
     "$ST_STOPPED" "$ST_MIGRATED" "$ST_STARTED" "$ST_VERIFIED" \
     "$(json_str "${UNIT_DRIFT:-}")" "$(json_str "$ST_REASON")" \
     > "$STATE_FILE" 2>/dev/null || true
+}
+
+# True only when deploy-ubuntu.sh has enabled its reboot timer and the next
+# fixed local 00:30/12:30 trigger is within the final hour. This deliberately
+# reads no systemd state and needs no sudo: the deployment record is enough to
+# protect a resource-intensive update from being started only to be interrupted.
+scheduled_reboot_is_imminent() {
+  [ -r "$REBOOT_STATE_FILE" ] || return 1
+  grep -Eq '"enabled"[[:space:]]*:[[:space:]]*true' "$REBOOT_STATE_FILE" 2>/dev/null || return 1
+
+  local now day candidate clock
+  now="$(date +%s)" || return 1
+  for day in "$(date +%F)" "$(date -d tomorrow +%F 2>/dev/null || true)"; do
+    [ -n "$day" ] || continue
+    for clock in 00:30:00 12:30:00; do
+      candidate="$(date -d "$day $clock" +%s 2>/dev/null)" || continue
+      [ "$candidate" -gt "$now" ] || continue
+      SCHEDULED_REBOOT_IN_SECONDS=$((candidate - now))
+      SCHEDULED_REBOOT_AT="$(date -u -d "@$candidate" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
+      [ "$SCHEDULED_REBOOT_IN_SECONDS" -le "$SCHEDULED_REBOOT_GUARD_SECONDS" ]
+      return $?
+    done
+  done
+  return 1
 }
 
 # Refuse to deploy, loudly and without having touched anything.
@@ -1403,6 +1434,14 @@ check_and_update() {
     return 0
   fi
 
+  if scheduled_reboot_is_imminent; then
+    local minutes=$(( (SCHEDULED_REBOOT_IN_SECONDS + 59) / 60 ))
+    write_state deferred "Scheduled host reboot is in about ${minutes} minute(s); update deferred until after ${SCHEDULED_REBOOT_AT:-the reboot}."
+    return 0
+  fi
+
+  write_state checking "Checking for updates."
+
   # A tracked file with local edits would be silently overwritten by a clone
   # deploy (and its trail erased by the final `git reset`), and no
   # fast-forward can carry it in pull mode - so BOTH modes skip the cycle
@@ -1452,6 +1491,7 @@ check_and_update() {
     return 1
   fi
 
+  write_state updating "Update available; staging and verifying ${remote_sha:0:7}."
   if [ "$MODE" = "clone" ]; then
     deploy_via_clone "$local_sha" "$remote_sha"
   else
