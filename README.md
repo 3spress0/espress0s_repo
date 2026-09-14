@@ -497,6 +497,14 @@ always wins, even if a stop fails. Opt out with
 `sudo ./espress0 deploy --no-scheduled-reboot`, or disable just the timer with
 `sudo systemctl disable --now espress0-repo-reboot.timer`.
 
+Administrators can see the schedule, calculated next reboot, last trigger,
+post-boot health, active imports/scans and a durable maintenance timeline in
+**Admin → Operations**. Visitors receive a short maintenance banner during the
+last 30 minutes. To avoid needlessly interrupted work, new auto-updates,
+imports, backup restores and full link-health scans defer during the final hour
+before a configured reboot. The website deliberately has no reboot/disable
+button: inspect and change host policy with `systemctl` on the server.
+
 ### Docker
 
 Docker Compose configuration is also included:

@@ -16,6 +16,7 @@ import { listSnapshots, restoreFromSnapshot } from '../services/restoreService.j
 import { getAnalytics, MAX_DAYS } from '../services/analyticsService.js';
 import { UnsafeUrlError } from '../lib/safeFetch.js';
 import { loadExistingIndex } from '../services/duplicateDetector.js';
+import { operationsStatus, maintenanceDeferral, trackMaintenanceRequest } from '../services/maintenanceService.js';
 import { readFileSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
 import path from 'path';
@@ -102,6 +103,14 @@ export async function adminRoutes(fastify) {
     } catch { /* git absent or not a repo */ }
     return { state, branch, commit };
   });
+
+  // Host maintenance is intentionally read-only from the web application.
+  // This makes the schedule, health after boot, active long-running work and
+  // durable reboot/update events visible without giving an HTTP client any
+  // path to execute systemctl or alter privileged host policy.
+  fastify.get('/admin/operations', {
+    schema: { tags: ['Admin'], summary: 'Read-only scheduled-reboot and maintenance status' },
+  }, async () => operationsStatus());
 
   fastify.get('/admin/overview', async (request, reply) => {
     const db = getDb();
@@ -583,6 +592,11 @@ export async function adminRoutes(fastify) {
     const { path: snapshotPath, scope = 'catalogue', dryRun = false } = request.body || {};
     if (scope !== 'catalogue' && scope !== 'all') {
       return reply.code(400).send({ error: "scope must be 'catalogue' or 'all'" });
+    }
+    if (!dryRun) {
+      const deferred = maintenanceDeferral('the database restore');
+      if (deferred) return reply.code(503).send(deferred);
+      trackMaintenanceRequest(reply, 'database-restore', `Restoring ${scope} from a database snapshot`);
     }
     try {
       const result = restoreFromSnapshot(snapshotPath, { scope, dryRun: !!dryRun });

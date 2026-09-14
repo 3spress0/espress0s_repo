@@ -37,12 +37,14 @@ import { publicApiRoutes } from './routes/publicApi.js';
 import { subscriptionRoutes } from './routes/subscriptions.js';
 import { reviewRoutes } from './routes/reviews.js';
 import { importJobRoutes } from './routes/importJobs.js';
+import { maintenanceRoutes } from './routes/maintenance.js';
 import multipart from '@fastify/multipart';
 import { monitoringService } from './services/monitoringService.js';
 import { linkHealthService } from './services/linkHealthService.js';
 import { webhookService } from './services/webhookService.js';
 import { importJobService } from './services/importJobService.js';
 import { setEventLogger } from './services/eventBus.js';
+import { recordApplicationHealthyEvent, recordMaintenanceEvent } from './services/maintenanceService.js';
 import { rateLimitKey, rateLimitMax } from './middleware/rateLimit.js';
 import { openapiPlugin } from './docs/openapi.js';
 
@@ -264,6 +266,7 @@ await fastify.register(async (api) => {
   await api.register(subscriptionRoutes);
   await api.register(reviewRoutes);
   await api.register(importJobRoutes);
+  await api.register(maintenanceRoutes);
 }, { prefix: '/api' });
 
 // Serve the built frontend when it exists, in any environment. Deep links
@@ -370,6 +373,7 @@ const start = async () => {
     setEventLogger(fastify.log);
     webhookService.start(fastify.log);
     importJobService.start(fastify.log);
+    recordApplicationHealthyEvent();
     console.log(`
   ░█▀▀░█▀▀░█▀█░█▀▄░█▀▀░█▀▀░█▀▀░▄▀▄░▀░█▀▀░░░█▀▄░█▀▀░█▀█░█▀█
   ░█▀▀░▀▀█░█▀▀░█▀▄░█▀▀░▀▀█░▀▀█░█/█░░░▀▀█░░░█▀▄░█▀▀░█▀▀░█░█
@@ -385,5 +389,20 @@ const start = async () => {
     process.exit(1);
   }
 };
+
+// Systemd sends SIGTERM before a scheduled reboot. Recording and closing the
+// listener here makes that orderly stop visible in Admin -> Operations and lets
+// in-flight responses finish before the unit's TimeoutStopSec expires.
+let stopping = false;
+async function shutdown(signal) {
+  if (stopping) return;
+  stopping = true;
+  recordMaintenanceEvent('application-stopping', `Application received ${signal} and is shutting down cleanly.`);
+  try { await fastify.close(); }
+  catch (error) { fastify.log.error({ err: error }, 'Graceful shutdown failed'); }
+  process.exit(0);
+}
+process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
+process.once('SIGINT', () => { void shutdown('SIGINT'); });
 
 start();

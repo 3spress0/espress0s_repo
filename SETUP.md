@@ -232,6 +232,25 @@ sudo systemctl disable --now espress0-repo-reboot.timer   # stop the schedule
 sudo systemctl list-timers espress0-repo-reboot.timer     # next two triggers
 ```
 
+#### Website operations view and maintenance window
+
+**Admin → Operations** is a read-only view of this policy. It shows the
+configured/runtime timer state, the calculated next trigger, the last timer
+trigger, host boot and app-start times, active long-running imports/restores/link
+scans, auto-updater status, and the local maintenance event timeline. It refreshes
+itself every 30 seconds. The deployment writes a small state file in `data/` for
+this view; it never grants the website permission to run `systemctl`.
+
+During the last **30 minutes** before a configured reboot, visitors see a global
+banner asking them to finish uploads and edits. During the last **60 minutes**,
+new auto-updates, catalogue/backup restores, scheduled imports and full
+link-health scans are deferred instead of starting work that the priority reboot
+would shortly interrupt. The timer still wins if existing work runs long.
+
+Use the shell commands above to change timer policy. There is deliberately no
+web "reboot now" or "disable timer" button: an admin browser session should not
+be a route to privileged host control.
+
 On a non-systemd box there is nothing to install — put an equivalent in cron
 (`0 0,12 * * * root /usr/bin/systemctl stop espress0-repo-updater espress0-repo; /sbin/reboot`)
 or your scheduler of choice.

@@ -7,6 +7,7 @@ import {
   encryptItemFields, encryptLinkFields,
 } from '../services/itemSerializer.js';
 import { makeSlug } from '../utils/slug.js';
+import { maintenanceDeferral, trackMaintenanceRequest } from '../services/maintenanceService.js';
 
 /**
  * JSON backup / restore.
@@ -153,6 +154,11 @@ export async function backupRoutes(fastify) {
 
     const data = parsed.data;
     const apply = data.apply === true || request.query.apply === '1' || request.query.apply === 'true';
+    if (apply) {
+      const deferred = maintenanceDeferral('the backup restore');
+      if (deferred) return reply.code(503).send(deferred);
+      trackMaintenanceRequest(reply, 'backup-restore', 'Restoring a full archive backup');
+    }
     const db = getDb();
 
     const report = {

@@ -188,7 +188,7 @@ fi
 #     anything piped into a root shell goes through this helper.
 root_bash() { if [ -n "$SUDO" ]; then $SUDO -E bash -; else bash -; fi; }
 
-for f in backend/package.json frontend/package.json .env.example systemd/${APP_NAME}.service systemd/${APP_NAME}-updater.service systemd/${APP_NAME}-reboot.service systemd/${APP_NAME}-reboot.timer; do
+for f in backend/package.json frontend/package.json .env.example scripts/record-operations-event.sh systemd/${APP_NAME}.service systemd/${APP_NAME}-updater.service systemd/${APP_NAME}-reboot.service systemd/${APP_NAME}-reboot.timer; do
   [ -e "$f" ] || die "Missing $f - run this script from the repository root."
 done
 ok "Repository layout looks correct"
@@ -608,6 +608,20 @@ remove_auto_updater_if_disabled() {
 REBOOT_TIMER_NAME="${APP_NAME}-reboot"
 REBOOT_TIMER_FILE="/etc/systemd/system/${REBOOT_TIMER_NAME}.timer"
 REBOOT_SERVICE_FILE="/etc/systemd/system/${REBOOT_TIMER_NAME}.service"
+# Read by the app and updater; this is observability/coordination state only,
+# never a web-exposed way to alter systemd. The root deployment writes it after
+# each enable/disable so unprivileged services need no systemctl permission.
+REBOOT_STATUS_FILE="$ROOT_DIR/data/.scheduled-reboot-status.json"
+
+write_scheduled_reboot_status() { # true|false [reason]
+  local enabled="$1" reason="${2:-}" tmp
+  tmp="$(mktemp)"
+  printf '{"enabled":%s,"timer":"%s.timer","service":"%s.service","schedule":"00:30 and 12:30 local time","guardMinutes":60,"updatedAt":"%s","reason":"%s"}\n' \
+    "$enabled" "$REBOOT_TIMER_NAME" "$REBOOT_TIMER_NAME" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$reason" > "$tmp"
+  $SUDO cp "$tmp" "$REBOOT_STATUS_FILE"
+  $SUDO chmod 644 "$REBOOT_STATUS_FILE"
+  rm -f "$tmp"
+}
 
 install_scheduled_reboot() {
   step "Installing scheduled host reboots (every 12 hours)"
@@ -629,7 +643,8 @@ install_scheduled_reboot() {
   local tmp_svc tmp_tmr
   tmp_svc="$(mktemp)"
   tmp_tmr="$(mktemp)"
-  sed -e "s|/usr/bin/systemctl|$systemctl_bin|g" \
+  sed -e "s|/opt/espress0s-repo|$ROOT_DIR|g" \
+      -e "s|/usr/bin/systemctl|$systemctl_bin|g" \
       -e "s|espress0-repo|$APP_NAME|g" \
       "$src_svc" > "$tmp_svc"
   sed -e "s|espress0-repo|$APP_NAME|g" \
@@ -643,6 +658,11 @@ install_scheduled_reboot() {
     rm -f "$tmp_svc" "$tmp_tmr"
     return 0
   fi
+  if grep -q '/opt/espress0s-repo' "$tmp_svc"; then
+    err "the generated reboot unit still contains /opt/espress0s-repo"
+    rm -f "$tmp_svc" "$tmp_tmr"
+    return 0
+  fi
 
   $SUDO cp "$tmp_svc" "$REBOOT_SERVICE_FILE"
   $SUDO cp "$tmp_tmr" "$REBOOT_TIMER_FILE"
@@ -653,8 +673,10 @@ install_scheduled_reboot() {
   $SUDO systemctl daemon-reload
   # Enable only the TIMER, never the service (see the note above).
   if $SUDO systemctl enable --now "$REBOOT_TIMER_NAME" >/dev/null 2>&1; then
+    write_scheduled_reboot_status true "Enabled by deploy-ubuntu.sh"
     ok "Host will reboot every 12 hours ($REBOOT_TIMER_NAME active)"
   else
+    write_scheduled_reboot_status false "The timer could not be enabled by deploy-ubuntu.sh"
     warn "Could not enable $REBOOT_TIMER_NAME - journalctl -u $REBOOT_TIMER_NAME -n 50"
   fi
   printf '  %sNext triggers:%s  systemctl list-timers %s\n' "$B" "$R" "$REBOOT_TIMER_NAME"
@@ -666,9 +688,11 @@ remove_scheduled_reboot_if_disabled() {
   if [ -f "$REBOOT_TIMER_FILE" ]; then
     step "Disabling scheduled host reboots (--no-scheduled-reboot)"
     $SUDO systemctl disable --now "$REBOOT_TIMER_NAME" >/dev/null 2>&1 || true
+    write_scheduled_reboot_status false "Disabled by --no-scheduled-reboot"
     ok "Stopped and disabled $REBOOT_TIMER_NAME (units left in place)"
   else
     step "Skipping scheduled host reboots (--no-scheduled-reboot)"
+    write_scheduled_reboot_status false "Not installed (--no-scheduled-reboot)"
     ok "The reboot timer was not installed"
   fi
 }
